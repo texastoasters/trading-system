@@ -1,0 +1,27 @@
+# Environment and secrets
+.env
+.trading_env
+
+# Runtime directories
+logs/
+pids/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# v1.0.0

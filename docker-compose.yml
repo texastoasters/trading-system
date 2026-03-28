@@ -1,0 +1,47 @@
+# docker-compose.yml
+# Trading system infrastructure: Redis (shared state) + TimescaleDB (historical storage)
+# Place this in ~/trading-system/ on your VPS
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: trading_redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  timescaledb:
+    image: timescale/timescaledb:2.18.0-pg17
+    container_name: trading_timescaledb
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5432:5432"
+    environment:
+      POSTGRES_USER: trader
+      POSTGRES_PASSWORD: "${TSDB_PASSWORD:-changeme_in_env_file}"
+      POSTGRES_DB: trading
+      TIMESCALEDB_TELEMETRY: "off"
+    volumes:
+      - timescaledb_data:/var/lib/postgresql/data
+      - ./init-db:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trader -d trading"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+volumes:
+  redis_data:
+  timescaledb_data:
