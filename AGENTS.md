@@ -58,7 +58,7 @@ All inter-agent communication uses Redis:
 
 ## Agent 1: Screener
 
-**File**: `screener.py`
+**File**: `skills/screener/screener.py`
 **Skill**: `skills/screener/SKILL.md`
 **LLM usage**: ~3–5 calls/day (news evaluation only)
 
@@ -89,7 +89,7 @@ Scan the active instrument universe for RSI-2 entry conditions and detect market
 
 ## Agent 2: Watcher
 
-**File**: `watcher.py`
+**File**: `skills/watcher/watcher.py`
 **Skill**: `skills/watcher/SKILL.md`
 **LLM usage**: ~2 calls/day (news materiality only)
 
@@ -128,7 +128,7 @@ Generate RSI-2 entry and exit signals based on the watchlist and open positions.
 
 ## Agent 3: Portfolio Manager
 
-**File**: `portfolio_manager.py`
+**File**: `skills/portfolio_manager/portfolio_manager.py`
 **Skill**: `skills/portfolio_manager/SKILL.md`
 **LLM usage**: ~3–5 calls/day (GPT-OSS 120B), ~2 calls/week (Claude Sonnet 4 escalation)
 
@@ -184,7 +184,7 @@ If all 3 position slots are full and a Tier 1 signal arrives, the PM may close t
 
 ## Agent 4: Trade Executor
 
-**File**: `executor.py`
+**File**: `skills/executor/executor.py`
 **Skill**: `skills/executor/SKILL.md`
 **LLM usage**: Zero. Pure deterministic code.
 
@@ -228,7 +228,7 @@ Runs automatically before any trading begins:
 
 ## Agent 5: Supervisor
 
-**File**: `supervisor.py`
+**File**: `skills/supervisor/supervisor.py`
 **Skill**: `skills/supervisor/SKILL.md`
 **LLM usage**: ~8–10 calls/week
 
@@ -279,7 +279,7 @@ Deterministic, code-enforced, no LLM involvement:
 | Capital constraint warning | End of day |
 
 ### Monthly Job 1: Universe Re-Validation (1st of month)
-Re-runs `backtest_rsi2_universe.py` on all instruments (active, disabled, and previously failed) using rolling 12-month data. Applies tier thresholds:
+Re-runs `scripts/backtest_rsi2_universe.py` on all instruments (active, disabled, and previously failed) using rolling 12-month data. Applies tier thresholds:
 
 | Tier | Profit Factor | Win Rate | Min Trades |
 |------|--------------|----------|------------|
@@ -290,7 +290,7 @@ Re-runs `backtest_rsi2_universe.py` on all instruments (active, disabled, and pr
 Promotion: max one tier up per month. Demotion: can fall multiple tiers. Disabled for 3+ months → archived.
 
 ### Monthly Job 2: Universe Discovery (15th of month)
-Runs `discover_universe.py` to scan random samples from Alpaca's 12,000+ tradeable assets. Stricter filters than re-validation: ≥ 10 trades, avg trade > 0.30%, WR ≥ 65%, PF ≥ 1.5. Excludes leveraged/inverse ETFs, bond ETFs with tiny moves, and SPACs. New passes enter as Tier 3 (probation), capped at 5 additions per month. Checks sector diversification before adding.
+Runs `scripts/discover_universe.py` to scan random samples from Alpaca's 12,000+ tradeable assets. Stricter filters than re-validation: ≥ 10 trades, avg trade > 0.30%, WR ≥ 65%, PF ≥ 1.5. Excludes leveraged/inverse ETFs, bond ETFs with tiny moves, and SPACs. New passes enter as Tier 3 (probation), capped at 5 additions per month. Checks sector diversification before adding.
 
 ---
 

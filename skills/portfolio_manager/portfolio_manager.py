@@ -5,9 +5,9 @@ portfolio_manager.py — Portfolio Manager Agent
 Evaluates signals from the Watcher, sizes positions, checks risk constraints,
 and publishes approved orders to Redis for the Executor.
 
-Usage:
-    python3 portfolio_manager.py              # Process pending signals once
-    python3 portfolio_manager.py --daemon     # Listen for signals continuously
+Usage (from repo root):
+    PYTHONPATH=scripts python3 skills/portfolio_manager/portfolio_manager.py              # Process pending signals once
+    PYTHONPATH=scripts python3 skills/portfolio_manager/portfolio_manager.py --daemon     # Listen for signals continuously
 """
 
 import json

@@ -5,10 +5,10 @@ executor.py — Trade Executor Agent
 The ONLY agent that interacts with the Alpaca API for order placement.
 Pure code — zero LLM. Enforces all safety rules deterministically.
 
-Usage:
-    python3 executor.py              # Process pending orders once
-    python3 executor.py --daemon     # Listen for orders continuously
-    python3 executor.py --verify     # Run startup verification only
+Usage (from repo root):
+    PYTHONPATH=scripts python3 skills/executor/executor.py              # Process pending orders once
+    PYTHONPATH=scripts python3 skills/executor/executor.py --daemon     # Listen for orders continuously
+    PYTHONPATH=scripts python3 skills/executor/executor.py --verify     # Run startup verification only
 """
 
 import json

@@ -183,7 +183,7 @@ monthly_summary(monthly_metrics)
 Re-run RSI-2 backtest on ALL instruments using rolling 12-month data.
 
 ```
-1. Run backtest_rsi2_universe.py on full list (active + disabled + failed)
+1. Run scripts/backtest_rsi2_universe.py on full list (active + disabled + failed)
 2. Apply tier thresholds:
    TIER 1: PF >= 2.0 AND WR >= 70% AND trades >= 8
    TIER 2: PF >= 1.5 AND WR >= 65%
@@ -197,7 +197,7 @@ Re-run RSI-2 backtest on ALL instruments using rolling 12-month data.
 ## MONTHLY JOB 2: Universe Discovery (15th of each month)
 
 ```
-1. Run discover_universe.py --max-candidates 50
+1. Run scripts/discover_universe.py --max-candidates 50
 2. Strict filters: >= 10 trades, avg trade > 0.30%, WR >= 65%, PF >= 1.5
 3. No leveraged/inverse ETFs, no bond ETFs with tiny moves
 4. New passes enter as Tier 3 (probation), max 5 per month

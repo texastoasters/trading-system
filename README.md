@@ -52,7 +52,7 @@ chmod 600 ~/.trading_env
 
 # 5. Verify infrastructure
 source ~/.trading_env
-python3 verify_alpaca.py
+python3 scripts/verify_alpaca.py
 
 # 6. Link skills to OpenClaw workspace
 ln -s ~/trading-system/skills <your-openclaw-workspace>/skills/trading
@@ -100,7 +100,7 @@ Redis runs on port 6379, TimescaleDB on port 5432. The database schema is automa
 5. Visit `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates` in a browser
 6. Find your `chat_id` in the JSON response
 7. Add both to `~/.trading_env`
-8. Test: `python3 notify.py`
+8. Test: `python3 scripts/notify.py`
 
 The system sends: trade entry/exit alerts (immediate), daily summaries (4:15 PM ET), weekly summaries (Saturday morning), monthly summaries (1st of month), drawdown alerts, and critical system alerts. If Telegram is not configured, notifications print to console logs instead.
 
@@ -141,41 +141,43 @@ Logs rotate automatically — files older than 7 days are deleted on startup.
 
 ### Manual Commands
 
+Run from the repo root (`~/trading-system`) after `source ~/.trading_env`.
+
 ```bash
 # Run a single screener scan (no daemon)
-python3 screener.py
+PYTHONPATH=scripts python3 skills/screener/screener.py
 
 # Run a single watcher evaluation cycle
-python3 watcher.py
+PYTHONPATH=scripts python3 skills/watcher/watcher.py
 
 # Health check only
-python3 supervisor.py --health
+PYTHONPATH=scripts python3 skills/supervisor/supervisor.py --health
 
 # End-of-day review only
-python3 supervisor.py --eod
+PYTHONPATH=scripts python3 skills/supervisor/supervisor.py --eod
 
 # Reset daily P&L counters (normally automatic at 9:25 AM ET)
-python3 supervisor.py --reset-daily
+PYTHONPATH=scripts python3 skills/supervisor/supervisor.py --reset-daily
 
 # Startup verification only
-python3 executor.py --verify
+PYTHONPATH=scripts python3 skills/executor/executor.py --verify
 ```
 
 ### Backtesting and Discovery
 
 ```bash
 # Backtest RSI-2 on SPY and QQQ (5 years)
-python3 backtest_rsi2.py
+python3 scripts/backtest_rsi2.py
 
 # Backtest on sector ETFs and crypto
-python3 backtest_rsi2_expanded.py
+python3 scripts/backtest_rsi2_expanded.py
 
 # Full 26-instrument universe scan with tier classification
-python3 backtest_rsi2_universe.py
+python3 scripts/backtest_rsi2_universe.py
 
 # Discover new instruments from Alpaca's 12,000+ tradeable assets
-python3 discover_universe.py
-python3 discover_universe.py --max-candidates 50
+python3 scripts/discover_universe.py
+python3 scripts/discover_universe.py --max-candidates 50
 ```
 
 ## File Structure
@@ -189,25 +191,31 @@ python3 discover_universe.py --max-candidates 50
 ├── docker-compose.yml               # Redis + TimescaleDB
 ├── init-db/
 │   └── 001_create_schema.sql        # Database schema
-├── config.py                        # Shared config, Redis keys, defaults
-├── indicators.py                    # Technical indicators library
-├── notify.py                        # Telegram notification module
-├── screener.py                      # Screener Agent
-├── watcher.py                       # Watcher Agent
-├── portfolio_manager.py             # Portfolio Manager Agent
-├── executor.py                      # Trade Executor Agent (zero LLM)
-├── supervisor.py                    # Supervisor Agent
-├── verify_alpaca.py                 # Infrastructure verification
-├── backtest_rsi2.py                 # RSI-2 backtester (SPY/QQQ)
-├── backtest_rsi2_expanded.py        # RSI-2 on sector ETFs + crypto
-├── backtest_rsi2_universe.py        # Full universe scanner
-├── discover_universe.py             # Monthly discovery scanner
-├── skills/                          # Symlinked to OpenClaw workspace
-│   ├── screener/SKILL.md
-│   ├── watcher/SKILL.md
-│   ├── portfolio_manager/SKILL.md
-│   ├── executor/SKILL.md
-│   └── supervisor/SKILL.md
+├── scripts/
+│   ├── config.py                    # Shared config, Redis keys, defaults
+│   ├── indicators.py                # Technical indicators library
+│   ├── notify.py                    # Telegram notification module
+│   ├── verify_alpaca.py             # Infrastructure verification
+│   ├── backtest_rsi2.py             # RSI-2 backtester (SPY/QQQ)
+│   ├── backtest_rsi2_expanded.py    # RSI-2 on sector ETFs + crypto
+│   ├── backtest_rsi2_universe.py    # Full universe scanner
+│   └── discover_universe.py         # Monthly discovery scanner
+├── skills/                          # Agent code + OpenClaw skill definitions
+│   ├── screener/
+│   │   ├── screener.py              # Screener Agent
+│   │   └── SKILL.md
+│   ├── watcher/
+│   │   ├── watcher.py               # Watcher Agent
+│   │   └── SKILL.md
+│   ├── portfolio_manager/
+│   │   ├── portfolio_manager.py     # Portfolio Manager Agent
+│   │   └── SKILL.md
+│   ├── executor/
+│   │   ├── executor.py              # Trade Executor Agent (zero LLM)
+│   │   └── SKILL.md
+│   └── supervisor/
+│       ├── supervisor.py            # Supervisor Agent
+│       └── SKILL.md
 └── docs/
     ├── agentic_day_trading_system_report_v2.md
     ├── phase1_market_microstructure_constraints.md

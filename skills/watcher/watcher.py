@@ -5,9 +5,9 @@ watcher.py — Watcher Agent
 Monitors the watchlist and open positions for RSI-2 entry and exit signals.
 Publishes signals to Redis for the Portfolio Manager to evaluate.
 
-Usage:
-    python3 watcher.py              # Run one evaluation cycle
-    python3 watcher.py --daemon     # Run continuously
+Usage (from repo root):
+    PYTHONPATH=scripts python3 skills/watcher/watcher.py              # Run one evaluation cycle
+    PYTHONPATH=scripts python3 skills/watcher/watcher.py --daemon     # Run continuously
 """
 
 import json
