@@ -21,6 +21,7 @@ set -euo pipefail
 # ── Configuration ───────────────────────────────────────────
 
 TRADING_DIR="${HOME}/trading-system"
+SCRIPTS_DIR="${TRADING_DIR}/scripts"
 LOG_DIR="${TRADING_DIR}/logs"
 PID_DIR="${TRADING_DIR}/pids"
 ENV_FILE="${HOME}/.trading_env"
@@ -102,8 +103,8 @@ check_infrastructure() {
 
     # Check that agent scripts exist
     for agent in "${AGENTS[@]}"; do
-        if [ ! -f "${TRADING_DIR}/${agent}.py" ]; then
-            log_error "Agent script not found: ${TRADING_DIR}/${agent}.py"
+        if [ ! -f "${TRADING_DIR}/skills/${agent}/${agent}.py" ]; then
+            log_error "Agent script not found: ${TRADING_DIR}/skills/${agent}/${agent}.py"
             exit 1
         fi
     done
@@ -134,9 +135,10 @@ start_system() {
     log_step "Running executor startup verification..."
     # shellcheck source=/dev/null
     source "$ENV_FILE"
+    export PYTHONPATH="${SCRIPTS_DIR}:${PYTHONPATH:-}"
     cd "$TRADING_DIR"
 
-    if ! python3 executor.py --verify 2>&1 | tee "${LOG_DIR}/verify_${DATE_SUFFIX}.log"; then
+    if ! python3 skills/executor/executor.py --verify 2>&1 | tee "${LOG_DIR}/verify_${DATE_SUFFIX}.log"; then
         log_error "Startup verification failed — aborting"
         exit 1
     fi
@@ -158,7 +160,7 @@ start_system() {
         log_step "Starting ${agent}..."
 
         # Start agent in background with logging
-        nohup python3 "${TRADING_DIR}/${agent}.py" --daemon \
+        nohup python3 "${TRADING_DIR}/skills/${agent}/${agent}.py" --daemon \
             >> "${LOG_DIR}/${agent}_${DATE_SUFFIX}.log" 2>&1 &
 
         agent_pid=$!

@@ -5,12 +5,12 @@ supervisor.py — Supervisor Agent
 Monitors system health, enforces circuit breakers, runs end-of-day reviews,
 sends Telegram summaries, and manages the instrument universe.
 
-Usage:
-    python3 supervisor.py                  # Run health check + EOD review
-    python3 supervisor.py --daemon         # Run continuously
-    python3 supervisor.py --health         # Health check only
-    python3 supervisor.py --eod            # End-of-day review only
-    python3 supervisor.py --reset-daily    # Reset daily P&L (run at market open)
+Usage (from repo root):
+    PYTHONPATH=scripts python3 skills/supervisor/supervisor.py                  # Run health check + EOD review
+    PYTHONPATH=scripts python3 skills/supervisor/supervisor.py --daemon         # Run continuously
+    PYTHONPATH=scripts python3 skills/supervisor/supervisor.py --health         # Health check only
+    PYTHONPATH=scripts python3 skills/supervisor/supervisor.py --eod            # End-of-day review only
+    PYTHONPATH=scripts python3 skills/supervisor/supervisor.py --reset-daily    # Reset daily P&L (run at market open)
 """
 
 import json
