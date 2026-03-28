@@ -331,4 +331,7 @@ GOOGL, XLF, META, TSLA, XLC, DIA, BTC/USD
 **Tier 3 — Marginal** (active only when higher tiers idle, ~26 trades/year):
 V, XLE, XLV, IWM
 
-v1.0.0
+# Documentation
+Design documents and research results are stored in ./docs.
+
+v1.0.1
