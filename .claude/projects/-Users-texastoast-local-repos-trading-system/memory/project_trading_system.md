@@ -13,7 +13,7 @@ Autonomous day trading system (`~/trading-system`) targeting a $5,000 account vi
 **How to apply:** Frame all changes in context of the five-agent pipeline and signal flow. Respect Rule 1 (no debt/shorting/margin) as a hard invariant.
 
 ## Current Status
-v1.0.0 — Stage 2 (agent development) complete. **Next step: integration testing** — run all five agents together on paper trading to verify full signal flow end-to-end.
+v1.0.2 — Stage 2 (agent development) complete. Directory restructure merged (PR #1). **Next step: integration testing** — run all five agents together on paper trading to verify full signal flow end-to-end.
 
 ## Five Agents (files in `skills/*/`)
 1. **Screener** (`skills/screener/screener.py`) — EOD scan at 4:15 PM ET, RSI-2 + regime via ADX on SPY, publishes watchlist to Redis. 3–5 LLM calls/day.
