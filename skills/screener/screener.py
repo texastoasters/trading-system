@@ -5,9 +5,9 @@ screener.py — Screener Agent
 Monitors the active instrument universe for RSI-2 entry conditions.
 Runs end-of-day scans and publishes a ranked watchlist to Redis.
 
-Usage:
-    python3 screener.py              # Run one scan
-    python3 screener.py --daemon     # Run continuously on schedule
+Usage (from repo root):
+    PYTHONPATH=scripts python3 skills/screener/screener.py              # Run one scan
+    PYTHONPATH=scripts python3 skills/screener/screener.py --daemon     # Run continuously on schedule
 """
 
 import json
