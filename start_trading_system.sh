@@ -160,7 +160,7 @@ start_system() {
         log_step "Starting ${agent}..."
 
         # Start agent in background with logging
-        nohup python3 "${TRADING_DIR}/skills/${agent}/${agent}.py" --daemon \
+        nohup python3 -u "${TRADING_DIR}/skills/${agent}/${agent}.py" --daemon \
             >> "${LOG_DIR}/${agent}_${DATE_SUFFIX}.log" 2>&1 &
 
         agent_pid=$!
