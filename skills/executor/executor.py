@@ -410,10 +410,10 @@ def daemon_loop():
     pubsub = r.pubsub()
     pubsub.subscribe(Keys.APPROVED_ORDERS)
 
-    for msg in pubsub.listen():
+    while True:
         r.set(Keys.heartbeat("executor"), datetime.now().isoformat())
-
-        if msg['type'] != 'message':
+        msg = pubsub.get_message(timeout=60)
+        if msg is None or msg['type'] != 'message':
             continue
 
         try:
