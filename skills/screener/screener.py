@@ -120,7 +120,7 @@ def scan_instrument(symbol, data, regime_info):
         threshold = config.RSI2_ENTRY_CONSERVATIVE
 
     # Check trend filter
-    above_sma = latest_close > latest_sma200
+    above_sma = bool(latest_close > latest_sma200)
 
     # Classify priority
     priority = None
