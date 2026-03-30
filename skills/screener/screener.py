@@ -28,7 +28,7 @@ from indicators import rsi, sma, atr, adx
 from notify import notify
 
 
-def fetch_daily_bars(symbol, stock_client, crypto_client, days=250):
+def fetch_daily_bars(symbol, stock_client, crypto_client, days=365):
     """Fetch enough daily bars for SMA-200 + indicator warmup."""
     end = datetime.now() - timedelta(hours=1)
     start = end - timedelta(days=days)
