@@ -2,8 +2,9 @@
 #
 # start_trading_system.sh — Trading System Startup Script
 #
-# Starts all five agents in the correct order with proper logging.
-# Each agent runs in the background with output logged to ~/trading-system/logs/
+# Starts daemon agents (executor, portfolio_manager) with proper logging.
+# Screener, watcher, and supervisor are managed by OpenClaw cron jobs, not this script.
+# Each daemon agent runs in the background with output logged to ~/trading-system/logs/
 #
 # Usage:
 #   ./start_trading_system.sh              # Start all agents
@@ -26,7 +27,7 @@ LOG_DIR="${TRADING_DIR}/logs"
 PID_DIR="${TRADING_DIR}/pids"
 ENV_FILE="${HOME}/.trading_env"
 
-AGENTS=("executor" "supervisor" "portfolio_manager" "screener" "watcher")
+AGENTS=("executor" "portfolio_manager")
 
 # Colors for output
 RED='\033[0;31m'
@@ -179,7 +180,7 @@ start_system() {
 
     echo ""
     echo "════════════════════════════════════════════════════════"
-    log_info "All agents started. Logs in ${LOG_DIR}/"
+    log_info "Daemon agents started. Logs in ${LOG_DIR}/"
     echo ""
     echo "  Monitor logs:    tail -f ${LOG_DIR}/*_${DATE_SUFFIX}.log"
     echo "  Check status:    $0 --status"
@@ -226,7 +227,7 @@ stop_system() {
     done
 
     echo ""
-    log_info "All agents stopped"
+    log_info "Daemon agents stopped"
 
     # Note: server-side stop-losses on Alpaca remain active
     echo ""
@@ -287,7 +288,7 @@ check_status() {
 
     echo ""
     if $all_running; then
-        log_info "All agents running"
+        log_info "All daemon agents running"
     else
         log_warn "Some agents are not running"
     fi
@@ -311,8 +312,8 @@ case "${1:-start}" in
     --help|-help|-h)
         echo "Usage: $0 [--start|--stop|--status|--restart|--help]"
         echo ""
-        echo "  --start     Start all agents (default)"
-        echo "  --stop      Stop all agents gracefully"
+        echo "  --start     Start daemon agents (default)"
+        echo "  --stop      Stop daemon agents gracefully"
         echo "  --status    Show agent status and system state"
         echo "  --restart   Stop then start"
         echo "  --help      Show this help"

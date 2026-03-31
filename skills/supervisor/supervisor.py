@@ -141,19 +141,34 @@ def run_health_check(r):
 
     issues = []
 
-    # Agent heartbeats
-    for agent in ["screener", "watcher", "portfolio_manager", "executor"]:
+    # Daemon agent heartbeats — should always be running, flag if stale > 5 min
+    for agent in ["executor", "portfolio_manager"]:
         hb = r.get(Keys.heartbeat(agent))
         if hb:
             last = datetime.fromisoformat(hb)
             age_min = (datetime.now() - last).total_seconds() / 60
-            if age_min > 60:
-                issues.append(f"{agent}: heartbeat {age_min:.0f}min old")
-                print(f"  ⚠️  {agent}: last heartbeat {age_min:.0f} min ago")
+            if age_min > 5:
+                issues.append(f"{agent}: heartbeat {age_min:.0f}min old (daemon may have crashed)")
+                print(f"  ⚠️  {agent}: last heartbeat {age_min:.0f} min ago — daemon may have crashed")
             else:
                 print(f"  ✅ {agent}: alive ({age_min:.0f}min ago)")
         else:
-            print(f"  ⚠️  {agent}: no heartbeat recorded")
+            issues.append(f"{agent}: no heartbeat — daemon not running")
+            print(f"  ⚠️  {agent}: no heartbeat — daemon not running")
+
+    # Cron-triggered agent heartbeats — gaps between runs are expected, flag only if stale > 6 hours
+    for agent in ["screener", "watcher"]:
+        hb = r.get(Keys.heartbeat(agent))
+        if hb:
+            last = datetime.fromisoformat(hb)
+            age_min = (datetime.now() - last).total_seconds() / 60
+            if age_min > 360:
+                issues.append(f"{agent}: last run {age_min:.0f}min ago (cron may have missed)")
+                print(f"  ⚠️  {agent}: last run {age_min:.0f} min ago — cron may have missed")
+            else:
+                print(f"  ✅ {agent}: last run {age_min:.0f}min ago")
+        else:
+            print(f"  ℹ️  {agent}: no runs yet")
 
     # Equity check
     equity = get_simulated_equity(r)
