@@ -12,7 +12,7 @@ import redis
 
 def _load_trading_env():
     """Auto-load ~/.trading_env so scripts don't require manual sourcing."""
-    env_path = os.path.expanduser("~/.trading_env")
+    env_path = "/home/linuxuser/.trading_env"
     if not os.path.exists(env_path):
         return
     with open(env_path) as f:
