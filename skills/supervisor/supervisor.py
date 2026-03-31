@@ -156,19 +156,22 @@ def run_health_check(r):
             issues.append(f"{agent}: no heartbeat — daemon not running")
             print(f"  ⚠️  {agent}: no heartbeat — daemon not running")
 
-    # Cron-triggered agent heartbeats — gaps between runs are expected, flag only if stale > 6 hours
-    for agent in ["screener", "watcher"]:
+    # Cron-triggered agent heartbeats — gaps between runs are expected
+    # screener: runs once daily at 4:15 PM ET, flag if stale > 25 hours
+    # watcher:  runs every 4 hours, flag if stale > 5 hours
+    cron_thresholds = {"screener": 25 * 60, "watcher": 5 * 60}  # in minutes
+    for agent, threshold_min in cron_thresholds.items():
         hb = r.get(Keys.heartbeat(agent))
         if hb:
             last = datetime.fromisoformat(hb)
             age_min = (datetime.now() - last).total_seconds() / 60
-            if age_min > 360:
+            if age_min > threshold_min:
                 issues.append(f"{agent}: last run {age_min:.0f}min ago (cron may have missed)")
                 print(f"  ⚠️  {agent}: last run {age_min:.0f} min ago — cron may have missed")
             else:
                 print(f"  ✅ {agent}: last run {age_min:.0f}min ago")
         else:
-            print(f"  ℹ️  {agent}: no runs yet")
+            print(f"  ℹ️  {agent}: awaiting first run")
 
     # Equity check
     equity = get_simulated_equity(r)
