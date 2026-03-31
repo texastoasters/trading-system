@@ -44,6 +44,8 @@ except ImportError:
     psycopg2 = None
 
 
+import config  # noqa: F401 — auto-loads /home/linuxuser/.trading_env
+
 API_KEY = os.environ.get("ALPACA_API_KEY")
 SECRET_KEY = os.environ.get("ALPACA_SECRET_KEY")
 

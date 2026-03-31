@@ -109,6 +109,12 @@ def evaluate_entry_signal(r, signal):
     if drawdown >= config.DRAWDOWN_CAUTION and signal_tier >= 3:
         risk_mult = min(risk_mult, 0.5)
 
+    # ── Deduplication: skip if position already exists (including stale qty=0) ──
+    existing_positions = get_open_positions(r)
+    if symbol in existing_positions:
+        existing_qty = existing_positions[symbol].get("quantity", 0)
+        return None, f"Position already exists for {symbol} (qty={existing_qty})"
+
     # ── Disabled instrument check ──
     disabled_raw = r.get(Keys.DISABLED_INSTRUMENTS)
     disabled = json.loads(disabled_raw) if disabled_raw else []
