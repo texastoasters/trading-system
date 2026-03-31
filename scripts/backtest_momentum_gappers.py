@@ -33,6 +33,8 @@ import random
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 
+import pytz
+
 import numpy as np
 
 try:
@@ -41,7 +43,7 @@ try:
     from alpaca.trading.enums import AssetClass, AssetStatus
     from alpaca.data.historical import StockHistoricalDataClient
     from alpaca.data.requests import StockBarsRequest
-    from alpaca.data.timeframe import TimeFrame
+    from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 except ImportError:
     print("ERROR: alpaca-py not installed")
     sys.exit(1)
@@ -142,12 +144,13 @@ def fetch_intraday_bars(symbol, date_str, data_client):
     """Fetch 5-minute bars for a single symbol on a specific date."""
     try:
         day = datetime.strptime(date_str, "%Y-%m-%d")
-        start = day.replace(hour=9, minute=30)
-        end = day.replace(hour=16, minute=0)
+        et = pytz.timezone('America/New_York')
+        start = et.localize(day.replace(hour=9, minute=30))
+        end = et.localize(day.replace(hour=16, minute=0))
 
         request = StockBarsRequest(
             symbol_or_symbols=symbol,
-            timeframe=TimeFrame(5, "Min"),
+            timeframe=TimeFrame(5, TimeFrameUnit.Minute),
             start=start, end=end,
         )
         bars = data_client.get_stock_bars(request)
