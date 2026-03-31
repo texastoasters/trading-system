@@ -223,7 +223,8 @@ def analyze_intraday(event, intraday_bars):
     lows = [float(b.low) for b in intraday_bars]
     closes = [float(b.close) for b in intraday_bars]
     volumes = [float(b.volume) for b in intraday_bars]
-    times = [b.timestamp for b in intraday_bars]
+    et = pytz.timezone('America/New_York')
+    times = [b.timestamp.astimezone(et) for b in intraday_bars]
 
     open_price = opens[0]
     if open_price <= 0:
@@ -309,7 +310,7 @@ def simulate_strategies(events):
         if e.max_loss_from_open_pct <= -2.0:
             results['buy_open_stop_2pct'].append(-2.0)
         else:
-            results['buy_open_sell_close'].append(e.close_vs_open_pct)
+            results['buy_open_stop_2pct'].append(e.close_vs_open_pct)
 
         # Strategy 3: Buy break of 30-min opening range high, sell at close
         if e.broke_opening_range:
