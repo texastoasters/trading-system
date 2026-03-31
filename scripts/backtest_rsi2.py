@@ -29,6 +29,7 @@ except ImportError:
     sys.exit(1)
 
 from indicators import rsi, sma, atr, adx
+import config  # noqa: F401 — auto-loads /home/linuxuser/.trading_env
 
 
 # ── Data structures ─────────────────────────────────────────
