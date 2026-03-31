@@ -9,6 +9,29 @@ import os
 import json
 import redis
 
+
+def _load_trading_env():
+    """Auto-load ~/.trading_env so scripts don't require manual sourcing."""
+    env_path = os.path.expanduser("~/.trading_env")
+    if not os.path.exists(env_path):
+        return
+    with open(env_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("export "):
+                line = line[7:]
+            if "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            val = val.strip().strip('"').strip("'")
+            os.environ.setdefault(key, val)
+
+
+_load_trading_env()
+
 # ── Environment ─────────────────────────────────────────────
 
 ALPACA_API_KEY = os.environ.get("ALPACA_API_KEY", "")

@@ -114,6 +114,10 @@ def execute_buy(r, trading_client, order):
     symbol = order["symbol"]
     quantity = order["quantity"]
 
+    if quantity <= 0:
+        print(f"  [Executor] ❌ Invalid quantity {quantity} for {symbol} — rejecting")
+        return False
+
     try:
         if order.get("order_type") == "limit" and order.get("limit_price"):
             req = LimitOrderRequest(
@@ -149,6 +153,10 @@ def execute_buy(r, trading_client, order):
 
         fill_price = float(filled_order.filled_avg_price or order["entry_price"])
         fill_qty = float(filled_order.filled_qty or quantity)
+
+        if fill_qty <= 0:
+            print(f"  [Executor] ❌ Buy for {symbol} filled with qty=0 — order did not execute")
+            return False
 
         # Submit server-side stop-loss
         stop_order_id = submit_stop_loss(trading_client, symbol, fill_qty, order["stop_price"])
@@ -209,15 +217,24 @@ def execute_sell(r, trading_client, order):
         print(f"  [Executor] No position found for {symbol}")
         return False
 
-    try:
-        # Cancel the existing stop-loss order first
-        if pos.get("stop_order_id"):
-            try:
-                trading_client.cancel_order_by_id(pos["stop_order_id"])
-            except:
-                pass  # may already be cancelled/filled
+    quantity = pos["quantity"]
 
-        quantity = pos["quantity"]
+    # Guard: clean up stale zero-quantity positions rather than trying to trade them
+    if quantity <= 0:
+        print(f"  [Executor] ⚠️ {symbol} has qty={quantity} — cleaning up stale position")
+        del positions[symbol]
+        r.set(Keys.POSITIONS, json.dumps(positions))
+        return False
+
+    # Guard: don't submit equity sells when market is closed — position and stop remain intact
+    if not is_crypto(symbol):
+        clock = trading_client.get_clock()
+        if not clock.is_open:
+            print(f"  [Executor] ⚠️ Market closed — deferring sell for {symbol} until next session")
+            return False
+
+    try:
+        # Submit the sell order — stop-loss stays active until fill is confirmed
         req = MarketOrderRequest(
             symbol=symbol,
             qty=int(quantity) if not is_crypto(symbol) else quantity,
@@ -229,7 +246,20 @@ def execute_sell(r, trading_client, order):
         time.sleep(2)
         filled_order = trading_client.get_order_by_id(alpaca_order.id)
 
-        fill_price = float(filled_order.filled_avg_price or order.get("exit_price", 0))
+        # Guard: only process fill if the order actually filled — leave everything intact otherwise
+        if filled_order.status != "filled":
+            print(f"  [Executor] ⚠️ Sell for {symbol} is {filled_order.status} — "
+                  f"leaving position and stop-loss intact")
+            return False
+
+        # Confirmed filled — now safe to cancel the stop-loss
+        if pos.get("stop_order_id"):
+            try:
+                trading_client.cancel_order_by_id(pos["stop_order_id"])
+            except:
+                pass  # may already be triggered/cancelled
+
+        fill_price = float(filled_order.filled_avg_price)
         entry_price = pos["entry_price"]
 
         # Calculate P&L
