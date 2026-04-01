@@ -150,12 +150,28 @@ def execute_buy(r, trading_client, order):
         alpaca_order = trading_client.submit_order(req)
         print(f"  [Executor] Order submitted: {alpaca_order.id} ({alpaca_order.status})")
 
-        # Wait briefly for fill (paper trading usually fills instantly)
-        time.sleep(2)
-        filled_order = trading_client.get_order_by_id(alpaca_order.id)
+        # Wait for fill — poll up to 10 seconds
+        filled_order = None
+        for _ in range(5):
+            time.sleep(2)
+            filled_order = trading_client.get_order_by_id(alpaca_order.id)
+            if filled_order.status == "filled":
+                break
+
+        if filled_order.status != "filled":
+            print(f"  [Executor] ⚠️ Buy for {symbol} is {filled_order.status} after 10s — "
+                  f"filled_qty={filled_order.filled_qty}/{quantity}")
+            # If partially filled, use what we got; if nothing, bail
+            if not filled_order.filled_qty or float(filled_order.filled_qty) <= 0:
+                print(f"  [Executor] ❌ Buy for {symbol} did not fill — cancelling")
+                try:
+                    trading_client.cancel_order_by_id(alpaca_order.id)
+                except:
+                    pass
+                return False
 
         fill_price = float(filled_order.filled_avg_price or order["entry_price"])
-        fill_qty = float(filled_order.filled_qty or quantity)
+        fill_qty = float(filled_order.filled_qty or 0)
 
         if fill_qty <= 0:
             print(f"  [Executor] ❌ Buy for {symbol} filled with qty=0 — order did not execute")
