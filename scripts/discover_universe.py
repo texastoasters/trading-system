@@ -25,6 +25,7 @@ Usage:
 
 import os
 import sys
+import json
 import argparse
 import random
 from datetime import datetime, timedelta
@@ -260,6 +261,55 @@ def run_rsi2_quick(symbol, data_client, years=2):
         return None, str(e)
 
 
+def save_to_redis(new_passes, dry_run=False):
+    """Save discovered instruments to Redis universe as tier 3."""
+    from config import Keys, get_redis, DEFAULT_UNIVERSE, DEFAULT_TIERS, SECTOR_MAP
+
+    r = get_redis()
+    universe_raw = r.get(Keys.UNIVERSE)
+    universe = json.loads(universe_raw) if universe_raw else dict(DEFAULT_UNIVERSE)
+    tiers_raw = r.get(Keys.TIERS)
+    tiers = json.loads(tiers_raw) if tiers_raw else dict(DEFAULT_TIERS)
+
+    existing_all = set(universe["tier1"] + universe["tier2"] + universe["tier3"])
+    added = []
+
+    for p in new_passes:
+        sym = p["symbol"]
+        if sym in existing_all:
+            continue
+        added.append(sym)
+        universe["tier3"].append(sym)
+        tiers[sym] = 3
+        # Auto-detect sector from name heuristics
+        if sym not in SECTOR_MAP:
+            name_upper = p.get("name", "").upper()
+            if p.get("type") == "ETF":
+                SECTOR_MAP[sym] = "broad"
+            else:
+                SECTOR_MAP[sym] = "unknown"
+
+    if not added:
+        print("\n  No new instruments to add (all already in universe).")
+        return
+
+    universe["last_revalidation"] = datetime.now().isoformat()
+
+    if dry_run:
+        print(f"\n  [DRY RUN] Would add {len(added)} instruments to tier 3:")
+        for sym in added:
+            print(f"    + {sym}")
+        print(f"  Universe would grow to {len(existing_all) + len(added)} instruments.")
+        return
+
+    r.set(Keys.UNIVERSE, json.dumps(universe))
+    r.set(Keys.TIERS, json.dumps(tiers))
+    print(f"\n  ✅ Saved {len(added)} new instruments to Redis (tier 3):")
+    for sym in added:
+        print(f"    + {sym}")
+    print(f"  Universe now has {len(existing_all) + len(added)} instruments.")
+
+
 def main():
     parser = argparse.ArgumentParser(description="RSI-2 Universe Discovery Scanner")
     parser.add_argument("--max-candidates", type=int, default=30,
@@ -270,6 +320,10 @@ def main():
                         help="Only scan stocks, skip ETFs")
     parser.add_argument("--min-volume", type=int, default=500000,
                         help="Minimum avg daily volume (default: 500000)")
+    parser.add_argument("--save", action="store_true",
+                        help="Save passing instruments to Redis universe (tier 3)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Show what --save would do without writing to Redis")
     args = parser.parse_args()
 
     api_key = os.environ.get("ALPACA_API_KEY")
@@ -383,18 +437,27 @@ def main():
         print(f"\n  Additional trades/year from discoveries: {total_new_tpy:.0f}")
         print(f"  Additional trades/month: {total_new_tpy/12:.1f}")
 
-        # Combined with existing universe
-        existing_tpy = 125  # from universe scanner
-        combined = existing_tpy + total_new_tpy
+        # Combined with existing universe (query Redis for actual count)
+        from config import Keys, get_redis, DEFAULT_UNIVERSE
+        _r = get_redis()
+        _universe_raw = _r.get(Keys.UNIVERSE)
+        _universe = json.loads(_universe_raw) if _universe_raw else DEFAULT_UNIVERSE
+        existing_count = len(_universe["tier1"] + _universe["tier2"] + _universe["tier3"])
         print(f"\n  UPDATED UNIVERSE PROJECTION:")
-        print(f"    Existing instruments:  17 ({existing_tpy} trades/yr)")
+        print(f"    Existing instruments:  {existing_count}")
         print(f"    New discoveries:       {len(new_passes)} ({total_new_tpy:.0f} trades/yr)")
-        print(f"    Combined:              {17 + len(new_passes)} instruments "
-              f"({combined:.0f} trades/yr, {combined/12:.1f}/month)")
+        print(f"    Combined:              {existing_count + len(new_passes)} instruments")
     else:
         print(f"\n  No new instruments found in this scan.")
         print(f"  This is normal — most stocks don't mean-revert cleanly on RSI-2.")
         print(f"  Try running again for a different random sample, or adjust filters.")
+
+    # Save to Redis if requested
+    if new_passes and (args.save or args.dry_run):
+        save_to_redis(new_passes, dry_run=args.dry_run)
+    elif new_passes and not args.save:
+        print(f"\n  💡 Run with --save to add these {len(new_passes)} instruments to the Redis universe.")
+        print(f"     Use --dry-run to preview changes first.")
 
     print(f"\n  NOTE: This scanner samples randomly from ~{len(candidates)} candidates.")
     print(f"  Run it multiple times to cover more of the universe.")
