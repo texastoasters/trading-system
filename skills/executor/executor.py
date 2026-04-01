@@ -118,6 +118,9 @@ def execute_buy(r, trading_client, order):
         print(f"  [Executor] ❌ Invalid quantity {quantity} for {symbol} — rejecting")
         return False
 
+    # Cancel any stale orders for this symbol to avoid wash trade conflicts
+    cancel_existing_orders(trading_client, symbol)
+
     try:
         if order.get("order_type") == "limit" and order.get("limit_price"):
             req = LimitOrderRequest(
@@ -147,12 +150,28 @@ def execute_buy(r, trading_client, order):
         alpaca_order = trading_client.submit_order(req)
         print(f"  [Executor] Order submitted: {alpaca_order.id} ({alpaca_order.status})")
 
-        # Wait briefly for fill (paper trading usually fills instantly)
-        time.sleep(2)
-        filled_order = trading_client.get_order_by_id(alpaca_order.id)
+        # Wait for fill — poll up to 10 seconds
+        filled_order = None
+        for _ in range(5):
+            time.sleep(2)
+            filled_order = trading_client.get_order_by_id(alpaca_order.id)
+            if filled_order.status == "filled":
+                break
+
+        if filled_order.status != "filled":
+            print(f"  [Executor] ⚠️ Buy for {symbol} is {filled_order.status} after 10s — "
+                  f"filled_qty={filled_order.filled_qty}/{quantity}")
+            # If partially filled, use what we got; if nothing, bail
+            if not filled_order.filled_qty or float(filled_order.filled_qty) <= 0:
+                print(f"  [Executor] ❌ Buy for {symbol} did not fill — cancelling")
+                try:
+                    trading_client.cancel_order_by_id(alpaca_order.id)
+                except:
+                    pass
+                return False
 
         fill_price = float(filled_order.filled_avg_price or order["entry_price"])
-        fill_qty = float(filled_order.filled_qty or quantity)
+        fill_qty = float(filled_order.filled_qty or 0)
 
         if fill_qty <= 0:
             print(f"  [Executor] ❌ Buy for {symbol} filled with qty=0 — order did not execute")
@@ -320,23 +339,47 @@ def execute_sell(r, trading_client, order):
         return False
 
 
-def submit_stop_loss(trading_client, symbol, quantity, stop_price):
-    """Submit a server-side GTC stop-loss order."""
+def cancel_existing_orders(trading_client, symbol):
+    """Cancel all open orders for a symbol. Returns count cancelled."""
     try:
-        req = StopOrderRequest(
-            symbol=symbol,
-            qty=int(quantity) if not is_crypto(symbol) else quantity,
-            side=OrderSide.SELL,
-            stop_price=round(stop_price, 2),
-            time_in_force=TimeInForce.GTC,
-        )
-        stop_order = trading_client.submit_order(req)
-        print(f"  [Executor] Stop-loss placed: {stop_order.id} @ ${stop_price:.2f}")
-        return str(stop_order.id)
+        req = GetOrdersRequest(status=QueryOrderStatus.OPEN, symbols=[symbol])
+        open_orders = trading_client.get_orders(req)
+        for o in open_orders:
+            try:
+                trading_client.cancel_order_by_id(o.id)
+                print(f"  [Executor] Cancelled stale order {o.id} ({o.side} {o.type}) for {symbol}")
+            except:
+                pass
+        if open_orders:
+            time.sleep(1)  # brief pause for cancellations to settle
+        return len(open_orders)
     except Exception as e:
-        print(f"  [Executor] ⚠️ Failed to place stop-loss: {e}")
-        critical_alert(f"Stop-loss failed for {symbol}: {e}")
-        return None
+        print(f"  [Executor] ⚠️ Failed to check/cancel orders for {symbol}: {e}")
+        return 0
+
+
+def submit_stop_loss(trading_client, symbol, quantity, stop_price):
+    """Submit a server-side GTC stop-loss order. Retries once after cancelling conflicting orders."""
+    for attempt in range(2):
+        try:
+            req = StopOrderRequest(
+                symbol=symbol,
+                qty=int(quantity) if not is_crypto(symbol) else quantity,
+                side=OrderSide.SELL,
+                stop_price=round(stop_price, 2),
+                time_in_force=TimeInForce.GTC,
+            )
+            stop_order = trading_client.submit_order(req)
+            print(f"  [Executor] Stop-loss placed: {stop_order.id} @ ${stop_price:.2f}")
+            return str(stop_order.id)
+        except Exception as e:
+            if attempt == 0 and "wash trade" in str(e).lower():
+                print(f"  [Executor] ⚠️ Wash trade conflict — cancelling existing orders and retrying")
+                cancel_existing_orders(trading_client, symbol)
+                continue
+            print(f"  [Executor] ⚠️ Failed to place stop-loss: {e}")
+            critical_alert(f"Stop-loss failed for {symbol}: {e}")
+            return None
 
 
 # ── Startup Verification ────────────────────────────────────
