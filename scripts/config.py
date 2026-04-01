@@ -124,8 +124,8 @@ class Keys:
     PDT_COUNT = "trading:pdt:count"
     RISK_MULTIPLIER = "trading:risk_multiplier"
     SYSTEM_STATUS = "trading:system_status"
-    STRATEGY_PARAMS = "trading:strategy_params"
-    DISABLED_INSTRUMENTS = "trading:disabled_instruments"
+    # Note: disabled instruments are stored in universe["disabled"], not a separate key
+    # Note: strategy params are not yet implemented
 
     @staticmethod
     def heartbeat(agent: str) -> str:
@@ -134,10 +134,6 @@ class Keys:
     @staticmethod
     def whipsaw(symbol: str) -> str:
         return f"trading:whipsaw:{symbol}"
-
-    @staticmethod
-    def position(symbol: str) -> str:
-        return f"trading:position:{symbol}"
 
 
 # ── Redis Connection ────────────────────────────────────────
@@ -152,6 +148,8 @@ def init_redis_state(r: redis.Redis):
         r.set(Keys.UNIVERSE, json.dumps(DEFAULT_UNIVERSE))
     if not r.exists(Keys.TIERS):
         r.set(Keys.TIERS, json.dumps(DEFAULT_TIERS))
+    if not r.exists(Keys.REGIME):
+        r.set(Keys.REGIME, json.dumps({"regime": "RANGING", "adx": 20, "initialized_default": True}))
     if not r.exists(Keys.SIMULATED_EQUITY):
         r.set(Keys.SIMULATED_EQUITY, str(INITIAL_CAPITAL))
     if not r.exists(Keys.PEAK_EQUITY):

@@ -116,8 +116,8 @@ def evaluate_entry_signal(r, signal):
         return None, f"Position already exists for {symbol} (qty={existing_qty})"
 
     # ── Disabled instrument check ──
-    disabled_raw = r.get(Keys.DISABLED_INSTRUMENTS)
-    disabled = json.loads(disabled_raw) if disabled_raw else []
+    universe = json.loads(r.get(Keys.UNIVERSE) or json.dumps(config.DEFAULT_UNIVERSE))
+    disabled = universe.get("disabled", [])
     if symbol in disabled:
         return None, f"{symbol} is currently disabled"
 

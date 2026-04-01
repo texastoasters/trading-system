@@ -327,10 +327,12 @@ def reset_daily(r):
     """Reset daily counters — run at market open."""
     r.set(Keys.DAILY_PNL, "0.0")
 
-    # Reset PDT counter based on rolling window
-    # TODO: implement proper 5-day rolling window
-    # For now, just sync with Alpaca
-    print("[Supervisor] Daily counters reset.")
+    # Reset peak equity to current equity at session start so drawdown
+    # is measured within the current trading period, not against a stale peak
+    equity = get_simulated_equity(r)
+    r.set(Keys.PEAK_EQUITY, str(round(equity, 2)))
+
+    print(f"[Supervisor] Daily counters reset. Peak equity set to ${equity:,.2f}.")
 
     # Re-enable if was in daily_halt
     if r.get(Keys.SYSTEM_STATUS) == "daily_halt":

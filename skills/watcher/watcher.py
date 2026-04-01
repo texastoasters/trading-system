@@ -78,6 +78,7 @@ def generate_entry_signals(r, stock_client, crypto_client):
     """Check watchlist for entry conditions."""
     watchlist_raw = r.get(Keys.WATCHLIST)
     if not watchlist_raw:
+        print("  [Watcher] No watchlist found — screener may not have run yet")
         return []
 
     watchlist = json.loads(watchlist_raw)
@@ -194,8 +195,8 @@ def generate_exit_signals(r, stock_client, crypto_client):
                 "exit_price": stop_price,
                 "reason": f"Stop-loss hit at {stop_price}",
             }
-            # Set whipsaw cooldown
-            r.set(Keys.whipsaw(symbol), datetime.now().isoformat())
+            # Set whipsaw cooldown (auto-expires after 24h)
+            r.set(Keys.whipsaw(symbol), datetime.now().isoformat(), ex=86400)
 
         # RSI-2 exit (> 60)
         elif not np.isnan(rsi2_val) and rsi2_val > config.RSI2_EXIT:
