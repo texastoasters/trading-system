@@ -392,8 +392,16 @@ def verify_startup(trading_client, r):
     else:
         print(f"  ✅ No open positions")
 
+    # Sync PDT count from Alpaca (source of truth)
+    alpaca_pdt = int(account.daytrade_count or 0)
+    redis_pdt = int(r.get(Keys.PDT_COUNT) or 0)
+    if alpaca_pdt != redis_pdt:
+        r.set(Keys.PDT_COUNT, str(alpaca_pdt))
+        print(f"  ⚠️ PDT count synced: Redis had {redis_pdt}, Alpaca has {alpaca_pdt}")
+    else:
+        print(f"  ✅ PDT count: {alpaca_pdt}/3")
+
     print(f"  ✅ Account equity: ${float(account.equity):,.2f} (paper)")
-    print(f"  ✅ Day trade count: {account.daytrade_count}")
 
     if not all_ok:
         critical_alert("Startup verification FAILED — check logs")
