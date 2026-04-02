@@ -59,8 +59,8 @@ sudo -u linuxuser bash -c '. /home/linuxuser/.trading_env && echo "TELEGRAM_BOT_
 sudo -u linuxuser bash -c '. /home/linuxuser/.trading_env && cd /home/linuxuser/trading-system && PYTHONPATH=/home/linuxuser/trading-system/scripts python3 skills/supervisor/supervisor.py --health'
 # Should produce health check output with no import errors
 
-# 7. REMOVE THE CORRESPONDING OPENCLAW CRON JOBS
-#    Now that system cron handles these, remove them from OpenClaw
+# 7. REMOVE ALL OPENCLAW CRON JOBS
+#    System cron now handles everything. Remove all OpenClaw jobs
 #    to avoid double-execution:
 
 openclaw cron remove --name "trading-daily-reset"
@@ -68,12 +68,12 @@ openclaw cron remove --name "trading-screener-scan"
 openclaw cron remove --name "trading-watcher-cycle"
 openclaw cron remove --name "trading-health-check"
 openclaw cron remove --name "trading-discovery"
+openclaw cron remove --name "trading-eod-review"
+openclaw cron remove --name "trading-revalidation"
 
-# Verify only the AI jobs remain:
+# Verify no trading jobs remain in OpenClaw:
 openclaw cron list
-# Should show only:
-#   trading-eod-review      (30 16 * * 1-5 ET)
-#   trading-revalidation    (0 6 1 * * ET)
+# Should show no trading-* entries
 
 # 8. MONITOR THE FIRST RUN
 #    Watch syslog for the tagged output when the next job fires:
@@ -81,7 +81,7 @@ openclaw cron list
 # Live tail (the logger -t tags make filtering easy):
 sudo journalctl -t trading-health -f
 # or for all trading tags:
-sudo journalctl -t trading-reset -t trading-screener -t trading-watcher -t trading-health -t trading-discovery --since "today" -f
+sudo journalctl -t trading-reset -t trading-screener -t trading-watcher -t trading-health -t trading-eod -t trading-revalidation -t trading-discovery --since "today" -f
 
 # 9. DST CHANGEOVER
 #    No action needed. The cron file uses CRON_TZ=America/New_York and
