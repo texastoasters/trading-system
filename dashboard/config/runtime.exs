@@ -23,7 +23,9 @@ if config_env() == :prod do
   port = String.to_integer(System.get_env("PORT") || "4000")
 
   config :dashboard, DashboardWeb.Endpoint,
-    url: [host: host, port: 443, scheme: "https"],
+    # Dashboard is served at :4000 via `tailscale serve --https=4000 http://localhost:4000`
+    # Port 443 is reserved for OpenClaw on the same tailnet hostname.
+    url: [host: host, port: 4000, scheme: "https"],
     http: [
       ip: {0, 0, 0, 0},
       port: port
