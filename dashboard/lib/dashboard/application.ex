@@ -20,8 +20,8 @@ defmodule Dashboard.Application do
       # Redis connections — explicit IDs required when starting the same module twice
       # One connection for GET/MGET polling
       Supervisor.child_spec({Redix, {redis_url, [name: :redix]}}, id: :redix),
-      # One connection dedicated to pub/sub (blocked while subscribed)
-      Supervisor.child_spec({Redix, {redis_url, [name: :redix_pubsub]}}, id: :redix_pubsub),
+      # One connection dedicated to pub/sub — must be Redix.PubSub, not Redix
+      Supervisor.child_spec({Redix.PubSub, {redis_url, [name: :redix_pubsub]}}, id: :redix_pubsub),
 
       # Background GenServers
       Dashboard.RedisPoller,
