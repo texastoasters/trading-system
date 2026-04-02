@@ -40,7 +40,10 @@ if config_env() == :prod do
       ip: {0, 0, 0, 0},
       port: port
     ],
-    secret_key_base: secret_key_base
+    secret_key_base: secret_key_base,
+    # Tailscale terminates TLS and proxies to localhost — disable Phoenix's
+    # origin check since Tailscale already enforces network-level auth.
+    check_origin: false
 end
 
 # Redis URL — used by RedisPoller and RedisSubscriber
