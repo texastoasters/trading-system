@@ -32,4 +32,4 @@ TRADING_ENV=/home/linuxuser/.trading_env
 0 6 1 * *  linuxuser  . $TRADING_ENV && cd $TRADING_HOME && PYTHONPATH=$TRADING_HOME/scripts python3 skills/supervisor/supervisor.py --revalidation 2>&1 | logger -t trading-revalidation
 
 # --- Universe discovery (Monday and Wednesday, 6:00 AM ET) -----------------
-0 6 * * 1,3  linuxuser  . $TRADING_ENV && cd $TRADING_HOME && PYTHONPATH=$TRADING_HOME/scripts python3 scripts/discover_universe.py --max-candidates 50 2>&1 | logger -t trading-discovery
+0 6 * * 1,3  linuxuser  . $TRADING_ENV && cd $TRADING_HOME && PYTHONPATH=$TRADING_HOME/scripts python3 scripts/discover_universe.py --max-candidates 150 2>&1 | logger -t trading-discovery
