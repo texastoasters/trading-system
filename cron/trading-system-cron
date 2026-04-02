@@ -3,9 +3,6 @@
 # System cron jobs for the RSI-2 mean reversion trading system
 # on openboog (Vultr VPS, Ubuntu 24.04, cronie)
 #
-# These are pure script-execution jobs that do NOT require AI processing.
-# AI-dependent jobs (eod-review, revalidation) remain in OpenClaw cron.
-#
 # cronie supports CRON_TZ — all schedules are in America/New_York.
 # DST transitions are handled automatically. No manual adjustment needed.
 
@@ -22,11 +19,17 @@ TRADING_ENV=/home/linuxuser/.trading_env
 # --- Screener end-of-day scan (4:15 PM ET, after equity close, weekdays) ---
 15 16 * * 1-5  linuxuser  . $TRADING_ENV && cd $TRADING_HOME && PYTHONPATH=$TRADING_HOME/scripts python3 skills/screener/screener.py 2>&1 | logger -t trading-screener && PYTHONPATH=$TRADING_HOME/scripts python3 skills/watcher/watcher.py 2>&1 | logger -t trading-watcher
 
+# --- Supervisor end-of-day review (4:30 PM ET, after screener, weekdays) ----
+30 16 * * 1-5  linuxuser  . $TRADING_ENV && cd $TRADING_HOME && PYTHONPATH=$TRADING_HOME/scripts python3 skills/supervisor/supervisor.py --eod 2>&1 | logger -t trading-eod
+
 # --- Watcher evaluation cycle (every 4 hours, all days for BTC) ------------
 0 */4 * * *  linuxuser  . $TRADING_ENV && cd $TRADING_HOME && PYTHONPATH=$TRADING_HOME/scripts python3 skills/watcher/watcher.py 2>&1 | logger -t trading-watcher
 
 # --- Supervisor health check (every 15 min, market hours, weekdays) --------
 */15 9-15 * * 1-5  linuxuser  . $TRADING_ENV && cd $TRADING_HOME && PYTHONPATH=$TRADING_HOME/scripts python3 skills/supervisor/supervisor.py --health 2>&1 | logger -t trading-health
+
+# --- Monthly universe re-validation (1st of month, 6:00 AM ET) -------------
+0 6 1 * *  linuxuser  . $TRADING_ENV && cd $TRADING_HOME && PYTHONPATH=$TRADING_HOME/scripts python3 scripts/backtest_rsi2_universe.py 2>&1 | logger -t trading-revalidation
 
 # --- Monthly universe discovery (15th of month, 6:00 AM ET) ----------------
 0 6 15 * *  linuxuser  . $TRADING_ENV && cd $TRADING_HOME && PYTHONPATH=$TRADING_HOME/scripts python3 scripts/discover_universe.py --max-candidates 50 2>&1 | logger -t trading-discovery
