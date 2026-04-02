@@ -2,9 +2,10 @@
 # Trading system infrastructure: Redis, TimescaleDB, and Phoenix LiveView dashboard
 # Place this in ~/trading-system/ on your VPS
 #
-# Dashboard access: served via Tailscale — run once on the host after first `docker compose up`:
-#   tailscale serve https / http://localhost:4000
-# Then access at https://openboog.<tailnet>.ts.net from any device on your tailnet.
+# Dashboard access: served via Tailscale on port 4000 (443 is reserved for OpenClaw).
+# Run once on the host after first `docker compose up`:
+#   sudo tailscale serve --bg --https=4000 http://localhost:4000
+# Then access at https://openboog.<tailnet>.ts.net:4000 from any device on your tailnet.
 
 # Load variables from ~/.trading_env for ${VAR} interpolation throughout this file.
 # Docker Compose strips `export` and quotes automatically.
