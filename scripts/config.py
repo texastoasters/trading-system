@@ -27,7 +27,7 @@ def _load_trading_env():
             key, _, val = line.partition("=")
             key = key.strip()
             val = val.strip().strip('"').strip("'")
-            os.environ.setdefault(key, val)
+            os.environ[key] = val
 
 
 _load_trading_env()
