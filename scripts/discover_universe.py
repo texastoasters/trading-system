@@ -46,7 +46,7 @@ except ImportError:
 
 from indicators import rsi, sma, atr
 import config  # noqa: F401 — auto-loads /home/linuxuser/.trading_env
-from notify import notify
+from notify import notify, now_et
 
 
 # Known instruments (already tested)
@@ -483,7 +483,7 @@ def main():
         save_note = ""
 
     msg = (
-        f"🔎 <b>UNIVERSE DISCOVERY — {datetime.now().strftime('%-I:%M %p')}</b>\n"
+        f"🔎 <b>UNIVERSE DISCOVERY — {now_et().strftime('%H:%M ET')}</b>\n"
         f"\n"
         f"Candidates scanned: {len(liquid_candidates)}\n"
         f"New passes: {len(new_passes)} | New fails: {len(new_fails)}\n"

@@ -25,7 +25,7 @@ from alpaca.data.timeframe import TimeFrame
 import config
 from config import Keys, get_redis, get_active_instruments, get_tier, is_crypto
 from indicators import rsi, sma, atr, adx
-from notify import notify
+from notify import notify, now_et
 
 
 def fetch_daily_bars(symbol, stock_client, crypto_client, days=365):
@@ -232,7 +232,7 @@ def run_scan():
         watchlist_block = "No instruments near entry conditions"
 
     msg = (
-        f"📡 <b>SCREENER — {datetime.now().strftime('%-I:%M %p')}</b>\n"
+        f"📡 <b>SCREENER — {now_et().strftime('%H:%M ET')}</b>\n"
         f"\n"
         f"Regime: {regime_emoji} <b>{regime}</b> (ADX={adx_val})\n"
         f"Scanned: {len(instruments)} instruments\n"
