@@ -1,36 +1,29 @@
-<%# Trading Dashboard — RSI-2 Mean Reversion System %>
-
 <div class="min-h-screen bg-gray-900 text-gray-100 p-4 space-y-4">
-
-  <%# ── Header ──────────────────────────────────────────────────── %>
+  
   <div class="flex items-center justify-between">
     <h1 class="text-lg font-bold text-white tracking-tight">
       RSI-2 Trading System
     </h1>
     <div class="flex items-center gap-4 text-sm">
-      <%# Market status %>
+      
       <% {mkt_label, mkt_class} = market_status(@clock) %>
-      <span class={["font-medium", mkt_class]}><%= mkt_label %></span>
-      <%# System status badge %>
+      <span class={["font-medium", mkt_class]}>{mkt_label}</span>
       <.status_badge status={@system_status} />
-      <%# Last update time %>
       <span class="text-gray-600 text-xs">live</span>
     </div>
   </div>
 
-  <%# ── Key Metrics Row ─────────────────────────────────────────── %>
   <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
-
     <div class="bg-gray-800 rounded-lg border border-gray-700 p-3">
       <div class="text-xs text-gray-500 uppercase tracking-wider">Equity</div>
-      <div class="text-xl font-bold text-white mt-1"><%= format_equity(@equity) %></div>
-      <div class="text-xs text-gray-600 mt-0.5">peak <%= format_equity(@peak_equity) %></div>
+      <div class="text-xl font-bold text-white mt-1">{format_equity(@equity)}</div>
+      <div class="text-xs text-gray-600 mt-0.5">peak {format_equity(@peak_equity)}</div>
     </div>
 
     <div class="bg-gray-800 rounded-lg border border-gray-700 p-3">
       <div class="text-xs text-gray-500 uppercase tracking-wider">Daily P&L</div>
       <div class={["text-xl font-bold mt-1", pnl_class(@daily_pnl)]}>
-        <%= format_equity(@daily_pnl) %>
+        {format_equity(@daily_pnl)}
       </div>
       <div class="text-xs text-gray-600 mt-0.5">&nbsp;</div>
     </div>
@@ -38,15 +31,18 @@
     <div class="bg-gray-800 rounded-lg border border-gray-700 p-3">
       <div class="text-xs text-gray-500 uppercase tracking-wider">Drawdown</div>
       <div class={["text-xl font-bold mt-1", drawdown_class(@drawdown)]}>
-        <%= format_pct(@drawdown) %>
+        {format_pct(@drawdown)}
       </div>
       <div class="text-xs text-gray-600 mt-0.5">from peak</div>
     </div>
 
     <div class="bg-gray-800 rounded-lg border border-gray-700 p-3">
       <div class="text-xs text-gray-500 uppercase tracking-wider">PDT Used</div>
-      <div class={["text-xl font-bold mt-1", if(@pdt_count >= 3, do: "text-red-400", else: "text-white")]}>
-        <%= @pdt_count %>/3
+      <div class={[
+        "text-xl font-bold mt-1",
+        if(@pdt_count >= 3, do: "text-red-400", else: "text-white")
+      ]}>
+        {@pdt_count}/3
       </div>
       <div class="text-xs text-gray-600 mt-0.5">day trades</div>
     </div>
@@ -54,52 +50,55 @@
     <div class="bg-gray-800 rounded-lg border border-gray-700 p-3">
       <div class="text-xs text-gray-500 uppercase tracking-wider">Regime</div>
       <div class="text-lg font-bold text-white mt-1">
-        <%= regime_emoji(@regime) %> <%= regime_name(@regime) %>
+        {regime_emoji(@regime)} {regime_name(@regime)}
       </div>
       <div class="text-xs text-gray-600 mt-0.5">
-        ADX <%= if adx_value(@regime), do: :erlang.float_to_binary(adx_value(@regime) + 0.0, decimals: 1), else: "—" %>
+        ADX {if adx_value(@regime),
+          do: :erlang.float_to_binary(adx_value(@regime) + 0.0, decimals: 1),
+          else: "—"}
       </div>
     </div>
 
     <div class="bg-gray-800 rounded-lg border border-gray-700 p-3">
       <div class="text-xs text-gray-500 uppercase tracking-wider">Risk Mult.</div>
-      <div class={["text-xl font-bold mt-1", if((@risk_multiplier || 1.0) < 1.0, do: "text-yellow-400", else: "text-white")]}>
-        <%= if @risk_multiplier, do: :erlang.float_to_binary(@risk_multiplier + 0.0, decimals: 2), else: "1.00" %>×
+      <div class={[
+        "text-xl font-bold mt-1",
+        if((@risk_multiplier || 1.0) < 1.0, do: "text-yellow-400", else: "text-white")
+      ]}>
+        {if @risk_multiplier,
+          do: :erlang.float_to_binary(@risk_multiplier + 0.0, decimals: 2),
+          else: "1.00"}×
       </div>
       <div class="text-xs text-gray-600 mt-0.5">position size</div>
     </div>
   </div>
 
-  <%# ── Agent Heartbeats ────────────────────────────────────────── %>
   <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
     <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Agents</h2>
     <div class="flex flex-wrap gap-4">
       <%= for agent <- ["screener", "watcher", "portfolio_manager", "executor", "supervisor"] do %>
         <% hb = @heartbeats[agent]
-           status = heartbeat_status(hb)
-           age = heartbeat_age(hb)
-           label = String.replace(agent, "_", " ") |> String.capitalize() %>
+        status = heartbeat_status(hb)
+        age = heartbeat_age(hb)
+        label = String.replace(agent, "_", " ") |> String.capitalize() %>
         <div class="flex items-center gap-2">
           <span class={["w-2 h-2 rounded-full flex-shrink-0", heartbeat_dot(status)]}></span>
           <div>
-            <div class="text-sm font-medium text-gray-200 capitalize"><%= label %></div>
-            <div class="text-xs text-gray-600"><%= age %></div>
+            <div class="text-sm font-medium text-gray-200 capitalize">{label}</div>
+            <div class="text-xs text-gray-600">{age}</div>
           </div>
         </div>
       <% end %>
     </div>
   </div>
 
-  <%# ── Main Content: 2-column layout ──────────────────────────── %>
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-
-    <%# ── Left: Positions + Watchlist ── %>
+    
     <div class="space-y-4">
-
-      <%# Open Positions %>
+      
       <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
         <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
-          Open Positions (<%= map_size(@redis_positions) %>)
+          Open Positions ({map_size(@redis_positions)})
         </h2>
         <%= if map_size(@redis_positions) == 0 do %>
           <p class="text-sm text-gray-600 italic">No open positions</p>
@@ -109,18 +108,17 @@
               <% {tier_label, tier_class} = tier_badge(pos["tier"]) %>
               <div class="flex items-center justify-between py-2 border-b border-gray-700/50 last:border-0">
                 <div class="flex items-center gap-2">
-                  <span class="font-mono font-semibold text-white"><%= pos["symbol"] %></span>
+                  <span class="font-mono font-semibold text-white">{pos["symbol"]}</span>
                   <span class={["text-xs px-1.5 py-0.5 rounded border font-medium", tier_class]}>
-                    <%= tier_label %>
+                    {tier_label}
                   </span>
                 </div>
                 <div class="text-right">
                   <div class="text-sm text-gray-300">
-                    entry <%= format_price(pos["entry_price"]) %>
+                    entry {format_price(pos["entry_price"])}
                   </div>
                   <div class="text-xs text-gray-600">
-                    stop <%= format_price(pos["stop_price"]) %>
-                    · <%= pos["entry_date"] %>
+                    stop {format_price(pos["stop_price"])} · {pos["entry_date"]}
                   </div>
                 </div>
               </div>
@@ -129,34 +127,37 @@
         <% end %>
       </div>
 
-      <%# Watchlist %>
       <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
         <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
-          Watchlist (<%= length(@watchlist) %>)
+          Watchlist ({length(@watchlist)})
         </h2>
         <%= if @watchlist == [] do %>
-          <p class="text-sm text-gray-600 italic">No watchlist items — screener may not have run yet</p>
+          <p class="text-sm text-gray-600 italic">
+            No watchlist items — screener may not have run yet
+          </p>
         <% else %>
           <div class="space-y-1.5">
             <%= for item <- @watchlist do %>
-              <% priority_class = case item["priority"] do
-                "strong_signal" -> "text-green-400"
-                "signal" -> "text-blue-400"
-                _ -> "text-gray-500"
-              end
+              <% priority_class =
+                case item["priority"] do
+                  "strong_signal" -> "text-green-400"
+                  "signal" -> "text-blue-400"
+                  _ -> "text-gray-500"
+                end
+
               {tier_label, tier_class} = tier_badge(item["tier"]) %>
               <div class="flex items-center justify-between text-sm">
                 <div class="flex items-center gap-2">
-                  <span class="font-mono font-semibold text-white w-16"><%= item["symbol"] %></span>
+                  <span class="font-mono font-semibold text-white w-16">{item["symbol"]}</span>
                   <span class={["text-xs px-1.5 py-0.5 rounded border font-medium", tier_class]}>
-                    <%= tier_label %>
+                    {tier_label}
                   </span>
                   <span class={["text-xs font-medium", priority_class]}>
-                    <%= item["priority"] %>
+                    {item["priority"]}
                   </span>
                 </div>
                 <div class="text-right text-gray-400 text-xs">
-                  RSI-2 <%= format_float(item["rsi2"]) %>
+                  RSI-2 {format_float(item["rsi2"])}
                 </div>
               </div>
             <% end %>
@@ -165,9 +166,7 @@
       </div>
     </div>
 
-    <%# ── Right: Live Signal Feed ── %>
     <div class="space-y-4">
-
       <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
         <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
           Live Signal Feed
@@ -178,16 +177,16 @@
           <div class="space-y-1.5 max-h-96 overflow-y-auto">
             <%= for sig <- @live_signals do %>
               <div class="flex items-start gap-2 py-1.5 border-b border-gray-700/40 last:border-0">
-                <span class="text-base leading-none mt-0.5"><%= signal_icon(sig) %></span>
+                <span class="text-base leading-none mt-0.5">{signal_icon(sig)}</span>
                 <div class="flex-1 min-w-0">
                   <div class="flex items-center gap-2">
                     <span class="font-mono font-semibold text-white text-sm">
-                      <%= sig["symbol"] %>
+                      {sig["symbol"]}
                     </span>
-                    <span class="text-xs text-gray-500"><%= signal_time(sig) %></span>
+                    <span class="text-xs text-gray-500">{signal_time(sig)}</span>
                   </div>
                   <div class="text-xs text-gray-400 truncate">
-                    <%= signal_detail(sig) %>
+                    {signal_detail(sig)}
                   </div>
                 </div>
               </div>
@@ -196,7 +195,6 @@
         <% end %>
       </div>
 
-      <%# Daily Summaries %>
       <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
         <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
           Daily Performance (Last 7 Days)
@@ -217,20 +215,20 @@
             <tbody class="divide-y divide-gray-700/30">
               <%= for day <- @daily_summaries do %>
                 <% pnl_val = Decimal.to_float(day.daily_pnl)
-                   pnl_pct = Decimal.to_float(day.daily_pnl_pct) %>
+                pnl_pct = Decimal.to_float(day.daily_pnl_pct) %>
                 <tr>
-                  <td class="py-1 text-gray-300"><%= Calendar.strftime(day.date, "%b %d") %></td>
+                  <td class="py-1 text-gray-300">{Calendar.strftime(day.date, "%b %d")}</td>
                   <td class={["py-1 text-right font-mono", pnl_class(pnl_val)]}>
-                    <%= format_signed_pct(pnl_val) |> String.replace("%", "") |> then(&"$#{&1}") %>
+                    {format_signed_pct(pnl_val) |> String.replace("%", "") |> then(&"$#{&1}")}
                   </td>
                   <td class={["py-1 text-right font-mono", pnl_class(pnl_pct)]}>
-                    <%= format_signed_pct(pnl_pct) %>
+                    {format_signed_pct(pnl_pct)}
                   </td>
-                  <td class="py-1 text-right text-gray-400"><%= day.trades_executed %></td>
+                  <td class="py-1 text-right text-gray-400">{day.trades_executed}</td>
                   <td class="py-1 text-right">
-                    <span class="text-green-400"><%= day.winning_trades %></span>
+                    <span class="text-green-400">{day.winning_trades}</span>
                     <span class="text-gray-600">/</span>
-                    <span class="text-red-400"><%= day.losing_trades %></span>
+                    <span class="text-red-400">{day.losing_trades}</span>
                   </td>
                 </tr>
               <% end %>
@@ -241,7 +239,6 @@
     </div>
   </div>
 
-  <%# ── Recent Trades Table ─────────────────────────────────────── %>
   <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
     <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
       Recent Trades
@@ -267,34 +264,37 @@
             <%= for trade <- @recent_trades do %>
               <tr class="hover:bg-gray-700/20 transition-colors">
                 <td class="py-1.5 text-gray-500 whitespace-nowrap">
-                  <%= Calendar.strftime(trade.time, "%b %d %-I:%M%p") %>
+                  {Calendar.strftime(trade.time, "%b %d %-I:%M%p")}
                 </td>
                 <td class="py-1.5 font-mono font-semibold text-white">
-                  <%= trade.symbol %>
+                  {trade.symbol}
                 </td>
-                <td class={["py-1.5 font-medium uppercase", if(trade.side == "buy", do: "text-blue-400", else: "text-orange-400")]}>
-                  <%= trade.side %>
-                </td>
-                <td class="py-1.5 text-right text-gray-300 font-mono">
-                  <%= Decimal.round(trade.quantity, 4) %>
-                </td>
-                <td class="py-1.5 text-right text-gray-300 font-mono">
-                  $<%= Decimal.round(trade.price, 2) %>
+                <td class={[
+                  "py-1.5 font-medium uppercase",
+                  if(trade.side == "buy", do: "text-blue-400", else: "text-orange-400")
+                ]}>
+                  {trade.side}
                 </td>
                 <td class="py-1.5 text-right text-gray-300 font-mono">
-                  $<%= Decimal.round(trade.total_value, 2) %>
+                  {Decimal.round(trade.quantity, 4)}
+                </td>
+                <td class="py-1.5 text-right text-gray-300 font-mono">
+                  ${Decimal.round(trade.price, 2)}
+                </td>
+                <td class="py-1.5 text-right text-gray-300 font-mono">
+                  ${Decimal.round(trade.total_value, 2)}
                 </td>
                 <td class="py-1.5 text-right font-mono">
                   <%= if trade.realized_pnl do %>
                     <span class={pnl_class(Decimal.to_float(trade.realized_pnl))}>
-                      $<%= Decimal.round(trade.realized_pnl, 2) %>
+                      ${Decimal.round(trade.realized_pnl, 2)}
                     </span>
                   <% else %>
                     <span class="text-gray-600">—</span>
                   <% end %>
                 </td>
                 <td class="py-1.5 text-gray-500 hidden sm:table-cell">
-                  <%= trade.strategy %>
+                  {trade.strategy}
                 </td>
               </tr>
             <% end %>
@@ -303,5 +303,4 @@
       </div>
     <% end %>
   </div>
-
 </div>

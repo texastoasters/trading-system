@@ -114,6 +114,7 @@ defmodule DashboardWeb.DashboardLive do
   # ── Helpers ──────────────────────────────────────────────────────────────────
 
   defp heartbeat_status(nil), do: :stale
+
   defp heartbeat_status(ts) when is_binary(ts) do
     case DateTime.from_iso8601(ts) do
       {:ok, dt, _} ->
@@ -131,6 +132,7 @@ defmodule DashboardWeb.DashboardLive do
   end
 
   defp heartbeat_age(nil), do: "never"
+
   defp heartbeat_age(ts) when is_binary(ts) do
     case DateTime.from_iso8601(ts) do
       {:ok, dt, _} ->
@@ -162,14 +164,14 @@ defmodule DashboardWeb.DashboardLive do
   defp adx_value(_), do: nil
 
   defp format_price(nil), do: "—"
-  defp format_price(v) when is_float(v), do: "$#{:erlang.float_to_binary(v, [decimals: 2])}"
+  defp format_price(v) when is_float(v), do: "$#{:erlang.float_to_binary(v, decimals: 2)}"
   defp format_price(v), do: "$#{v}"
 
   defp format_equity(nil), do: "—"
-  defp format_equity(v), do: "$#{:erlang.float_to_binary(v + 0.0, [decimals: 2])}"
+  defp format_equity(v), do: "$#{:erlang.float_to_binary(v + 0.0, decimals: 2)}"
 
   defp format_pct(nil), do: "—"
-  defp format_pct(v), do: "#{:erlang.float_to_binary(v + 0.0, [decimals: 2])}%"
+  defp format_pct(v), do: "#{:erlang.float_to_binary(v + 0.0, decimals: 2)}%"
 
   defp pnl_class(nil), do: "text-gray-400"
   defp pnl_class(v) when v > 0, do: "text-green-400"
@@ -196,12 +198,12 @@ defmodule DashboardWeb.DashboardLive do
   end
 
   defp format_float(nil), do: "—"
-  defp format_float(v) when is_float(v), do: :erlang.float_to_binary(v, [decimals: 1])
+  defp format_float(v) when is_float(v), do: :erlang.float_to_binary(v, decimals: 1)
   defp format_float(v), do: "#{v}"
 
   defp format_signed_pct(nil), do: "—"
-  defp format_signed_pct(v) when v > 0, do: "+#{:erlang.float_to_binary(v + 0.0, [decimals: 2])}%"
-  defp format_signed_pct(v), do: "#{:erlang.float_to_binary(v + 0.0, [decimals: 2])}%"
+  defp format_signed_pct(v) when v > 0, do: "+#{:erlang.float_to_binary(v + 0.0, decimals: 2)}%"
+  defp format_signed_pct(v), do: "#{:erlang.float_to_binary(v + 0.0, decimals: 2)}%"
 
   defp signal_time(%{"time" => t}) when is_binary(t) do
     case DateTime.from_iso8601(t) do

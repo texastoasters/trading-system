@@ -13,8 +13,8 @@ defmodule DashboardWeb.CoreComponents do
   def card(assigns) do
     ~H"""
     <div class={["bg-gray-800 rounded-lg border border-gray-700 p-4", @class]}>
-      <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3"><%= @title %></h2>
-      <%= render_slot(@inner_block) %>
+      <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">{@title}</h2>
+      {render_slot(@inner_block)}
     </div>
     """
   end
@@ -39,7 +39,7 @@ defmodule DashboardWeb.CoreComponents do
       @bg,
       @text
     ]}>
-      <%= @status %>
+      {@status}
     </span>
     """
   end
@@ -61,7 +61,7 @@ defmodule DashboardWeb.CoreComponents do
 
     ~H"""
     <span class={@color}>
-      <%= format_pnl(@value) %><%= @suffix %>
+      {format_pnl(@value)}{@suffix}
     </span>
     """
   end
