@@ -17,11 +17,11 @@ defmodule Dashboard.Application do
       # PubSub — used by LiveView and background processes
       {Phoenix.PubSub, name: Dashboard.PubSub},
 
-      # Redis connections
+      # Redis connections — explicit IDs required when starting the same module twice
       # One connection for GET/MGET polling
-      {Redix, {redis_url, [name: :redix]}},
+      Supervisor.child_spec({Redix, {redis_url, [name: :redix]}}, id: :redix),
       # One connection dedicated to pub/sub (blocked while subscribed)
-      {Redix, {redis_url, [name: :redix_pubsub]}},
+      Supervisor.child_spec({Redix, {redis_url, [name: :redix_pubsub]}}, id: :redix_pubsub),
 
       # Background GenServers
       Dashboard.RedisPoller,

@@ -53,12 +53,18 @@ RUN mix release
 FROM ubuntu:24.04 AS runtime
 
 # Runtime deps only (no build tools)
+# locales required so Erlang/Elixir use UTF-8 name encoding, not latin1
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl3 \
     libncurses6 \
     libstdc++6 \
     curl \
+    locales \
+    && locale-gen en_US.UTF-8 \
     && rm -rf /var/lib/apt/lists/*
+
+ENV LANG=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
 
 WORKDIR /app
 
