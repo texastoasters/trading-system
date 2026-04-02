@@ -74,6 +74,21 @@ check_env() {
     if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
         log_warn "Telegram not configured — notifications will print to console only"
     fi
+
+    sync_docker_env
+}
+
+sync_docker_env() {
+    # Generate ~/trading-system/.env from ~/.trading_env so that
+    # `docker compose` picks up all variables without needing a manual `source`.
+    # .env is gitignored — never committed.
+    # Strips `export ` prefix; keeps quoted values as-is (Compose handles them).
+    local dot_env="${TRADING_DIR}/.env"
+    grep -E '^export [A-Z_]+=' "$ENV_FILE" \
+        | sed 's/^export //' \
+        > "$dot_env"
+    chmod 600 "$dot_env"
+    log_info "Synced ${ENV_FILE} → ${dot_env}"
 }
 
 check_infrastructure() {
