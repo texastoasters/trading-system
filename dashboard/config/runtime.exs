@@ -41,12 +41,9 @@ end
 # Redis URL — used by RedisPoller and RedisSubscriber
 # Default for local dev: redis://localhost:6379
 # In Docker: redis://redis:6379
-config :dashboard, :redis_url,
-  System.get_env("REDIS_URL") || "redis://localhost:6379"
+config :dashboard, :redis_url, System.get_env("REDIS_URL") || "redis://localhost:6379"
 
 # Alpaca API credentials — used by MarketClock for /v2/clock
-config :dashboard, :alpaca_api_key,
-  System.get_env("ALPACA_API_KEY") || ""
+config :dashboard, :alpaca_api_key, System.get_env("ALPACA_API_KEY") || ""
 
-config :dashboard, :alpaca_secret_key,
-  System.get_env("ALPACA_SECRET_KEY") || ""
+config :dashboard, :alpaca_secret_key, System.get_env("ALPACA_SECRET_KEY") || ""

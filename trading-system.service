@@ -7,7 +7,6 @@ Requires=docker.service
 Type=forking
 User=linuxuser
 WorkingDirectory=/home/linuxuser/trading-system
-EnvironmentFile=/home/linuxuser/.trading_env
 ExecStart=/home/linuxuser/trading-system/start_trading_system.sh
 ExecStop=/home/linuxuser/trading-system/start_trading_system.sh --stop
 RemainAfterExit=yes

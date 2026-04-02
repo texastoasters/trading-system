@@ -14,8 +14,7 @@ config :dashboard, DashboardWeb.Endpoint,
   pubsub_server: Dashboard.PubSub,
   live_view: [signing_salt: "trading_dashboard_salt"]
 
-config :dashboard, Dashboard.Repo,
-  migration_primary_key: [name: :id, type: :bigserial]
+config :dashboard, Dashboard.Repo, migration_primary_key: [name: :id, type: :bigserial]
 
 config :logger, :console,
   format: "$time $metadata[$level] $message\n",

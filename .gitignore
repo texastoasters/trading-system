@@ -25,4 +25,12 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Elixir
+deps/
+dashboard/deps/
+_build/
+dashboard/_build/
+mix.lock
+dashboard/mix.lock
+
 # v1.0.0
