@@ -116,36 +116,53 @@ defmodule DashboardWeb.DashboardLive do
   defp heartbeat_status(nil), do: :stale
 
   defp heartbeat_status(ts) when is_binary(ts) do
-    case DateTime.from_iso8601(ts) do
-      {:ok, dt, _} ->
-        age_minutes = DateTime.diff(DateTime.utc_now(), dt, :second) / 60
+    # Python agents write datetime.now().isoformat() — no timezone suffix.
+    # Try DateTime first (has tz), fall back to NaiveDateTime (treat as UTC).
+    age_minutes =
+      case DateTime.from_iso8601(ts) do
+        {:ok, dt, _} ->
+          DateTime.diff(DateTime.utc_now(), dt, :second) / 60
 
-        cond do
-          age_minutes < 10 -> :ok
-          age_minutes < 30 -> :warning
-          true -> :stale
-        end
+        _ ->
+          case NaiveDateTime.from_iso8601(ts) do
+            {:ok, ndt} ->
+              NaiveDateTime.diff(NaiveDateTime.utc_now(), ndt, :second) / 60
 
-      _ ->
-        :stale
+            _ ->
+              nil
+          end
+      end
+
+    cond do
+      is_nil(age_minutes) -> :stale
+      age_minutes < 10 -> :ok
+      age_minutes < 30 -> :warning
+      true -> :stale
     end
   end
 
   defp heartbeat_age(nil), do: "never"
 
   defp heartbeat_age(ts) when is_binary(ts) do
-    case DateTime.from_iso8601(ts) do
-      {:ok, dt, _} ->
-        age = DateTime.diff(DateTime.utc_now(), dt, :second)
+    # Python agents write datetime.now().isoformat() — no timezone suffix.
+    # Try DateTime first (has tz), fall back to NaiveDateTime (treat as UTC).
+    age =
+      case DateTime.from_iso8601(ts) do
+        {:ok, dt, _} ->
+          DateTime.diff(DateTime.utc_now(), dt, :second)
 
-        cond do
-          age < 60 -> "#{age}s ago"
-          age < 3600 -> "#{div(age, 60)}m ago"
-          true -> "#{div(age, 3600)}h ago"
-        end
+        _ ->
+          case NaiveDateTime.from_iso8601(ts) do
+            {:ok, ndt} -> NaiveDateTime.diff(NaiveDateTime.utc_now(), ndt, :second)
+            _ -> nil
+          end
+      end
 
-      _ ->
-        "unknown"
+    cond do
+      is_nil(age) -> "unknown"
+      age < 60 -> "#{age}s ago"
+      age < 3600 -> "#{div(age, 60)}m ago"
+      true -> "#{div(age, 3600)}h ago"
     end
   end
 
