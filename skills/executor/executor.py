@@ -28,6 +28,11 @@ import config
 from config import Keys, get_redis, get_simulated_equity, is_crypto, init_redis_state
 from notify import trade_alert, exit_alert, critical_alert
 
+# Dry-run symbol — processed through full PM/Executor logic but no Alpaca
+# API calls and no success Telegram notifications.  Use to verify the
+# end-to-end signal pipeline without touching a live account.
+TEST_SYMBOL = "TEST"
+
 
 # ── Simulated Capital Tracking ──────────────────────────────
 
@@ -117,6 +122,30 @@ def execute_buy(r, trading_client, order):
     if quantity <= 0:
         print(f"  [Executor] ❌ Invalid quantity {quantity} for {symbol} — rejecting")
         return False
+
+    # TEST symbol — simulate fill without touching Alpaca or sending notifications
+    if symbol == TEST_SYMBOL:
+        fill_price = order["entry_price"]
+        fill_qty = order["quantity"]
+        position_data = {
+            "symbol": symbol,
+            "quantity": int(fill_qty),
+            "entry_price": fill_price,
+            "entry_date": datetime.now().strftime("%Y-%m-%d"),
+            "stop_price": order["stop_price"],
+            "strategy": order["strategy"],
+            "tier": order.get("tier", 99),
+            "order_id": "TEST-ORDER",
+            "stop_order_id": None,
+            "value": round(fill_price * fill_qty, 2),
+            "unrealized_pnl_pct": 0.0,
+        }
+        positions = json.loads(r.get(Keys.POSITIONS) or "{}")
+        positions[symbol] = position_data
+        r.set(Keys.POSITIONS, json.dumps(positions))
+        print(f"  [Executor] 🧪 TEST buy simulated: {symbol} {int(fill_qty)} @ ${fill_price:.2f}, "
+              f"stop @ ${order['stop_price']:.2f}")
+        return True
 
     # Cancel any stale orders for this symbol to avoid wash trade conflicts
     cancel_existing_orders(trading_client, symbol)
@@ -244,6 +273,20 @@ def execute_sell(r, trading_client, order):
         del positions[symbol]
         r.set(Keys.POSITIONS, json.dumps(positions))
         return False
+
+    # TEST symbol — simulate fill without touching Alpaca or sending notifications
+    if symbol == TEST_SYMBOL:
+        fill_price = order.get("exit_price", pos["entry_price"])
+        entry_price = pos["entry_price"]
+        pnl_pct = (fill_price - entry_price) / entry_price * 100
+        pnl_dollar = (fill_price - entry_price) * quantity
+        new_equity = update_simulated_equity(r, pnl_dollar)
+        del positions[symbol]
+        r.set(Keys.POSITIONS, json.dumps(positions))
+        emoji = "✅" if pnl_pct > 0 else "❌"
+        print(f"  [Executor] 🧪 TEST sell simulated: {symbol} @ ${fill_price:.2f}, "
+              f"P&L {pnl_pct:+.2f}% (${pnl_dollar:+.2f}), equity now ${new_equity:.2f}")
+        return True
 
     # Guard: don't submit equity sells when market is closed — position and stop remain intact
     if not is_crypto(symbol):
