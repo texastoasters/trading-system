@@ -77,6 +77,10 @@ defmodule Dashboard.MarketClock do
         {:error, reason} ->
           {:error, reason}
       end
+    rescue
+      e ->
+        {:error, Exception.message(e)}
+    end
     end
   end
 end

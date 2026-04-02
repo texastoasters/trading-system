@@ -44,6 +44,8 @@ defmodule Dashboard.MixProject do
 
       # HTTP client (Alpaca market clock)
       {:req, "~> 0.5"},
+      # CA certificate bundle — required by Req/Finch/Mint for HTTPS
+      {:castore, "~> 1.0"},
 
       # JSON
       {:jason, "~> 1.4"},
