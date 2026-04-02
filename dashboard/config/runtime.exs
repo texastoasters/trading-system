@@ -4,6 +4,11 @@ import Config
 # In Docker, these are injected by docker-compose.yml.
 # In dev, set them in config/dev.exs or your shell.
 
+# PHX_SERVER=true enables the HTTP listener — set in docker-compose.yml for prod
+if System.get_env("PHX_SERVER") do
+  config :dashboard, DashboardWeb.Endpoint, server: true
+end
+
 if config_env() == :prod do
   database_url =
     System.get_env("DATABASE_URL") ||
