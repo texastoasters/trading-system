@@ -5,6 +5,10 @@ defmodule Dashboard.RedisSubscriber do
   Whenever the Watcher publishes a signal, this process receives it and
   broadcasts it to the PubSub topic "dashboard:signals" so the LiveView
   can update the live signal feed without waiting for the next poll cycle.
+
+  Note: Redix.PubSub was removed in Redix 1.0. Pub/sub is now done through
+  plain Redix connections via Redix.subscribe/3. The message format is
+  identical: {:redix_pubsub, pid, ref, type, info}.
   """
 
   use GenServer
@@ -18,22 +22,20 @@ defmodule Dashboard.RedisSubscriber do
 
   @impl true
   def init(state) do
-    # Subscribe using the dedicated pubsub connection
-    case Redix.PubSub.subscribe(:redix_pubsub, @channel, self()) do
+    case Redix.subscribe(:redix_pubsub, @channel, self()) do
       {:ok, _ref} ->
         Logger.info("RedisSubscriber: subscribed to #{@channel}")
         {:ok, state}
 
       {:error, reason} ->
         Logger.error("RedisSubscriber: subscribe failed: #{inspect(reason)}")
-        # Retry after 5 seconds
         Process.send_after(self(), :retry_subscribe, 5_000)
         {:ok, state}
     end
   end
 
   @impl true
-  def handle_info({:redix_pubsub, _client, _ref, :subscribed, %{channel: ch}}, state) do
+  def handle_info({:redix_pubsub, _client, _ref, :subscribe, %{channel: ch}}, state) do
     Logger.info("RedisSubscriber: confirmed subscription to #{ch}")
     {:noreply, state}
   end
@@ -60,7 +62,7 @@ defmodule Dashboard.RedisSubscriber do
   end
 
   def handle_info(:retry_subscribe, state) do
-    case Redix.PubSub.subscribe(:redix_pubsub, @channel, self()) do
+    case Redix.subscribe(:redix_pubsub, @channel, self()) do
       {:ok, _ref} ->
         Logger.info("RedisSubscriber: re-subscribed to #{@channel}")
 
