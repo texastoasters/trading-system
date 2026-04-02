@@ -24,17 +24,26 @@ RUN mix local.hex --force && mix local.rebar --force
 # If mix.lock doesn't exist yet, `mix deps.get` creates it.
 COPY mix.exs ./
 COPY mix.lock* ./
+
+# Copy compile-time config before deps.compile so config changes
+# correctly bust the deps layer cache.
+COPY config/config.exs config/prod.exs config/
+
 RUN mix deps.get --only prod
 RUN mix deps.compile
+
+# Copy lib before assets so tailwind can scan .heex/.ex files for class names
+COPY lib lib
 
 # Build assets (Tailwind + esbuild)
 COPY assets assets
 COPY priv priv
 RUN mix assets.deploy
 
+# Copy runtime config last — changes here don't require recompiling deps or assets
+COPY config/runtime.exs config/
+
 # Compile app and create release
-COPY lib lib
-COPY config config
 RUN mix compile
 RUN mix release
 
