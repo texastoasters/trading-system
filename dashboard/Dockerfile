@@ -7,14 +7,16 @@
 # Build is triggered automatically by `docker compose up --build`.
 
 # ── Stage 1: Builder ────────────────────────────────────────────────────────
-FROM elixir:1.18-otp-27-alpine AS builder
+FROM elixir:1.18-otp-27 AS builder
 
 WORKDIR /app
 
 ENV MIX_ENV=prod
 
-# Build tools
-RUN apk add --no-cache build-base git nodejs npm
+# Build tools (Debian-based image — same glibc as the ubuntu:24.04 runtime)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential git nodejs npm \
+    && rm -rf /var/lib/apt/lists/*
 
 # Hex + rebar
 RUN mix local.hex --force && mix local.rebar --force
