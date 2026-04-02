@@ -212,7 +212,10 @@ def run_eod_review(r):
     dd = get_drawdown(r)
     daily_pnl = float(r.get(Keys.DAILY_PNL) or 0)
     regime_raw = r.get(Keys.REGIME)
-    regime = json.loads(regime_raw).get("regime", "UNKNOWN") if regime_raw else "UNKNOWN"
+    try:
+        regime = json.loads(regime_raw).get("regime", "UNKNOWN") if regime_raw else "UNKNOWN"
+    except (json.JSONDecodeError, AttributeError):
+        regime = "UNKNOWN"
     positions = json.loads(r.get(Keys.POSITIONS) or "{}")
 
     # Calculate start-of-day equity
@@ -410,12 +413,20 @@ def main():
     elif args.health:
         run_health_check(r)
     elif args.eod:
-        run_eod_review(r)
+        try:
+            run_eod_review(r)
+        except Exception as e:
+            print(f"[Supervisor] EOD review error: {e}")
+            critical_alert(f"EOD review failed: {e}")
     elif args.reset_daily:
         reset_daily(r)
     else:
         run_health_check(r)
-        run_eod_review(r)
+        try:
+            run_eod_review(r)
+        except Exception as e:
+            print(f"[Supervisor] EOD review error: {e}")
+            critical_alert(f"EOD review failed: {e}")
 
 
 if __name__ == "__main__":
