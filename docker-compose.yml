@@ -9,10 +9,6 @@
 # Load variables from ~/.trading_env for ${VAR} interpolation throughout this file.
 # Docker Compose strips `export` and quotes automatically.
 # required: false so this works on dev machines without the file.
-env_file:
-  - path: ~/.trading_env
-    required: false
-
 services:
   redis:
     image: redis:7-alpine
