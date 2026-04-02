@@ -3,14 +3,14 @@
 # Host: openboog (Vultr VPS, Ubuntu 24.04)
 # User: linuxuser
 
-# 1. VERIFY SYSTEM TIMEZONE IS UTC
-#    System cron uses the system timezone. All schedules in the cron
-#    file assume UTC. Confirm before proceeding:
+# 1. VERIFY CRONIE IS INSTALLED (required for CRON_TZ support)
+#    The cron file uses CRON_TZ=America/New_York so all times are ET.
+#    This requires cronie; Vixie cron does not support CRON_TZ.
 
-timedatectl | grep "Time zone"
-# Expected: Time zone: UTC (UTC, +0000)
-# If not UTC, either convert the hours in the cron file or set it:
-#   sudo timedatectl set-timezone UTC
+sudo systemctl status crond 2>/dev/null || sudo systemctl status cron
+# Should show "active (running)". If Vixie cron is running instead:
+#   sudo apt install cronie
+#   sudo systemctl disable cron && sudo systemctl enable --now crond
 
 # 2. COPY THE CRON FILE INTO PLACE
 #    Files in /etc/cron.d/ must:
@@ -42,9 +42,9 @@ file /etc/cron.d/trading-system
 
 # 4. VERIFY CRON DAEMON IS RUNNING
 
-sudo systemctl status cron
+sudo systemctl status crond
 # Should show "active (running)"
-# If not: sudo systemctl enable --now cron
+# If not: sudo systemctl enable --now crond
 
 # 5. VERIFY .trading_env IS SOURCEABLE BY LINUXUSER
 #    The cron jobs run as linuxuser and source this file. Make sure
@@ -56,7 +56,7 @@ sudo -u linuxuser bash -c '. /home/linuxuser/.trading_env && echo "TELEGRAM_BOT_
 # 6. TEST A JOB MANUALLY (as linuxuser, simulating what cron will do)
 #    This runs the health check exactly as cron would:
 
-sudo -u linuxuser bash -c '. /home/linuxuser/.trading_env && cd /home/linuxuser/trading-system && PYTHONPATH=/home/linuxuser/trading-system/scripts python3 scripts/supervisor.py --health'
+sudo -u linuxuser bash -c '. /home/linuxuser/.trading_env && cd /home/linuxuser/trading-system && PYTHONPATH=/home/linuxuser/trading-system/scripts python3 skills/supervisor/supervisor.py --health'
 # Should produce health check output with no import errors
 
 # 7. REMOVE THE CORRESPONDING OPENCLAW CRON JOBS
@@ -83,19 +83,7 @@ sudo journalctl -t trading-health -f
 # or for all trading tags:
 sudo journalctl -t trading-reset -t trading-screener -t trading-watcher -t trading-health -t trading-discovery --since "today" -f
 
-# 9. DST CHANGEOVER REMINDER (NOVEMBER / MARCH)
-#    When US clocks change, the UTC offsets shift by 1 hour.
-#    Set a calendar reminder to update the cron file:
-#
-#    EDT (Mar-Nov): ET = UTC-4  (current values in the file)
-#    EST (Nov-Mar): ET = UTC-5  (add 1 to each hour field)
-#
-#    Example: screener at 4:15 PM ET
-#      EDT: 15 20 * * 1-5  (20 UTC = 4 PM EDT)
-#      EST: 15 21 * * 1-5  (21 UTC = 4 PM EST)
-#
-#    Alternatively, replace Vixie cron with cronie for CRON_TZ support:
-#      sudo apt install cronie
-#      sudo systemctl disable cron && sudo systemctl enable --now crond
-#    Then add CRON_TZ=America/New_York at the top of the file and
-#    use the ET times directly. No more DST math.
+# 9. DST CHANGEOVER
+#    No action needed. The cron file uses CRON_TZ=America/New_York and
+#    cronie handles DST transitions automatically. All times in the file
+#    are ET and remain correct year-round.
