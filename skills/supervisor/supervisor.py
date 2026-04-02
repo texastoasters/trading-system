@@ -29,7 +29,7 @@ from config import (
 )
 from notify import (
     notify, daily_summary, weekly_summary, critical_alert,
-    drawdown_alert, universe_update,
+    drawdown_alert, universe_update, now_et,
 )
 
 
@@ -217,7 +217,7 @@ def run_health_check(r):
         issue_block = "\n\n⚠️ <b>Issues:</b>\n" + "\n".join(f"  • {i}" for i in issues)
 
     msg = (
-        f"🔍 <b>HEALTH — {datetime.now().strftime('%-I:%M %p')}</b>\n"
+        f"🔍 <b>HEALTH — {now_et().strftime('%H:%M ET')}</b>\n"
         f"\n"
         f"System: {status} | Equity: ${equity:,.2f} | DD: {dd:.1f}%\n"
         f"Positions: {len(positions)} | PDT: {pdt}/3\n"
@@ -400,7 +400,7 @@ def reset_daily(r):
     agent_line = "All agents alive" if not stale_agents else f"Stale: {', '.join(stale_agents)}"
 
     msg = (
-        f"🌅 <b>MARKET OPEN — {datetime.now().strftime('%A, %b %-d')}</b>\n"
+        f"🌅 <b>MARKET OPEN — {now_et().strftime('%A, %b %-d')}</b>\n"
         f"\n"
         f"Equity: <b>${equity:,.2f}</b> | Drawdown: {dd:.1f}%\n"
         f"Open positions: {len(positions)} | PDT: {pdt}/3\n"

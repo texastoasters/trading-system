@@ -35,6 +35,14 @@ import os
 import json
 import requests
 from datetime import datetime
+from zoneinfo import ZoneInfo
+
+_ET = ZoneInfo("America/New_York")
+
+
+def now_et() -> datetime:
+    """Current time in America/New_York (ET), for display in notifications."""
+    return datetime.now(_ET)
 
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
@@ -239,7 +247,7 @@ def critical_alert(message: str):
         f"\n"
         f"{message}\n"
         f"\n"
-        f"<i>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</i>"
+        f"<i>{now_et().strftime('%Y-%m-%d %H:%M:%S ET')}</i>"
     )
     # Send with notification sound (silent=False)
     notify(msg, silent=False)
@@ -252,7 +260,7 @@ def drawdown_alert(drawdown_pct: float, action: str):
         f"\n"
         f"Action taken: {action}\n"
         f"\n"
-        f"<i>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</i>"
+        f"<i>{now_et().strftime('%Y-%m-%d %H:%M:%S ET')}</i>"
     )
     notify(msg, silent=False)
 
