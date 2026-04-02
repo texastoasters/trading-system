@@ -11,8 +11,13 @@ if config_env() == :prod do
 
   config :dashboard, Dashboard.Repo,
     url: database_url,
-    pool_size: String.to_integer(System.get_env("POOL_SIZE") || "5"),
-    # TimescaleDB lives on the same Docker network — use service name
+    # Small pool — this is a read-only dashboard, not a write-heavy app
+    pool_size: String.to_integer(System.get_env("POOL_SIZE") || "2"),
+    # Give the Postgrex TypeServer time to initialize before connections
+    # pile in — helps with TimescaleDB's large custom type catalogue
+    queue_target: 5_000,
+    queue_interval: 10_000,
+    connect_timeout: 30_000,
     socket_options: []
 
   secret_key_base =
