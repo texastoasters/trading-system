@@ -104,23 +104,21 @@ Analyze trades, identify mistakes, recommend parameter changes.
 Update strategy parameters, promote/demote instruments.
 
 ### Step 5: Send Telegram daily summary
-```python
-from notify import daily_summary
-daily_summary(metrics)
+**IMPORTANT**: Do NOT call `notify.py` or `daily_summary()` directly from this agent context.
+The agent runs with different environment variables than the server, so notifications sent from
+here will go to the wrong Telegram channel.
+
+Instead, SSH to openboog and run the supervisor script, which sources `.trading_env` and uses
+the correct `TELEGRAM_CHAT_ID`:
+
+```bash
+ssh linuxuser@openboog "cd ~/trading-system && . ~/.trading_env && PYTHONPATH=scripts python3 skills/supervisor/supervisor.py --eod"
 ```
 
+This ensures the daily summary arrives in the correct Telegram channel alongside trade alerts.
+
 ### Step 6: Capital constraint reporting
-If Tier 1 signals were rejected due to insufficient capital:
-```python
-if metrics["rejected_tier1"] > 0:
-    notify.notify(
-        f"⚠️ <b>CAPITAL CONSTRAINT</b>\n\n"
-        f"{metrics['rejected_tier1']} Tier 1 signal(s) rejected today "
-        f"due to insufficient capital.\n"
-        f"Current equity: ${metrics['equity']:,.2f}\n"
-        f"Consider adding capital if this persists."
-    )
-```
+This is also handled by `supervisor.py --eod` (see step 5). No separate action needed.
 
 ---
 
