@@ -10,6 +10,7 @@ Usage (from repo root):
     PYTHONPATH=scripts python3 skills/supervisor/supervisor.py --daemon         # Run continuously
     PYTHONPATH=scripts python3 skills/supervisor/supervisor.py --health         # Health check only
     PYTHONPATH=scripts python3 skills/supervisor/supervisor.py --eod            # End-of-day review only
+    PYTHONPATH=scripts python3 skills/supervisor/supervisor.py --revalidation   # Monthly universe re-validation
     PYTHONPATH=scripts python3 skills/supervisor/supervisor.py --reset-daily    # Reset daily P&L (run at market open)
 """
 
@@ -395,6 +396,110 @@ def daemon_loop():
         time.sleep(60)
 
 
+# ── Monthly Re-Validation ───────────────────────────────────
+
+def run_revalidation(r):
+    """
+    Monthly universe re-validation — re-backtest all instruments and classify
+    into tiers based on 3-year rolling performance.
+
+    Runs on the full instrument list (active + disabled + archived) so degraded
+    instruments can recover and archived ones can be re-evaluated.
+
+    LLM analysis (promotion/demotion decisions) is not yet implemented.
+    When added, it will go in the clearly marked TODO block below.
+    """
+    print("[Supervisor] Running monthly universe re-validation...")
+
+    from backtest_rsi2_universe import run_rsi2, fetch_stock, fetch_crypto
+    from alpaca.data.historical import StockHistoricalDataClient, CryptoHistoricalDataClient
+
+    api_key = os.environ.get("ALPACA_API_KEY")
+    secret_key = os.environ.get("ALPACA_SECRET_KEY")
+    if not api_key or not secret_key:
+        critical_alert("Revalidation failed: ALPACA_API_KEY or ALPACA_SECRET_KEY not set")
+        return
+
+    stock_client = StockHistoricalDataClient(api_key, secret_key)
+    crypto_client = CryptoHistoricalDataClient(api_key, secret_key)
+
+    # Pull full instrument list from Redis — active tiers + disabled + archived
+    universe = json.loads(r.get(Keys.UNIVERSE) or json.dumps(config.DEFAULT_UNIVERSE))
+    all_instruments = (
+        universe.get("tier1", []) +
+        universe.get("tier2", []) +
+        universe.get("tier3", []) +
+        universe.get("disabled", []) +
+        universe.get("archived", [])
+    )
+    # Deduplicate while preserving order
+    seen = set()
+    instruments = []
+    for sym in all_instruments:
+        if sym not in seen:
+            seen.add(sym)
+            instruments.append(sym)
+
+    print(f"[Supervisor] Testing {len(instruments)} instruments...")
+
+    results = []
+    for sym in instruments:
+        try:
+            if config.is_crypto(sym):
+                data = fetch_crypto(sym, 2, crypto_client)
+                result = run_rsi2(data, sym, asset_type="crypto", fee_rate=0.004)
+            else:
+                data = fetch_stock(sym, 3, stock_client)
+                result = run_rsi2(data, sym)
+            results.append(result)
+            status = "PASS" if result.passed else "FAIL"
+            print(f"  {sym:<10} {status} | WR {result.win_rate:.0f}% | "
+                  f"PF {result.profit_factor:.2f} | {', '.join(result.fail_reasons) or 'ok'}")
+        except Exception as e:
+            print(f"  {sym:<10} ERROR — {e}")
+
+    if not results:
+        critical_alert("Revalidation produced no results — check Alpaca API keys and connectivity")
+        return
+
+    # Classify recommended tiers by backtest metrics
+    passed = [res for res in results if res.passed]
+    rec_tier1 = [res for res in passed if res.profit_factor >= 2.0 and res.win_rate >= 70]
+    rec_tier2 = [res for res in passed
+                 if res not in rec_tier1 and res.profit_factor >= 1.5 and res.win_rate >= 65]
+    rec_tier3 = [res for res in passed if res not in rec_tier1 and res not in rec_tier2]
+    failed = [res for res in results if not res.passed]
+
+    print(f"\n[Supervisor] Recommended tiers:")
+    print(f"  Tier 1: {[res.symbol for res in rec_tier1]}")
+    print(f"  Tier 2: {[res.symbol for res in rec_tier2]}")
+    print(f"  Tier 3: {[res.symbol for res in rec_tier3]}")
+    print(f"  Failed: {[res.symbol for res in failed]}")
+
+    # TODO: LLM analysis
+    # Pass results + current universe to LLM for promotion/demotion decisions.
+    # The LLM should compare recommended tiers to current tiers, enforce the
+    # one-tier-up-per-month promotion cap, and return a list of approved changes.
+    # Apply approved changes to Redis (universe tiers + disabled list).
+    # This block will be implemented when LLM integration is added.
+
+    # Send Telegram summary
+    changes = [
+        f"Re-validation complete: {len(passed)}/{len(results)} instruments passed",
+        f"Tier 1 ({len(rec_tier1)}): {', '.join(res.symbol for res in rec_tier1)}",
+        f"Tier 2 ({len(rec_tier2)}): {', '.join(res.symbol for res in rec_tier2)}",
+        f"Tier 3 ({len(rec_tier3)}): {', '.join(res.symbol for res in rec_tier3)}",
+    ]
+    if failed:
+        changes.append(f"Failed ({len(failed)}): {', '.join(res.symbol for res in failed)}")
+    changes.append("⚠️ Tier changes pending LLM review — universe not yet updated")
+
+    universe_update(changes, len(instruments))
+
+    print(f"[Supervisor] Re-validation complete. {len(passed)}/{len(results)} passed.")
+    return results
+
+
 # ── Main ────────────────────────────────────────────────────
 
 def main():
@@ -402,6 +507,7 @@ def main():
     parser.add_argument("--daemon", action="store_true", help="Run continuously")
     parser.add_argument("--health", action="store_true", help="Health check only")
     parser.add_argument("--eod", action="store_true", help="End-of-day review only")
+    parser.add_argument("--revalidation", action="store_true", help="Monthly universe re-validation")
     parser.add_argument("--reset-daily", action="store_true", help="Reset daily counters")
     args = parser.parse_args()
 
@@ -418,6 +524,12 @@ def main():
         except Exception as e:
             print(f"[Supervisor] EOD review error: {e}")
             critical_alert(f"EOD review failed: {e}")
+    elif args.revalidation:
+        try:
+            run_revalidation(r)
+        except Exception as e:
+            print(f"[Supervisor] Revalidation error: {e}")
+            critical_alert(f"Monthly revalidation failed: {e}")
     elif args.reset_daily:
         reset_daily(r)
     else:
