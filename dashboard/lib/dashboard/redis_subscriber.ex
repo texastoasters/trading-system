@@ -44,10 +44,11 @@ defmodule Dashboard.RedisSubscriber do
         {:redix_pubsub, _client, _ref, :message, %{channel: @channel, payload: payload}},
         state
       ) do
-    Logger.debug("RedisSubscriber: received signal on #{@channel}")
+    Logger.info("RedisSubscriber: received message on #{@channel}")
 
     case Jason.decode(payload) do
       {:ok, signal} ->
+        Logger.info("RedisSubscriber: broadcasting signal #{signal["signal_type"]} for #{signal["symbol"]}")
         Phoenix.PubSub.broadcast(Dashboard.PubSub, "dashboard:signals", {:new_signal, signal})
 
       {:error, reason} ->
@@ -77,7 +78,7 @@ defmodule Dashboard.RedisSubscriber do
   end
 
   def handle_info(msg, state) do
-    Logger.debug("RedisSubscriber: unhandled message: #{inspect(msg)}")
+    Logger.info("RedisSubscriber: unhandled message: #{inspect(msg)}")
     {:noreply, state}
   end
 end
