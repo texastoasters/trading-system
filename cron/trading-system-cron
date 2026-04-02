@@ -1,53 +1,32 @@
 # /etc/cron.d/trading-system
 #
 # System cron jobs for the RSI-2 mean reversion trading system
-# on openboog (Vultr VPS, Ubuntu 24.04)
+# on openboog (Vultr VPS, Ubuntu 24.04, cronie)
 #
 # These are pure script-execution jobs that do NOT require AI processing.
 # AI-dependent jobs (eod-review, revalidation) remain in OpenClaw cron.
 #
-# TIMEZONE NOTE: All times below are in UTC because Ubuntu's default
-# cron (Vixie cron) does not support CRON_TZ. Schedules are converted
-# from Eastern Time assuming EDT (UTC-4), which is in effect roughly
-# March-November. When clocks fall back to EST (UTC-5) in November,
-# these times will effectively shift 1 hour earlier in ET.
-#
-# To fix after DST change:
-#   sudo sed -i 's/# DST:EDT/# DST:EST/' /etc/cron.d/trading-system
-#   and adjust the hour fields +1 (e.g., 20 -> 21 for 4 PM ET)
-#
-# Alternatively, install cronie (apt install cronie) which supports
-# CRON_TZ=America/New_York per-file and eliminates DST math entirely.
+# cronie supports CRON_TZ — all schedules are in America/New_York.
+# DST transitions are handled automatically. No manual adjustment needed.
 
 # --- Environment -----------------------------------------------------------
 SHELL=/bin/bash
 PATH=/usr/local/bin:/usr/bin:/bin
+CRON_TZ=America/New_York
 TRADING_HOME=/home/linuxuser/trading-system
 TRADING_ENV=/home/linuxuser/.trading_env
 
-# --- Helper ----------------------------------------------------------------
-# Each command sources .trading_env (for TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID,
-# ALPACA_API_KEY, etc.), sets PYTHONPATH, then runs the script.
-# Stdout/stderr go to syslog via logger, tagged "trading" for easy filtering.
+# --- Daily P&L reset (9:25 AM ET, before market open, weekdays) ------------
+25 9 * * 1-5  linuxuser  . $TRADING_ENV && cd $TRADING_HOME && PYTHONPATH=$TRADING_HOME/scripts python3 scripts/supervisor.py --reset-daily 2>&1 | logger -t trading-reset
 
-# --- Daily P&L reset -------------------------------------------------------
-# 9:25 AM ET = 13:25 UTC (EDT)                                    # DST:EDT
-25 13 * * 1-5  linuxuser  . $TRADING_ENV && cd $TRADING_HOME && PYTHONPATH=$TRADING_HOME/scripts python3 scripts/supervisor.py --reset-daily 2>&1 | logger -t trading-reset
+# --- Screener end-of-day scan (4:15 PM ET, after equity close, weekdays) ---
+15 16 * * 1-5  linuxuser  . $TRADING_ENV && cd $TRADING_HOME && PYTHONPATH=$TRADING_HOME/scripts python3 scripts/screener.py 2>&1 | logger -t trading-screener && PYTHONPATH=$TRADING_HOME/scripts python3 scripts/watcher.py 2>&1 | logger -t trading-watcher
 
-# --- Screener end-of-day scan ----------------------------------------------
-# 4:15 PM ET = 20:15 UTC (EDT)                                    # DST:EDT
-15 20 * * 1-5  linuxuser  . $TRADING_ENV && cd $TRADING_HOME && PYTHONPATH=$TRADING_HOME/scripts python3 scripts/screener.py 2>&1 | logger -t trading-screener && PYTHONPATH=$TRADING_HOME/scripts python3 scripts/watcher.py 2>&1 | logger -t trading-watcher
-
-# --- Watcher evaluation cycle -----------------------------------------------
-# Every 4 hours, all days (BTC trades 24/7, equities filtered in script)
+# --- Watcher evaluation cycle (every 4 hours, all days for BTC) ------------
 0 */4 * * *  linuxuser  . $TRADING_ENV && cd $TRADING_HOME && PYTHONPATH=$TRADING_HOME/scripts python3 scripts/watcher.py 2>&1 | logger -t trading-watcher
 
-# --- Supervisor health check ------------------------------------------------
-# Every 15 min during market hours: 9 AM - 4 PM ET = 13:00-20:00 UTC (EDT)
-# Note: cron hour range 13-19 covers 13:00-19:59, i.e. 9:00-3:59 PM ET.
-# The 4:00 PM ET hour (20 UTC) is excluded since market closes at 4 PM.  # DST:EDT
-*/15 13-19 * * 1-5  linuxuser  . $TRADING_ENV && cd $TRADING_HOME && PYTHONPATH=$TRADING_HOME/scripts python3 scripts/supervisor.py --health 2>&1 | logger -t trading-health
+# --- Supervisor health check (every 15 min, market hours, weekdays) --------
+*/15 9-15 * * 1-5  linuxuser  . $TRADING_ENV && cd $TRADING_HOME && PYTHONPATH=$TRADING_HOME/scripts python3 scripts/supervisor.py --health 2>&1 | logger -t trading-health
 
-# --- Monthly universe discovery ---------------------------------------------
-# 15th of month, 6:00 AM ET = 10:00 UTC (EDT)                     # DST:EDT
-0 10 15 * *  linuxuser  . $TRADING_ENV && cd $TRADING_HOME && PYTHONPATH=$TRADING_HOME/scripts python3 scripts/discover_universe.py --max-candidates 50 2>&1 | logger -t trading-discovery
+# --- Monthly universe discovery (15th of month, 6:00 AM ET) ----------------
+0 6 15 * *  linuxuser  . $TRADING_ENV && cd $TRADING_HOME && PYTHONPATH=$TRADING_HOME/scripts python3 scripts/discover_universe.py --max-candidates 50 2>&1 | logger -t trading-discovery
