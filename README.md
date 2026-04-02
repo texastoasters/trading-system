@@ -112,6 +112,23 @@ redis-cli ping
 
 Redis runs on port 6379, TimescaleDB on port 5432. The database schema is automatically created on first startup via `init-db/001_create_schema.sql`.
 
+### Tailscale Setup
+
+The dashboard is served at **port 4000** on your tailnet, leaving port 443 free for OpenClaw. Run these once on the VPS:
+
+```bash
+# Serve dashboard at https://openboog.tail233812.ts.net:4000
+sudo tailscale serve --bg --https=4000 http://localhost:4000
+
+# OpenClaw stays on the default port (replace 3000 with OpenClaw's local port)
+sudo tailscale serve --bg --https=443 http://localhost:3000
+
+# Verify both are configured
+tailscale serve status
+```
+
+Dashboard URL: `https://<your-tailnet-hostname>:4000`
+
 ### Telegram Notifications (Optional)
 
 1. Open Telegram, search for `@BotFather`
