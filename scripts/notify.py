@@ -38,11 +38,29 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 _ET = ZoneInfo("America/New_York")
+_UTC = ZoneInfo("UTC")
 
 
-def now_et() -> datetime:
-    """Current time in America/New_York (ET), for display in notifications."""
+def _now_et() -> datetime:
+    """Current time in America/New_York. Internal use only."""
     return datetime.now(_ET)
+
+
+def fmt_et(dt: datetime = None, fmt: str = "%H:%M ET") -> str:
+    """Format a datetime in Eastern Time for display in notifications.
+
+    Scripts should call this instead of doing their own TZ math.
+    - If dt is None, uses the current time.
+    - Naive datetimes are assumed to be UTC (the VPS runs in UTC).
+    - fmt defaults to 24-hour HH:MM with an 'ET' suffix.
+    """
+    if dt is None:
+        return __now_et().strftime(fmt)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=_UTC).astimezone(_ET)
+    else:
+        dt = dt.astimezone(_ET)
+    return dt.strftime(fmt)
 
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
@@ -247,7 +265,7 @@ def critical_alert(message: str):
         f"\n"
         f"{message}\n"
         f"\n"
-        f"<i>{now_et().strftime('%Y-%m-%d %H:%M:%S ET')}</i>"
+        f"<i>{_now_et().strftime('%Y-%m-%d %H:%M:%S ET')}</i>"
     )
     # Send with notification sound (silent=False)
     notify(msg, silent=False)
@@ -260,7 +278,7 @@ def drawdown_alert(drawdown_pct: float, action: str):
         f"\n"
         f"Action taken: {action}\n"
         f"\n"
-        f"<i>{now_et().strftime('%Y-%m-%d %H:%M:%S ET')}</i>"
+        f"<i>{_now_et().strftime('%Y-%m-%d %H:%M:%S ET')}</i>"
     )
     notify(msg, silent=False)
 
