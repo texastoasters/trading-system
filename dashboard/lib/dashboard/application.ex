@@ -11,8 +11,9 @@ defmodule Dashboard.Application do
       # Telemetry
       DashboardWeb.Telemetry,
 
-      # Database
-      Dashboard.Repo,
+      # Database — restart: :temporary so a Postgrex crash doesn't kill the whole app.
+      # Queries are wrapped in rescue, so the dashboard keeps running on DB failure.
+      Supervisor.child_spec(Dashboard.Repo, restart: :temporary),
 
       # PubSub — used by LiveView and background processes
       {Phoenix.PubSub, name: Dashboard.PubSub},
@@ -20,9 +21,15 @@ defmodule Dashboard.Application do
       # Redis connections — explicit IDs required when starting the same module twice
       # One connection for GET/MGET polling
       Supervisor.child_spec({Redix, {redis_url, [name: :redix]}}, id: :redix),
-      # Dedicated connection for pub/sub — stays in subscriber mode once subscribed
-      # Redix.PubSub was removed in Redix 1.0; use plain Redix with Redix.subscribe/3
-      Supervisor.child_spec({Redix, {redis_url, [name: :redix_pubsub]}}, id: :redix_pubsub),
+      # Dedicated pub/sub connection — Redix.PubSub doesn't implement child_spec/1
+      # so we provide the full map spec and call Redix.PubSub.subscribe/3 on it
+      %{
+        id: :redix_pubsub,
+        start: {Redix.PubSub, :start_link, [redis_url, [name: :redix_pubsub]]},
+        type: :worker,
+        restart: :permanent,
+        shutdown: 5_000
+      },
 
       # Background GenServers
       Dashboard.RedisPoller,

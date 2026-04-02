@@ -6,9 +6,9 @@ defmodule Dashboard.RedisSubscriber do
   broadcasts it to the PubSub topic "dashboard:signals" so the LiveView
   can update the live signal feed without waiting for the next poll cycle.
 
-  Note: Redix.PubSub was removed in Redix 1.0. Pub/sub is now done through
-  plain Redix connections via Redix.subscribe/3. The message format is
-  identical: {:redix_pubsub, pid, ref, type, info}.
+  Redix.PubSub exists in Redix 1.x but doesn't implement child_spec/1,
+  so it must be started with a manual map child spec in application.ex.
+  Once started, Redix.PubSub.subscribe/3 works as expected.
   """
 
   use GenServer
@@ -22,7 +22,7 @@ defmodule Dashboard.RedisSubscriber do
 
   @impl true
   def init(state) do
-    case Redix.subscribe(:redix_pubsub, @channel, self()) do
+    case Redix.PubSub.subscribe(:redix_pubsub, @channel, self()) do
       {:ok, _ref} ->
         Logger.info("RedisSubscriber: subscribed to #{@channel}")
         {:ok, state}
@@ -62,7 +62,7 @@ defmodule Dashboard.RedisSubscriber do
   end
 
   def handle_info(:retry_subscribe, state) do
-    case Redix.subscribe(:redix_pubsub, @channel, self()) do
+    case Redix.PubSub.subscribe(:redix_pubsub, @channel, self()) do
       {:ok, _ref} ->
         Logger.info("RedisSubscriber: re-subscribed to #{@channel}")
 
