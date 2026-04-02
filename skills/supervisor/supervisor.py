@@ -199,6 +199,34 @@ def run_health_check(r):
     else:
         print(f"\n  ✅ All checks passed")
 
+    # Notify on every run so silence is meaningful
+    agent_lines = []
+    for agent, threshold_min in [("executor", 5), ("portfolio_manager", 5),
+                                  ("screener", 25 * 60), ("watcher", 5 * 60)]:
+        hb = r.get(Keys.heartbeat(agent))
+        if hb:
+            age_min = (datetime.now() - datetime.fromisoformat(hb)).total_seconds() / 60
+            overdue = age_min > threshold_min
+            icon = "⚠️" if overdue else "✅"
+            agent_lines.append(f"{icon} {agent} ({age_min:.0f}m ago)")
+        else:
+            agent_lines.append(f"ℹ️ {agent} (no heartbeat yet)")
+
+    issue_block = ""
+    if issues:
+        issue_block = "\n\n⚠️ <b>Issues:</b>\n" + "\n".join(f"  • {i}" for i in issues)
+
+    msg = (
+        f"🔍 <b>HEALTH — {datetime.now().strftime('%-I:%M %p')}</b>\n"
+        f"\n"
+        f"System: {status} | Equity: ${equity:,.2f} | DD: {dd:.1f}%\n"
+        f"Positions: {len(positions)} | PDT: {pdt}/3\n"
+        f"\n"
+        + "\n".join(agent_lines)
+        + issue_block
+    )
+    notify(msg)
+
     return issues
 
 

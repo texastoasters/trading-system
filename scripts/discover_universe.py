@@ -46,6 +46,7 @@ except ImportError:
 
 from indicators import rsi, sma, atr
 import config  # noqa: F401 — auto-loads /home/linuxuser/.trading_env
+from notify import notify
 
 
 # Known instruments (already tested)
@@ -463,6 +464,35 @@ def main():
     print(f"  Run it multiple times to cover more of the universe.")
     print(f"  The Supervisor should run this monthly to discover new instruments")
     print(f"  and re-validate the existing universe.")
+
+    # Notify on every run so silence is meaningful
+    if new_passes:
+        pass_lines = []
+        for p in new_passes[:10]:  # cap at 10 to keep message readable
+            pass_lines.append(
+                f"  ✅ <b>{p['symbol']}</b> {p.get('type', '')} "
+                f"WR {p['win_rate']:.0f}% | PF {p['profit_factor']:.2f} | "
+                f"Avg {p['avg_trade']:+.2f}%"
+            )
+        if len(new_passes) > 10:
+            pass_lines.append(f"  … and {len(new_passes) - 10} more")
+        passes_block = "\n".join(pass_lines)
+        save_note = "Saved to Redis (tier 3)" if args.save else "⚠️ Run with --save to add to universe"
+    else:
+        passes_block = "No new instruments passed — normal, most don't mean-revert on RSI-2"
+        save_note = ""
+
+    msg = (
+        f"🔎 <b>UNIVERSE DISCOVERY — {datetime.now().strftime('%-I:%M %p')}</b>\n"
+        f"\n"
+        f"Candidates scanned: {len(liquid_candidates)}\n"
+        f"New passes: {len(new_passes)} | New fails: {len(new_fails)}\n"
+        f"\n"
+        f"{passes_block}\n"
+    )
+    if save_note:
+        msg += f"\n{save_note}\n"
+    notify(msg)
 
 
 if __name__ == "__main__":

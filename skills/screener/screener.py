@@ -214,6 +214,34 @@ def run_scan():
               f"Close={w['close']:>10.2f}  SMA200={w['sma200']:>10.2f}  "
               f"Tier {w['tier']}  [{w['priority']}]")
 
+    # Notify on every run so silence is meaningful
+    regime = regime_info["regime"]
+    adx_val = regime_info["adx"]
+    regime_emoji = {"RANGING": "➡️", "UPTREND": "📈", "DOWNTREND": "📉"}.get(regime, "❓")
+
+    if watchlist:
+        watchlist_lines = []
+        for w in watchlist:
+            icon = "🔴" if w["priority"] == "strong_signal" else "🟡" if w["priority"] == "signal" else "⚪"
+            watchlist_lines.append(
+                f"{icon} <b>{w['symbol']}</b> RSI-2={w['rsi2']:.1f}  "
+                f"T{w['tier']}  [{w['priority'].replace('_', ' ')}]"
+            )
+        watchlist_block = "\n".join(watchlist_lines)
+    else:
+        watchlist_block = "No instruments near entry conditions"
+
+    msg = (
+        f"📡 <b>SCREENER — {datetime.now().strftime('%-I:%M %p')}</b>\n"
+        f"\n"
+        f"Regime: {regime_emoji} <b>{regime}</b> (ADX={adx_val})\n"
+        f"Scanned: {len(instruments)} instruments\n"
+        f"Signals: {len(signals)} | Watches: {len(watches)}\n"
+        f"\n"
+        f"{watchlist_block}\n"
+    )
+    notify(msg)
+
     return watchlist
 
 
