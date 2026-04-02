@@ -22,10 +22,11 @@ The system runs one proven strategy (RSI-2 mean reversion) across multiple instr
 
 - **VPS**: Ubuntu 24.04 (tested on Vultr, hostname `openboog`)
 - **Python**: 3.12+ (system Python works; avoid 3.14 for alpaca-py compatibility)
-- **Docker**: For Redis and TimescaleDB containers
+- **Docker**: For Redis, TimescaleDB, and the dashboard container
 - **Alpaca account**: Free paper trading account at [alpaca.markets](https://alpaca.markets)
 - **OpenClaw**: Installed with Node.js 22.16+ for LLM orchestration
 - **Telegram bot** (optional): For trade alerts and daily summaries
+- **Tailscale**: Installed on the VPS and your devices for private dashboard access
 
 ## Quick Start
 
@@ -47,6 +48,8 @@ export ALPACA_SECRET_KEY="your-paper-secret"
 export TSDB_PASSWORD="changeme_in_env_file"
 export TELEGRAM_BOT_TOKEN=""    # optional — see Telegram Setup below
 export TELEGRAM_CHAT_ID=""      # optional
+export TAILSCALE_HOSTNAME=""    # your Tailscale hostname, e.g. openboog.tail1234.ts.net
+export DASHBOARD_SECRET_KEY_BASE=""  # generate with: mix phx.gen.secret (64+ chars)
 EOF
 chmod 600 ~/.trading_env
 
