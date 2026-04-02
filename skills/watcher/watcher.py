@@ -293,10 +293,41 @@ def run_cycle():
             print(f"[Watcher] Generated {len(entry_signals)} entry signal(s)")
             publish_signals(r, entry_signals)
 
-    if not exit_signals and not entry_signals:
+    total_signals = exit_signals + (entry_signals if status != "halted" else [])
+
+    if not total_signals:
         print("[Watcher] No signals this cycle.")
 
-    return entry_signals + exit_signals
+    # Notify on every run so silence is meaningful
+    positions = json.loads(r.get(Keys.POSITIONS) or "{}")
+    watchlist = json.loads(r.get(Keys.WATCHLIST) or "[]")
+
+    signal_lines = []
+    for s in entry_signals if status != "halted" else []:
+        signal_lines.append(
+            f"📊 ENTRY: <b>{s['symbol']}</b> RSI-2={s['indicators']['rsi2']:.1f} "
+            f"Stop={s['suggested_stop']} T{s['tier']}"
+        )
+    for s in exit_signals:
+        icon = "✅" if s.get("pnl_pct", 0) > 0 else "❌"
+        signal_lines.append(
+            f"{icon} EXIT: <b>{s['symbol']}</b> {s['signal_type'].replace('_', ' ')} "
+            f"P&L={s.get('pnl_pct', 0):+.2f}%"
+        )
+
+    signal_block = "\n".join(signal_lines) if signal_lines else "No signals this cycle"
+
+    msg = (
+        f"👁 <b>WATCHER — {datetime.now().strftime('%-I:%M %p')}</b>\n"
+        f"\n"
+        f"Watchlist: {len(watchlist)} items | Positions: {len(positions)}\n"
+        f"System: {status}\n"
+        f"\n"
+        f"{signal_block}\n"
+    )
+    notify(msg)
+
+    return total_signals
 
 
 def daemon_loop():
