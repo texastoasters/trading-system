@@ -38,10 +38,7 @@ cd ~/trading-system
 # 2. Install Python dependencies
 python3 -m pip install alpaca-py redis psycopg2-binary numpy pytz requests
 
-# 3. Start infrastructure
-docker compose up -d
-
-# 4. Create environment file
+# 3. Create environment file (used by Python agents and sourced into .env below)
 cat > ~/.trading_env << 'EOF'
 export ALPACA_API_KEY="your-paper-key"
 export ALPACA_SECRET_KEY="your-paper-secret"
@@ -49,18 +46,26 @@ export TSDB_PASSWORD="changeme_in_env_file"
 export TELEGRAM_BOT_TOKEN=""    # optional — see Telegram Setup below
 export TELEGRAM_CHAT_ID=""      # optional
 export TAILSCALE_HOSTNAME=""    # your Tailscale hostname, e.g. openboog.tail1234.ts.net
-export DASHBOARD_SECRET_KEY_BASE=""  # generate with: mix phx.gen.secret (64+ chars)
+export DASHBOARD_SECRET_KEY_BASE=""  # generate with: openssl rand -base64 48
 EOF
 chmod 600 ~/.trading_env
 
-# 5. Verify infrastructure
+# 4. Create .env for Docker Compose (strips `export` from ~/.trading_env)
+# .env is gitignored — never committed
+grep -E '^export [A-Z_]+=' ~/.trading_env | sed 's/^export //' > ~/trading-system/.env
+chmod 600 ~/trading-system/.env
+
+# 5. Start infrastructure
+docker compose up -d
+
+# 6. Verify infrastructure
 source ~/.trading_env
 python3 scripts/verify_alpaca.py
 
-# 6. Link skills to OpenClaw workspace
+# 7. Link skills to OpenClaw workspace
 ln -s ~/trading-system/skills <your-openclaw-workspace>/skills/trading
 
-# 7. Start the system
+# 8. Start the system
 chmod +x start_trading_system.sh
 ./start_trading_system.sh
 ```
@@ -78,15 +83,28 @@ The paper account comes with $100,000 in virtual funds. The system caps itself a
 
 ### Docker Services
 
+Docker Compose reads `~/trading-system/.env` for variable substitution. This file must exist before running any `docker compose` command. Generate it from `~/.trading_env` with:
+
 ```bash
-# Start Redis and TimescaleDB
+grep -E '^export [A-Z_]+=' ~/.trading_env | sed 's/^export //' > ~/trading-system/.env
+chmod 600 ~/trading-system/.env
+```
+
+Re-run this whenever you change `~/.trading_env`. The file is gitignored and never committed.
+
+```bash
+# Start all services (Redis, TimescaleDB, dashboard)
 docker compose up -d
+
+# Rebuild and restart the dashboard after code changes
+docker compose up --build -d dashboard
 
 # Check they're running
 docker compose ps
 
-# View TimescaleDB logs
+# View logs
 docker compose logs timescaledb
+docker compose logs dashboard
 
 # Redis CLI
 redis-cli ping
