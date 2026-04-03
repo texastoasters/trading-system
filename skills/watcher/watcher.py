@@ -157,12 +157,14 @@ def generate_exit_signals(r, stock_client, crypto_client):
         return []
 
     signals = []
+    positions_updated = False
 
     for pos_key, pos in positions.items():
         symbol = pos["symbol"]
         entry_price = pos["entry_price"]
         entry_date = pos["entry_date"]
         stop_price = pos["stop_price"]
+        quantity = pos.get("quantity", 0)
 
         # Fetch recent bars
         data = fetch_recent_bars(symbol, stock_client, crypto_client)
@@ -178,6 +180,13 @@ def generate_exit_signals(r, stock_client, crypto_client):
 
         # Compute RSI-2 on recent data (need more history for accuracy)
         rsi2_val = rsi(close, 2)[-1] if len(close) >= 3 else 50
+
+        # Update position data with current market info
+        pos["current_price"] = round(float(latest_close), 2)
+        pos["current_rsi2"] = round(float(rsi2_val), 2) if not np.isnan(rsi2_val) else None
+        pos["current_value"] = round(float(latest_close) * float(quantity), 2)
+        pos["unrealized_pnl_pct"] = round((float(latest_close) - float(entry_price)) / float(entry_price) * 100, 2)
+        positions_updated = True
 
         # Calculate hold days
         try:
@@ -239,6 +248,10 @@ def generate_exit_signals(r, stock_client, crypto_client):
                 "fee_adjusted": is_crypto(symbol),
             }
             signals.append(signal)
+
+    # Save updated position data back to Redis
+    if positions_updated:
+        r.set(Keys.POSITIONS, json.dumps(positions))
 
     return signals
 

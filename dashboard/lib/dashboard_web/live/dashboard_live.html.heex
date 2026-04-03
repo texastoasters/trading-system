@@ -103,22 +103,67 @@
         <%= if map_size(@redis_positions) == 0 do %>
           <p class="text-sm text-gray-600 italic">No open positions</p>
         <% else %>
-          <div class="space-y-2">
+          <div class="space-y-3">
             <%= for {_key, pos} <- @redis_positions do %>
-              <% {tier_label, tier_class} = tier_badge(pos["tier"]) %>
-              <div class="flex items-center justify-between py-2 border-b border-gray-700/50 last:border-0">
-                <div class="flex items-center gap-2">
-                  <span class="font-mono font-semibold text-white">{pos["symbol"]}</span>
-                  <span class={["text-xs px-1.5 py-0.5 rounded border font-medium", tier_class]}>
-                    {tier_label}
-                  </span>
-                </div>
-                <div class="text-right">
-                  <div class="text-sm text-gray-300">
-                    entry {format_price(pos["entry_price"])}
+              <% {tier_label, tier_class} = tier_badge(pos["tier"])
+              current_price = pos["current_price"]
+              current_rsi2 = pos["current_rsi2"]
+              quantity = pos["quantity"]
+              current_value = pos["current_value"]
+              unrealized_pnl = pos["unrealized_pnl_pct"] %>
+              <div class="border border-gray-700/50 rounded-lg p-3 hover:bg-gray-700/20 transition-colors">
+                <div class="flex items-start justify-between mb-2">
+                  <div class="flex items-center gap-2">
+                    <span class="font-mono font-semibold text-white text-lg">{pos["symbol"]}</span>
+                    <span class={["text-xs px-1.5 py-0.5 rounded border font-medium", tier_class]}>
+                      {tier_label}
+                    </span>
                   </div>
-                  <div class="text-xs text-gray-600">
-                    stop {format_price(pos["stop_price"])} · {pos["entry_date"]}
+                  <div class="text-right">
+                    <%= if unrealized_pnl do %>
+                      <div class={["text-sm font-semibold", pnl_class(unrealized_pnl)]}>
+                        {format_signed_pct(unrealized_pnl)}
+                      </div>
+                    <% end %>
+                    <div class="text-xs text-gray-500">{pos["entry_date"]}</div>
+                  </div>
+                </div>
+                <div class="grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <span class="text-gray-500">Entry:</span>
+                    <span class="text-gray-300 ml-1 font-mono">{format_price(pos["entry_price"])}</span>
+                  </div>
+                  <div>
+                    <span class="text-gray-500">Current:</span>
+                    <%= if current_price do %>
+                      <span class="text-white ml-1 font-mono font-semibold">{format_price(current_price)}</span>
+                    <% else %>
+                      <span class="text-gray-600 ml-1">—</span>
+                    <% end %>
+                  </div>
+                  <div>
+                    <span class="text-gray-500">Stop:</span>
+                    <span class="text-gray-300 ml-1 font-mono">{format_price(pos["stop_price"])}</span>
+                  </div>
+                  <div>
+                    <span class="text-gray-500">RSI-2:</span>
+                    <%= if current_rsi2 do %>
+                      <span class="text-blue-400 ml-1 font-mono font-semibold">{format_float(current_rsi2)}</span>
+                    <% else %>
+                      <span class="text-gray-600 ml-1">—</span>
+                    <% end %>
+                  </div>
+                  <div>
+                    <span class="text-gray-500">Shares:</span>
+                    <span class="text-gray-300 ml-1 font-mono">{quantity}</span>
+                  </div>
+                  <div>
+                    <span class="text-gray-500">Value:</span>
+                    <%= if current_value do %>
+                      <span class="text-white ml-1 font-mono font-semibold">{format_price(current_value)}</span>
+                    <% else %>
+                      <span class="text-gray-600 ml-1">—</span>
+                    <% end %>
                   </div>
                 </div>
               </div>
