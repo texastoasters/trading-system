@@ -55,7 +55,7 @@ def fmt_et(dt: datetime = None, fmt: str = "%H:%M ET") -> str:
     - fmt defaults to 24-hour HH:MM with an 'ET' suffix.
     """
     if dt is None:
-        return __now_et().strftime(fmt)
+        return _now_et().strftime(fmt)
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=_UTC).astimezone(_ET)
     else:
