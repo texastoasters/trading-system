@@ -2,8 +2,8 @@
 #
 # start_trading_system.sh — Trading System Startup Script
 #
-# Starts daemon agents (executor, portfolio_manager) with proper logging.
-# Screener, watcher, and supervisor are managed by OpenClaw cron jobs, not this script.
+# Starts daemon agents (executor, portfolio_manager, watcher) with proper logging.
+# Screener and supervisor are managed by cron jobs.
 # Each daemon agent runs in the background with output logged to ~/trading-system/logs/
 #
 # Usage:
@@ -27,7 +27,7 @@ LOG_DIR="${TRADING_DIR}/logs"
 PID_DIR="${TRADING_DIR}/pids"
 ENV_FILE="${HOME}/.trading_env"
 
-AGENTS=("executor" "portfolio_manager")
+AGENTS=("executor" "portfolio_manager" "watcher")
 
 # Colors for output
 RED='\033[0;31m'

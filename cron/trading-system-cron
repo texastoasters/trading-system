@@ -17,13 +17,13 @@ TRADING_ENV=/home/linuxuser/.trading_env
 25 9 * * 1-5  linuxuser  . $TRADING_ENV && cd $TRADING_HOME && PYTHONPATH=$TRADING_HOME/scripts python3 skills/supervisor/supervisor.py --reset-daily 2>&1 | logger -t trading-reset
 
 # --- Screener end-of-day scan (4:15 PM ET, after equity close, weekdays) ---
-15 16 * * 1-5  linuxuser  . $TRADING_ENV && cd $TRADING_HOME && PYTHONPATH=$TRADING_HOME/scripts python3 skills/screener/screener.py 2>&1 | logger -t trading-screener && PYTHONPATH=$TRADING_HOME/scripts python3 skills/watcher/watcher.py 2>&1 | logger -t trading-watcher
+# Screener scans the universe for RSI-2 entry conditions using daily bars
+# Note: Watcher now runs as a daemon (started by start_trading_system.sh)
+#       and monitors positions continuously with intraday bars
+15 16 * * 1-5  linuxuser  . $TRADING_ENV && cd $TRADING_HOME && PYTHONPATH=$TRADING_HOME/scripts python3 skills/screener/screener.py 2>&1 | logger -t trading-screener
 
 # --- Supervisor end-of-day review (4:30 PM ET, after screener, weekdays) ----
 30 16 * * 1-5  linuxuser  . $TRADING_ENV && cd $TRADING_HOME && PYTHONPATH=$TRADING_HOME/scripts python3 skills/supervisor/supervisor.py --eod 2>&1 | logger -t trading-eod
-
-# --- Watcher evaluation cycle (every 4 hours, all days for BTC) ------------
-0 */4 * * *  linuxuser  . $TRADING_ENV && cd $TRADING_HOME && PYTHONPATH=$TRADING_HOME/scripts python3 skills/watcher/watcher.py 2>&1 | logger -t trading-watcher
 
 # --- Supervisor health check (every 15 min, market hours, weekdays) --------
 */15 9-15 * * 1-5  linuxuser  . $TRADING_ENV && cd $TRADING_HOME && PYTHONPATH=$TRADING_HOME/scripts python3 skills/supervisor/supervisor.py --health 2>&1 | logger -t trading-health
