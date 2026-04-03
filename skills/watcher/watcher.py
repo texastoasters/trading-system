@@ -31,6 +31,7 @@ from notify import notify, fmt_et
 
 def fetch_recent_bars(symbol, stock_client, crypto_client, days=10):
     """Fetch recent daily bars for RSI-2 calculation."""
+    """Fetch recent daily bars for RSI-2 calculation."""
     end = datetime.now() - timedelta(hours=1)
     start = end - timedelta(days=days)
 
@@ -62,6 +63,42 @@ def fetch_recent_bars(symbol, stock_client, crypto_client, days=10):
         }
     except Exception as e:
         print(f"  [!] Failed to fetch recent bars for {symbol}: {e}")
+        return None
+
+
+def fetch_intraday_bars(symbol, stock_client, crypto_client, hours=24):
+    """Fetch recent 15-min bars for current price and intraday stop-loss monitoring."""
+    end = datetime.now()
+    start = end - timedelta(hours=hours)
+
+    try:
+        if is_crypto(symbol):
+            req = CryptoBarsRequest(
+                symbol_or_symbols=symbol,
+                timeframe=TimeFrame.Minute,  # 15-minute bars
+                start=start, end=end,
+            )
+            bars = crypto_client.get_crypto_bars(req)
+        else:
+            req = StockBarsRequest(
+                symbol_or_symbols=symbol,
+                timeframe=TimeFrame.Minute,  # 15-minute bars
+                start=start, end=end,
+            )
+            bars = stock_client.get_stock_bars(req)
+
+        bar_list = bars[symbol]
+        if len(bar_list) < 1:
+            return None
+
+        return {
+            'timestamps': [b.timestamp for b in bar_list],
+            'high': np.array([float(b.high) for b in bar_list]),
+            'low': np.array([float(b.low) for b in bar_list]),
+            'close': np.array([float(b.close) for b in bar_list]),
+        }
+    except Exception as e:
+        print(f"  [!] Failed to fetch intraday bars for {symbol}: {e}")
         return None
 
 
@@ -231,12 +268,27 @@ def generate_exit_signals(r, stock_client, crypto_client):
         # Fetch daily bars for RSI-2 and "close > prev high" checks
         daily_data = fetch_recent_bars(symbol, stock_client, crypto_client)
         if daily_data is None:
+        # Fetch intraday bars for current price and stop-loss monitoring
+        intraday_data = fetch_intraday_bars(symbol, stock_client, crypto_client)
+        if intraday_data is None:
+            continue
+
+        # Get current price from most recent intraday bar
+        latest_close = intraday_data['close'][-1]
+        intraday_low = np.min(intraday_data['low'][-4:])  # Lowest in last hour (4x15min bars)
+
+        # Fetch daily bars for RSI-2 and "close > prev high" checks
+        daily_data = fetch_recent_bars(symbol, stock_client, crypto_client)
+        if daily_data is None:
             continue
 
         close = daily_data['close']
         high = daily_data['high']
+        close = daily_data['close']
+        high = daily_data['high']
         prev_high = high[-2] if len(high) > 1 else high[-1]
 
+        # Compute RSI-2 on daily data (strategy uses daily RSI-2)
         # Compute RSI-2 on daily data (strategy uses daily RSI-2)
         rsi2_val = rsi(close, 2)[-1] if len(close) >= 3 else 50
 
@@ -258,6 +310,8 @@ def generate_exit_signals(r, stock_client, crypto_client):
 
         # Stop-loss hit (check intraday low for responsive detection)
         if intraday_low <= stop_price:
+        # Stop-loss hit (check intraday low for responsive detection)
+        if intraday_low <= stop_price:
             exit_signal = {
                 "signal_type": "stop_loss",
                 "exit_price": stop_price,
@@ -267,6 +321,7 @@ def generate_exit_signals(r, stock_client, crypto_client):
             r.set(Keys.whipsaw(symbol), datetime.now().isoformat(), ex=86400)
 
         # RSI-2 exit (> 60) - using daily RSI-2
+        # RSI-2 exit (> 60) - using daily RSI-2
         elif not np.isnan(rsi2_val) and rsi2_val > config.RSI2_EXIT:
             exit_signal = {
                 "signal_type": "take_profit",
@@ -274,6 +329,7 @@ def generate_exit_signals(r, stock_client, crypto_client):
                 "reason": f"RSI-2 at {rsi2_val:.1f} > {config.RSI2_EXIT}",
             }
 
+        # Close > previous day's high (using daily bars for consistency)
         # Close > previous day's high (using daily bars for consistency)
         elif latest_close > prev_high:
             exit_signal = {
@@ -425,6 +481,7 @@ def daemon_loop():
     """Run evaluation cycles continuously."""
     print("[Watcher] Starting daemon mode...")
     print("[Watcher] Market hours: every 5 minutes | Off-hours: every 30 minutes")
+    print("[Watcher] Market hours: every 5 minutes | Off-hours: every 30 minutes")
 
     r = get_redis()
     while True:
@@ -435,6 +492,14 @@ def daemon_loop():
             from notify import critical_alert
             critical_alert(f"Watcher cycle failed: {e}")
 
+        # Check every 5 minutes during market hours for responsive stop-loss detection
+        # Check every 30 minutes outside market hours (for crypto and off-hours monitoring)
+        if is_market_hours():
+            sleep_duration = 300  # 5 minutes
+        else:
+            sleep_duration = 1800  # 30 minutes
+
+        time.sleep(sleep_duration)
         # Check every 5 minutes during market hours for responsive stop-loss detection
         # Check every 30 minutes outside market hours (for crypto and off-hours monitoring)
         if is_market_hours():
