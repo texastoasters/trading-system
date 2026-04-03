@@ -25,7 +25,7 @@ from alpaca.data.timeframe import TimeFrame
 import config
 from config import Keys, get_redis, get_simulated_equity, is_crypto
 from indicators import rsi, sma, atr
-from notify import notify
+from notify import notify, fmt_et
 
 
 def fetch_recent_bars(symbol, stock_client, crypto_client, days=10):
@@ -318,7 +318,7 @@ def run_cycle():
     signal_block = "\n".join(signal_lines) if signal_lines else "No signals this cycle"
 
     msg = (
-        f"👁 <b>WATCHER — {datetime.now().strftime('%-I:%M %p')}</b>\n"
+        f"👁 <b>WATCHER — {fmt_et()}</b>\n"
         f"\n"
         f"Watchlist: {len(watchlist)} items | Positions: {len(positions)}\n"
         f"System: {status}\n"
