@@ -21,6 +21,7 @@ import numpy as np
 from alpaca.data.historical import StockHistoricalDataClient, CryptoHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest, CryptoBarsRequest
 from alpaca.data.timeframe import TimeFrame
+from alpaca.trading.client import TradingClient
 
 import config
 from config import Keys, get_redis, get_simulated_equity, is_crypto
@@ -122,10 +123,17 @@ def generate_entry_signals(r, stock_client, crypto_client):
     regime_info = json.loads(regime_raw) if regime_raw else {"regime": "RANGING"}
 
     signals = []
+    market_open = is_market_hours()
 
     for item in watchlist:
         symbol = item["symbol"]
         priority = item["priority"]
+
+        # Equity orders can only be placed during market hours — skip to avoid
+        # flooding the pipeline with signals that the executor will reject anyway.
+        # Crypto trades 24/7 so it is always eligible.
+        if not is_crypto(symbol) and not market_open:
+            continue
 
         # Only act on actual signals, not watches
         if priority not in ("signal", "strong_signal"):
@@ -194,9 +202,18 @@ def generate_exit_signals(r, stock_client, crypto_client):
 
     signals = []
     positions_updated = False
+    market_open = is_market_hours()
 
     for pos_key, pos in positions.items():
         symbol = pos["symbol"]
+
+        # Equity sells can only execute during market hours. Skip intraday
+        # monitoring for equities when closed — the server-side GTC stop-loss
+        # on Alpaca remains active and will protect the position.
+        # Crypto trades 24/7 so it is always monitored.
+        if not is_crypto(symbol) and not market_open:
+            continue
+
         entry_price = pos["entry_price"]
         entry_date = pos["entry_date"]
         stop_price = pos["stop_price"]
@@ -352,8 +369,9 @@ def run_cycle():
 
     if not total_signals:
         print("[Watcher] No signals this cycle.")
+        return total_signals
 
-    # Notify on every run so silence is meaningful
+    # Only notify when a signal was detected or an action was taken.
     positions = json.loads(r.get(Keys.POSITIONS) or "{}")
     watchlist = json.loads(r.get(Keys.WATCHLIST) or "[]")
 
@@ -370,7 +388,7 @@ def run_cycle():
             f"P&L={s.get('pnl_pct', 0):+.2f}%"
         )
 
-    signal_block = "\n".join(signal_lines) if signal_lines else "No signals this cycle"
+    signal_block = "\n".join(signal_lines)
 
     msg = (
         f"👁 <b>WATCHER — {fmt_et()}</b>\n"
@@ -386,20 +404,21 @@ def run_cycle():
 
 
 def is_market_hours():
-    """Check if current time is during market hours (9:30 AM - 4:00 PM ET, Mon-Fri)."""
-    from pytz import timezone
-    et = timezone('America/New_York')
-    now_et = datetime.now(et)
-
-    # Check if weekday (0=Monday, 6=Sunday)
-    if now_et.weekday() >= 5:  # Saturday or Sunday
-        return False
-
-    # Check if during market hours (9:30 AM - 4:00 PM ET)
-    market_open = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
-    market_close = now_et.replace(hour=16, minute=0, second=0, microsecond=0)
-
-    return market_open <= now_et <= market_close
+    """Check if the market is currently open, using Alpaca's clock (holiday- and early-close-aware)."""
+    try:
+        trading_client = TradingClient(config.ALPACA_API_KEY, config.ALPACA_SECRET_KEY, paper=config.PAPER_TRADING)
+        return trading_client.get_clock().is_open
+    except Exception as e:
+        print(f"  [Watcher] ⚠️ Could not fetch market clock: {e} — falling back to time-based check")
+        # Fallback: weekday + time window (no holiday awareness)
+        from pytz import timezone
+        et = timezone('America/New_York')
+        now_et = datetime.now(et)
+        if now_et.weekday() >= 5:
+            return False
+        market_open = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
+        market_close = now_et.replace(hour=16, minute=0, second=0, microsecond=0)
+        return market_open <= now_et <= market_close
 
 
 def daemon_loop():
