@@ -274,6 +274,19 @@ def generate_exit_signals(r, stock_client, crypto_client):
             }
 
         if exit_signal:
+            # Deduplicate: skip if we already dispatched an exit signal for this
+            # symbol and it hasn't been cleared by a confirmed sell yet.  This
+            # prevents daily-bar conditions (RSI > 60, close > prev high, time
+            # stop) from re-firing on every 30-minute cycle until the market
+            # reopens and the executor can actually execute the sell.
+            if r.exists(Keys.exit_signaled(symbol)):
+                print(f"  [Watcher] {symbol}: exit already signaled — awaiting execution")
+                continue
+
+            # Mark as dispatched; 48-hour TTL self-clears if the executor never
+            # acts (e.g. server-side stop-loss fires and bypasses executor).
+            r.set(Keys.exit_signaled(symbol), exit_signal["signal_type"], ex=172800)
+
             pnl_pct = (exit_signal["exit_price"] - entry_price) / entry_price * 100
             signal = {
                 "time": datetime.now().isoformat(),

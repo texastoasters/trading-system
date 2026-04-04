@@ -341,6 +341,10 @@ def execute_sell(r, trading_client, order):
         del positions[symbol]
         r.set(Keys.POSITIONS, json.dumps(positions))
 
+        # Clear the watcher's exit-signaled flag so a future re-entry on this
+        # symbol can exit normally rather than being silently suppressed.
+        r.delete(Keys.exit_signaled(symbol))
+
         # Calculate hold days
         try:
             entry_dt = datetime.strptime(pos["entry_date"], "%Y-%m-%d")

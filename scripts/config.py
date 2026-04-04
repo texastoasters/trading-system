@@ -135,6 +135,12 @@ class Keys:
     def whipsaw(symbol: str) -> str:
         return f"trading:whipsaw:{symbol}"
 
+    @staticmethod
+    def exit_signaled(symbol: str) -> str:
+        """Set when an exit signal is dispatched; cleared on confirmed sell.
+        Prevents the same daily-bar condition from re-firing every cycle."""
+        return f"trading:exit_signaled:{symbol}"
+
 
 # ── Redis Connection ────────────────────────────────────────
 
