@@ -207,13 +207,6 @@ def generate_exit_signals(r, stock_client, crypto_client):
     for pos_key, pos in positions.items():
         symbol = pos["symbol"]
 
-        # Equity sells can only execute during market hours. Skip intraday
-        # monitoring for equities when closed — the server-side GTC stop-loss
-        # on Alpaca remains active and will protect the position.
-        # Crypto trades 24/7 so it is always monitored.
-        if not is_crypto(symbol) and not market_open:
-            continue
-
         entry_price = pos["entry_price"]
         entry_date = pos["entry_date"]
         stop_price = pos["stop_price"]
@@ -240,7 +233,7 @@ def generate_exit_signals(r, stock_client, crypto_client):
         # Compute RSI-2 on daily data (strategy uses daily RSI-2)
         rsi2_val = rsi(close, 2)[-1] if len(close) >= 3 else 50
 
-        # Update position data with current market info
+        # Always update position data so the dashboard stays current.
         pos["current_price"] = round(float(latest_close), 2)
         pos["current_rsi2"] = round(float(rsi2_val), 2) if not np.isnan(rsi2_val) else None
         pos["current_value"] = round(float(latest_close) * float(quantity), 2)
@@ -253,6 +246,13 @@ def generate_exit_signals(r, stock_client, crypto_client):
             hold_days = (datetime.now() - entry_dt).days
         except:
             hold_days = 0
+
+        # Equity sells can only execute during market hours — don't generate
+        # exit signals when they can't be acted on. The server-side GTC
+        # stop-loss on Alpaca remains active and protects the position.
+        # Crypto trades 24/7 so it is always eligible for exit signals.
+        if not is_crypto(symbol) and not market_open:
+            continue
 
         exit_signal = None
 
