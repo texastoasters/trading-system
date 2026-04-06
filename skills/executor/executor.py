@@ -327,19 +327,43 @@ def execute_sell(r, trading_client, order):
         )
 
         alpaca_order = trading_client.submit_order(req)
-        time.sleep(2)
-        filled_order = trading_client.get_order_by_id(alpaca_order.id)
 
-        # Guard: only process fill if the order actually filled
+        # Poll for fill — market sells for liquid stocks typically fill in < 2s
+        # but give up to 10s before giving up (same cadence as execute_buy).
+        filled_order = None
+        for _ in range(5):
+            time.sleep(2)
+            filled_order = trading_client.get_order_by_id(alpaca_order.id)
+            if filled_order.status in ("filled", "canceled", "rejected", "expired"):
+                break
+            # partially_filled — still in progress, keep waiting
+
         if filled_order.status != "filled":
-            print(f"  [Executor] ⚠️ Sell for {symbol} is {filled_order.status} — "
-                  f"re-submitting stop-loss to restore protection")
-            # Restore stop-loss since the sell did not go through
-            new_stop_id = submit_stop_loss(trading_client, symbol, quantity, pos["stop_price"])
-            if new_stop_id:
-                pos["stop_order_id"] = new_stop_id
-                positions[symbol] = pos
-                r.set(Keys.POSITIONS, json.dumps(positions))
+            # The sell did not complete.  Cancel it if still open so we don't
+            # have a dangling market order, then restore the stop-loss.
+            print(f"  [Executor] ⚠️ Sell for {symbol} is {filled_order.status} after 10s — "
+                  f"cancelling sell and re-submitting stop-loss to restore protection")
+            try:
+                trading_client.cancel_order_by_id(alpaca_order.id)
+                time.sleep(1)
+            except Exception:
+                pass  # may already be done
+
+            # Re-fetch to get actual remaining quantity (partial fills reduce qty)
+            try:
+                refreshed = trading_client.get_order_by_id(alpaca_order.id)
+                filled_so_far = float(refreshed.filled_qty or 0)
+            except Exception:
+                filled_so_far = 0.0
+
+            remaining_qty = quantity - filled_so_far
+            if remaining_qty > 0:
+                new_stop_id = submit_stop_loss(trading_client, symbol, remaining_qty, pos["stop_price"])
+                if new_stop_id:
+                    pos["stop_order_id"] = new_stop_id
+                    pos["quantity"] = int(remaining_qty) if not is_crypto(symbol) else remaining_qty
+                    positions[symbol] = pos
+                    r.set(Keys.POSITIONS, json.dumps(positions))
             return False
 
         fill_price = float(filled_order.filled_avg_price)
