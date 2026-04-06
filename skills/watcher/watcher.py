@@ -83,6 +83,8 @@ def fetch_intraday_bars(symbol, stock_client, crypto_client, hours=24):
                 symbol_or_symbols=symbol,
                 timeframe=TimeFrame.Minute,  # 15-minute bars
                 start=start, end=end,
+                feed="iex",  # IEX feed works on free Alpaca accounts;
+                             # default SIP feed requires a paid subscription
             )
             bars = stock_client.get_stock_bars(req)
 
@@ -234,10 +236,13 @@ def generate_exit_signals(r, stock_client, crypto_client):
         rsi2_val = rsi(close, 2)[-1] if len(close) >= 3 else 50
 
         # Always update position data so the dashboard stays current.
+        # Write back to Redis immediately — don't let anything in the exit
+        # signal section below prevent this from landing in Redis.
         pos["current_price"] = round(float(latest_close), 2)
         pos["current_rsi2"] = round(float(rsi2_val), 2) if not np.isnan(rsi2_val) else None
         pos["current_value"] = round(float(latest_close) * float(quantity), 2)
         pos["unrealized_pnl_pct"] = round((float(latest_close) - float(entry_price)) / float(entry_price) * 100, 2)
+        r.set(Keys.POSITIONS, json.dumps(positions))
         positions_updated = True
 
         # Calculate hold days
