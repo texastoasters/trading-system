@@ -304,7 +304,21 @@ def execute_sell(r, trading_client, order):
             return False
 
     try:
-        # Submit the sell order — stop-loss stays active until fill is confirmed
+        # Step 1: Cancel the stop-loss FIRST — Alpaca marks all shares as
+        # "held_for_orders" while a GTC stop is active, making them unavailable
+        # for a market sell.  We restore the stop below if the sell fails.
+        stop_order_id = pos.get("stop_order_id")
+        if stop_order_id:
+            try:
+                trading_client.cancel_order_by_id(stop_order_id)
+                print(f"  [Executor] Cancelled stop-loss {stop_order_id} for {symbol}")
+                time.sleep(1)  # let cancellation settle before submitting sell
+            except Exception as cancel_err:
+                # Already triggered/cancelled — proceed; the position may have
+                # been stopped out and we just haven't synced Redis yet.
+                print(f"  [Executor] ⚠️ Could not cancel stop-loss for {symbol}: {cancel_err}")
+
+        # Step 2: Submit the market sell
         req = MarketOrderRequest(
             symbol=symbol,
             qty=int(quantity) if not is_crypto(symbol) else quantity,
@@ -316,18 +330,17 @@ def execute_sell(r, trading_client, order):
         time.sleep(2)
         filled_order = trading_client.get_order_by_id(alpaca_order.id)
 
-        # Guard: only process fill if the order actually filled — leave everything intact otherwise
+        # Guard: only process fill if the order actually filled
         if filled_order.status != "filled":
             print(f"  [Executor] ⚠️ Sell for {symbol} is {filled_order.status} — "
-                  f"leaving position and stop-loss intact")
+                  f"re-submitting stop-loss to restore protection")
+            # Restore stop-loss since the sell did not go through
+            new_stop_id = submit_stop_loss(trading_client, symbol, quantity, pos["stop_price"])
+            if new_stop_id:
+                pos["stop_order_id"] = new_stop_id
+                positions[symbol] = pos
+                r.set(Keys.POSITIONS, json.dumps(positions))
             return False
-
-        # Confirmed filled — now safe to cancel the stop-loss
-        if pos.get("stop_order_id"):
-            try:
-                trading_client.cancel_order_by_id(pos["stop_order_id"])
-            except:
-                pass  # may already be triggered/cancelled
 
         fill_price = float(filled_order.filled_avg_price)
         entry_price = pos["entry_price"]
