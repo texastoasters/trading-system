@@ -21,6 +21,7 @@ import numpy as np
 from alpaca.data.historical import StockHistoricalDataClient, CryptoHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest, CryptoBarsRequest
 from alpaca.data.timeframe import TimeFrame
+from alpaca.trading.client import TradingClient
 
 import config
 from config import Keys, get_redis, get_simulated_equity, is_crypto
@@ -399,20 +400,21 @@ def run_cycle():
 
 
 def is_market_hours():
-    """Check if current time is during market hours (9:30 AM - 4:00 PM ET, Mon-Fri)."""
-    from pytz import timezone
-    et = timezone('America/New_York')
-    now_et = datetime.now(et)
-
-    # Check if weekday (0=Monday, 6=Sunday)
-    if now_et.weekday() >= 5:  # Saturday or Sunday
-        return False
-
-    # Check if during market hours (9:30 AM - 4:00 PM ET)
-    market_open = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
-    market_close = now_et.replace(hour=16, minute=0, second=0, microsecond=0)
-
-    return market_open <= now_et <= market_close
+    """Check if the market is currently open, using Alpaca's clock (holiday- and early-close-aware)."""
+    try:
+        trading_client = TradingClient(config.ALPACA_API_KEY, config.ALPACA_SECRET_KEY, paper=config.PAPER_TRADING)
+        return trading_client.get_clock().is_open
+    except Exception as e:
+        print(f"  [Watcher] ⚠️ Could not fetch market clock: {e} — falling back to time-based check")
+        # Fallback: weekday + time window (no holiday awareness)
+        from pytz import timezone
+        et = timezone('America/New_York')
+        now_et = datetime.now(et)
+        if now_et.weekday() >= 5:
+            return False
+        market_open = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
+        market_close = now_et.replace(hour=16, minute=0, second=0, microsecond=0)
+        return market_open <= now_et <= market_close
 
 
 def daemon_loop():
