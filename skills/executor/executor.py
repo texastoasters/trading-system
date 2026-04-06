@@ -147,6 +147,14 @@ def execute_buy(r, trading_client, order):
               f"stop @ ${order['stop_price']:.2f}")
         return True
 
+    # Guard: don't submit equity buys when market is closed — signal will be
+    # re-evaluated at the next watcher cycle once the market reopens.
+    if not is_crypto(symbol):
+        clock = trading_client.get_clock()
+        if not clock.is_open:
+            print(f"  [Executor] ⚠️ Market closed — deferring buy for {symbol} until next session")
+            return False
+
     # Cancel any stale orders for this symbol to avoid wash trade conflicts
     cancel_existing_orders(trading_client, symbol)
 

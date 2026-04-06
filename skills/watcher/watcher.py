@@ -130,7 +130,7 @@ def generate_entry_signals(r, stock_client, crypto_client):
         priority = item["priority"]
 
         # Equity orders can only be placed during market hours — skip to avoid
-        # flooding the pipeline with signals the executor will reject anyway.
+        # flooding the pipeline with signals that the executor will reject anyway.
         # Crypto trades 24/7 so it is always eligible.
         if not is_crypto(symbol) and not market_open:
             continue
@@ -372,13 +372,14 @@ def run_cycle():
         publish_signals(r, exit_signals)
 
     # Only check entries if system is active
+    entry_signals = []
     if status != "halted":
         entry_signals = generate_entry_signals(r, stock_client, crypto_client)
         if entry_signals:
             print(f"[Watcher] Generated {len(entry_signals)} entry signal(s)")
             publish_signals(r, entry_signals)
 
-    total_signals = exit_signals + (entry_signals if status != "halted" else [])
+    total_signals = exit_signals + entry_signals
 
     if not total_signals:
         print("[Watcher] No signals this cycle.")
@@ -389,7 +390,7 @@ def run_cycle():
     watchlist = json.loads(r.get(Keys.WATCHLIST) or "[]")
 
     signal_lines = []
-    for s in entry_signals if status != "halted" else []:
+    for s in entry_signals:
         signal_lines.append(
             f"📊 ENTRY: <b>{s['symbol']}</b> RSI-2={s['indicators']['rsi2']:.1f} "
             f"Stop={s['suggested_stop']} T{s['tier']}"
