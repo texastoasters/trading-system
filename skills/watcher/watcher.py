@@ -123,10 +123,17 @@ def generate_entry_signals(r, stock_client, crypto_client):
     regime_info = json.loads(regime_raw) if regime_raw else {"regime": "RANGING"}
 
     signals = []
+    market_open = is_market_hours()
 
     for item in watchlist:
         symbol = item["symbol"]
         priority = item["priority"]
+
+        # Equity orders can only be placed during market hours — skip to avoid
+        # flooding the pipeline with signals the executor will reject anyway.
+        # Crypto trades 24/7 so it is always eligible.
+        if not is_crypto(symbol) and not market_open:
+            continue
 
         # Only act on actual signals, not watches
         if priority not in ("signal", "strong_signal"):
@@ -195,9 +202,18 @@ def generate_exit_signals(r, stock_client, crypto_client):
 
     signals = []
     positions_updated = False
+    market_open = is_market_hours()
 
     for pos_key, pos in positions.items():
         symbol = pos["symbol"]
+
+        # Equity sells can only execute during market hours. Skip intraday
+        # monitoring for equities when closed — the server-side GTC stop-loss
+        # on Alpaca remains active and will protect the position.
+        # Crypto trades 24/7 so it is always monitored.
+        if not is_crypto(symbol) and not market_open:
+            continue
+
         entry_price = pos["entry_price"]
         entry_date = pos["entry_date"]
         stop_price = pos["stop_price"]
@@ -366,8 +382,9 @@ def run_cycle():
 
     if not total_signals:
         print("[Watcher] No signals this cycle.")
+        return total_signals
 
-    # Notify on every run so silence is meaningful
+    # Only notify when a signal was detected or an action was taken.
     positions = json.loads(r.get(Keys.POSITIONS) or "{}")
     watchlist = json.loads(r.get(Keys.WATCHLIST) or "[]")
 
@@ -384,7 +401,7 @@ def run_cycle():
             f"P&L={s.get('pnl_pct', 0):+.2f}%"
         )
 
-    signal_block = "\n".join(signal_lines) if signal_lines else "No signals this cycle"
+    signal_block = "\n".join(signal_lines)
 
     msg = (
         f"👁 <b>WATCHER — {fmt_et()}</b>\n"
