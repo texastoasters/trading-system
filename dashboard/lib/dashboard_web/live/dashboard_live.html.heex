@@ -173,16 +173,18 @@
       </div>
 
       <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+        <% held_symbols = Map.keys(@redis_positions)
+           visible_watchlist = Enum.reject(@watchlist, fn item -> item["symbol"] in held_symbols end) %>
         <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
-          Watchlist ({length(@watchlist)})
+          Watchlist ({length(visible_watchlist)})
         </h2>
-        <%= if @watchlist == [] do %>
+        <%= if visible_watchlist == [] do %>
           <p class="text-sm text-gray-600 italic">
             No watchlist items — screener may not have run yet
           </p>
         <% else %>
           <div class="space-y-1.5">
-            <%= for item <- @watchlist do %>
+            <%= for item <- visible_watchlist do %>
               <% priority_class =
                 case item["priority"] do
                   "strong_signal" -> "text-green-400"
