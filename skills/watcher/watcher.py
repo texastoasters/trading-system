@@ -126,10 +126,15 @@ def generate_entry_signals(r, stock_client, crypto_client):
 
     signals = []
     market_open = is_market_hours()
+    open_positions = json.loads(r.get(Keys.POSITIONS) or "{}")
 
     for item in watchlist:
         symbol = item["symbol"]
         priority = item["priority"]
+
+        # Don't generate an entry signal if we already hold this symbol.
+        if symbol in open_positions:
+            continue
 
         # Equity orders can only be placed during market hours — skip to avoid
         # flooding the pipeline with signals that the executor will reject anyway.
@@ -305,9 +310,14 @@ def generate_exit_signals(r, stock_client, crypto_client):
                 print(f"  [Watcher] {symbol}: exit already signaled — awaiting execution")
                 continue
 
-            # Mark as dispatched; 48-hour TTL self-clears if the executor never
-            # acts (e.g. server-side stop-loss fires and bypasses executor).
-            r.set(Keys.exit_signaled(symbol), exit_signal["signal_type"], ex=172800)
+            # Mark as dispatched. Use a short TTL during market hours so a
+            # missed pub/sub message (executor offline/restarting) gets retried
+            # within a couple of watcher cycles. Use a long TTL off-hours to
+            # prevent overnight spam when the executor can't act anyway.
+            # The 48h fallback also self-clears if a server-side stop-loss
+            # fires and bypasses the executor entirely.
+            ttl = 600 if market_open else 172800  # 10 min open, 48h closed
+            r.set(Keys.exit_signaled(symbol), exit_signal["signal_type"], ex=ttl)
 
             pnl_pct = (exit_signal["exit_price"] - entry_price) / entry_price * 100
             signal = {
