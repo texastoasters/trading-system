@@ -387,9 +387,10 @@ def execute_sell(r, trading_client, order):
     except Exception as e:
         error_msg = str(e)
         if "403" in error_msg:
-            print(f"  [Executor] ⚠️ PDT rejection on exit — holding overnight")
+            # Log the full Alpaca error — 403 is not always PDT
+            print(f"  [Executor] ⚠️ 403 on sell for {symbol}: {error_msg}")
         else:
-            print(f"  [Executor] ❌ Sell failed: {error_msg}")
+            print(f"  [Executor] ❌ Sell failed for {symbol}: {error_msg}")
             critical_alert(f"Sell failed for {symbol}: {error_msg}")
         return False
 
