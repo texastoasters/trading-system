@@ -44,6 +44,7 @@ defmodule DashboardWeb.DashboardLive do
       |> assign(:regime, nil)
       |> assign(:redis_positions, %{})
       |> assign(:watchlist, [])
+      |> assign(:universe, nil)
       |> assign(:heartbeats, %{})
       # Live signal feed (from pub/sub)
       |> assign(:live_signals, [])
@@ -86,6 +87,7 @@ defmodule DashboardWeb.DashboardLive do
       |> assign(:regime, state["trading:regime"])
       |> assign(:redis_positions, state["trading:positions"] || %{})
       |> assign(:watchlist, state["trading:watchlist"] || [])
+      |> assign(:universe, state["trading:universe"])
       |> assign(:heartbeats, heartbeats)
 
     {:noreply, socket}
@@ -280,4 +282,14 @@ defmodule DashboardWeb.DashboardLive do
   defp heartbeat_dot(:ok), do: "bg-green-500"
   defp heartbeat_dot(:warning), do: "bg-yellow-500"
   defp heartbeat_dot(:stale), do: "bg-red-500"
+
+  defp universe_count(nil), do: "—"
+
+  defp universe_count(u) do
+    count =
+      ((u["tier1"] || []) ++ (u["tier2"] || []) ++ (u["tier3"] || []))
+      |> length()
+
+    "#{count}"
+  end
 end

@@ -23,6 +23,7 @@ defmodule Dashboard.RedisPoller do
     "trading:regime",
     "trading:positions",
     "trading:watchlist",
+    "trading:universe",
     "trading:heartbeat:screener",
     "trading:heartbeat:watcher",
     "trading:heartbeat:portfolio_manager",
@@ -81,7 +82,7 @@ defmodule Dashboard.RedisPoller do
 
   # JSON blobs
   defp parse_value(key, val)
-       when key in ["trading:regime", "trading:positions", "trading:watchlist"] do
+       when key in ["trading:regime", "trading:positions", "trading:watchlist", "trading:universe"] do
     case val do
       nil -> nil
       v -> Jason.decode(v) |> elem(1)

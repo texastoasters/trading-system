@@ -18,6 +18,7 @@ defmodule DashboardWeb.Router do
     pipe_through :browser
 
     live "/", DashboardLive, :index
+    live "/universe", UniverseLive, :index
   end
 
   # Health check endpoint — used by Docker healthcheck
