@@ -91,11 +91,12 @@ def validate_order(r, order, account):
         if not has_pos:
             return False, "Rule 1: Short selling prohibited"
 
-    # Daily loss limit
-    daily_pnl = float(r.get(Keys.DAILY_PNL) or 0)
-    equity = get_simulated_equity(r)
-    if daily_pnl <= -(equity * config.DAILY_LOSS_LIMIT_PCT):
-        return False, f"Daily loss limit: ${daily_pnl:.2f}"
+    # Daily loss limit (skipped for forced orders, e.g. manual dashboard liquidations)
+    if not order.get("force"):
+        daily_pnl = float(r.get(Keys.DAILY_PNL) or 0)
+        equity = get_simulated_equity(r)
+        if daily_pnl <= -(equity * config.DAILY_LOSS_LIMIT_PCT):
+            return False, f"Daily loss limit: ${daily_pnl:.2f}"
 
     # Max concurrent positions (for buys)
     if order["side"] == "buy":
@@ -592,7 +593,9 @@ def daemon_loop():
 
         try:
             order = json.loads(msg['data'])
-            print(f"\n[Executor] Received {order['side']} order for {order['symbol']}")
+            signal_type = order.get("signal_type", "")
+            manual_tag = " 🖐 MANUAL" if signal_type == "manual_liquidation" else ""
+            print(f"\n[Executor] Received {order['side']} order for {order['symbol']}{manual_tag}")
             process_order(r, trading_client, order)
         except Exception as e:
             print(f"[Executor] Error: {e}")

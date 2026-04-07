@@ -93,6 +93,26 @@ defmodule DashboardWeb.DashboardLive do
     {:noreply, socket}
   end
 
+  @impl true
+  def handle_event("liquidate", %{"symbol" => symbol}, socket) do
+    order = %{
+      "symbol" => symbol,
+      "side" => "sell",
+      "signal_type" => "manual_liquidation",
+      "reason" => "Manual liquidation via dashboard",
+      "force" => true,
+      "time" => DateTime.utc_now() |> DateTime.to_iso8601()
+    }
+
+    case Redix.command(:redix, ["PUBLISH", "trading:approved_orders", Jason.encode!(order)]) do
+      {:ok, _} ->
+        {:noreply, put_flash(socket, :info, "Liquidation order sent for #{symbol}")}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, "Failed to send liquidation order: #{inspect(reason)}")}
+    end
+  end
+
   def handle_info({:new_signal, signal}, socket) do
     signals = [signal | socket.assigns.live_signals] |> Enum.take(@max_signals)
     {:noreply, assign(socket, :live_signals, signals)}
