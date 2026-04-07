@@ -1,6 +1,6 @@
 <div class="min-h-screen bg-gray-900 text-gray-100 p-4 space-y-4">
 
-  <%# ── Header ─────────────────────────────────────────────────────── %>
+  <%!-- Header --%>
   <div class="flex items-center justify-between">
     <div class="flex items-center gap-3">
       <a href="/" class="text-gray-500 hover:text-gray-300 transition-colors text-sm">← Dashboard</a>
@@ -15,7 +15,7 @@
     </div>
   </div>
 
-  <%# ── Legend ─────────────────────────────────────────────────────── %>
+  <%!-- Legend --%>
   <div class="flex flex-wrap gap-3 text-xs">
     <div class="flex items-center gap-1.5">
       <span class="px-1.5 py-0.5 rounded border font-medium bg-orange-900/40 text-orange-300 border-orange-700">HELD</span>
@@ -35,7 +35,7 @@
     </div>
   </div>
 
-  <%# ── Per-tier tables ─────────────────────────────────────────────── %>
+  <%!-- Per-tier tables --%>
   <%= if @universe == nil do %>
     <div class="bg-gray-800 rounded-lg border border-gray-700 p-8 text-center">
       <p class="text-gray-500 italic">Universe data not available — screener may not have run yet.</p>
@@ -69,7 +69,7 @@
             <tbody class="divide-y divide-gray-700/30">
               <%= for sym <- symbols do %>
                 <% status = symbol_status(sym)
-                   {badge_text, badge_class} = status_badge(status)
+                   {pill_text, pill_class} = status_pill(status)
                    row_class = cond do
                      sym.held -> "bg-orange-950/20 hover:bg-orange-950/30"
                      status == :strong_signal -> "bg-green-950/20 hover:bg-green-950/30"
@@ -81,9 +81,9 @@
                     <span class="font-mono font-semibold text-white">{sym.symbol}</span>
                   </td>
                   <td class="px-4 py-2.5">
-                    <%= if badge_text do %>
-                      <span class={["text-xs px-1.5 py-0.5 rounded border font-medium", badge_class]}>
-                        {badge_text}
+                    <%= if pill_text do %>
+                      <span class={["text-xs px-1.5 py-0.5 rounded border font-medium", pill_class]}>
+                        {pill_text}
                       </span>
                     <% else %>
                       <span class="text-gray-700 text-xs">—</span>
@@ -122,7 +122,7 @@
       </div>
     <% end %>
 
-    <%# ── Disabled / Archived ───────────────────────────────────────── %>
+    <%!-- Disabled / Archived --%>
     <% disabled = @universe["disabled"] || []
        archived = @universe["archived"] || [] %>
     <%= if disabled != [] or archived != [] do %>

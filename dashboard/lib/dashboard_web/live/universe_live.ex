@@ -88,11 +88,11 @@ defmodule DashboardWeb.UniverseLive do
   defp tier_label(3), do: "Tier 3 — Satellite"
   defp tier_label(n), do: "Tier #{n}"
 
-  defp status_badge(:held),          do: {"HELD",    "bg-orange-900/40 text-orange-300 border-orange-700"}
-  defp status_badge(:strong_signal), do: {"STRONG",  "bg-green-900/40 text-green-300 border-green-700"}
-  defp status_badge(:signal),        do: {"SIGNAL",  "bg-blue-900/40 text-blue-300 border-blue-700"}
-  defp status_badge(:watch),         do: {"WATCH",   "bg-gray-800 text-gray-400 border-gray-600"}
-  defp status_badge(:none),          do: {nil, nil}
+  defp status_pill(:held),          do: {"HELD",    "bg-orange-900/40 text-orange-300 border-orange-700"}
+  defp status_pill(:strong_signal), do: {"STRONG",  "bg-green-900/40 text-green-300 border-green-700"}
+  defp status_pill(:signal),        do: {"SIGNAL",  "bg-blue-900/40 text-blue-300 border-blue-700"}
+  defp status_pill(:watch),         do: {"WATCH",   "bg-gray-800 text-gray-400 border-gray-600"}
+  defp status_pill(:none),          do: {nil, nil}
 
   defp symbol_status(%{held: true}), do: :held
   defp symbol_status(%{priority: "strong_signal"}), do: :strong_signal
