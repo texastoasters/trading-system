@@ -51,6 +51,7 @@ CRYPTO_ALLOCATION_PCT = 0.30
 
 RISK_PER_TRADE_PCT = 0.01       # 1% of equity
 DAILY_LOSS_LIMIT_PCT = 0.03     # 3% of equity
+MANUAL_EXIT_REENTRY_DROP_PCT = 0.03  # price must drop 3% below manual-exit price before re-entry
 ATR_STOP_MULTIPLIER = 2.0
 BTC_FEE_RATE = 0.004            # 0.40% round-trip
 BTC_MIN_EXPECTED_GAIN = 0.006   # 0.60% minimum expected gain
@@ -140,6 +141,13 @@ class Keys:
         """Set when an exit signal is dispatched; cleared on confirmed sell.
         Prevents the same daily-bar condition from re-firing every cycle."""
         return f"trading:exit_signaled:{symbol}"
+
+    @staticmethod
+    def manual_exit(symbol: str) -> str:
+        """Stores the fill price of a manual dashboard liquidation.
+        Watcher blocks re-entry until price drops MANUAL_EXIT_REENTRY_DROP_PCT
+        below this value, then clears the key automatically."""
+        return f"trading:manual_exit:{symbol}"
 
 
 # ── Redis Connection ────────────────────────────────────────

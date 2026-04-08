@@ -391,6 +391,15 @@ def execute_sell(r, trading_client, order):
         # symbol can exit normally rather than being silently suppressed.
         r.delete(Keys.exit_signaled(symbol))
 
+        # Manual liquidation: gate re-entry until price drops sufficiently.
+        # Watcher will clear this key once the threshold is met.
+        if order.get("signal_type") == "manual_liquidation":
+            r.set(Keys.manual_exit(symbol), str(fill_price))
+            drop_pct = config.MANUAL_EXIT_REENTRY_DROP_PCT * 100
+            required = fill_price * (1 - config.MANUAL_EXIT_REENTRY_DROP_PCT)
+            print(f"  [Executor] 🖐 Manual exit recorded for {symbol} @ ${fill_price:.2f} — "
+                  f"re-entry blocked until price ≤ ${required:.2f} ({drop_pct:.0f}% below exit)")
+
         # Calculate hold days
         try:
             entry_dt = datetime.strptime(pos["entry_date"], "%Y-%m-%d")

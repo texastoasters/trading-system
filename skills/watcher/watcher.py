@@ -151,6 +151,25 @@ def generate_entry_signals(r, stock_client, crypto_client):
             print(f"  [Watcher] {symbol}: skipped (whipsaw cooldown)")
             continue
 
+        # Manual-exit cooldown: block re-entry until price drops sufficiently
+        # below the price at which the user manually liquidated the position.
+        manual_exit_price_str = r.get(Keys.manual_exit(symbol))
+        if manual_exit_price_str:
+            manual_exit_price = float(manual_exit_price_str)
+            required_price = manual_exit_price * (1 - config.MANUAL_EXIT_REENTRY_DROP_PCT)
+            current_close = item.get("close", 0)
+            if current_close > required_price:
+                drop_needed = (current_close - required_price)
+                print(f"  [Watcher] {symbol}: skipped (manual exit cooldown — "
+                      f"need price ≤ ${required_price:.2f}, currently ${current_close:.2f}, "
+                      f"${drop_needed:.2f} to go)")
+                continue
+            else:
+                # Price has dropped far enough — lift the cooldown and allow re-entry
+                r.delete(Keys.manual_exit(symbol))
+                print(f"  [Watcher] {symbol}: manual exit cooldown cleared "
+                      f"(price ${current_close:.2f} ≤ required ${required_price:.2f})")
+
         # Determine RSI-2 config
         if regime_info["regime"] == "UPTREND":
             rsi2_config = "aggressive"
