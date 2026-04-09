@@ -424,7 +424,6 @@ class TestRunHealthCheck:
             run_health_check(r)
         mock_notify.assert_called_once()
 
-
 # ── reset_daily ───────────────────────────────────────────────
 
 class TestResetDaily:
