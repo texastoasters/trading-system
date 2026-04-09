@@ -1,14 +1,13 @@
 # Handoff
 
 ## State
-executor.py at 100% coverage (60 tests, `skills/executor/test_executor.py`). All 4 covered files at 100%: config.py, indicators.py, notify.py, executor.py. 141 tests passing. Changes uncommitted, on `main` branch. Need cpr.
+Stale heartbeat alert implemented but NOT committed. Changed files: `skills/supervisor/supervisor.py` (adds `critical_alert()` for stale executor/PM daemons), `dashboard/lib/dashboard_web/live/dashboard_live.ex` (per-agent thresholds via `@heartbeat_thresholds`, new `heartbeat_status/2`), `dashboard/lib/dashboard_web/live/dashboard_live.html.heex` (passes agent name), `docs/FEATURE_WISHLIST.md` (marked [x] PR #60). On `main` branch — need to branch before committing.
 
 ## Next
-1. `cpr` — commit all uncommitted changes (executor.py pragma edits + test_executor.py full rewrite) to a new branch + PR
-2. Bug 2: reject qty≤0 in `execute_buy` (already done in sell); also PM side check
-3. Bug 3: PM should check existing position before approving entry (feedback loop prevention)
+1. `cpr` — commit stale heartbeat changes above to new branch + PR
+2. Morning briefing Telegram message — 9:20 AM ET: regime, watchlist top 5, positions, drawdown (next on wishlist priority list)
+3. 100% coverage: `skills/portfolio_manager/portfolio_manager.py` (test file started, 4 tests only)
 
 ## Context
-- `Keys.PDT_COUNT = "trading:pdt:count"` (colon-separated, not underscore) — tripped up tests
-- Patch `executor.critical_alert` not `notify.critical_alert` (executor imports it at load time)
-- `daemon_loop` and `main` have `# pragma: no cover`; `if __name__ == "__main__"` also marked
+- `heartbeat_status/1` kept as fallback (delegates to executor thresholds); `heartbeat_status/2` is the real impl
+- Supervisor `critical_alert()` only fires for daemon agents (executor/PM) — cron agents (screener/watcher) still just go into `issues` list in the regular health notify message

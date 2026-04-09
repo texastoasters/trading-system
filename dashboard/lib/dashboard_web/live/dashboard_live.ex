@@ -135,31 +135,54 @@ defmodule DashboardWeb.DashboardLive do
 
   # ── Helpers ──────────────────────────────────────────────────────────────────
 
+  # Per-agent heartbeat thresholds (minutes):
+  #   executor / portfolio_manager — daemon, runs continuously; warn at 5m, stale at 10m
+  #   supervisor — cron every 15m (weekdays only); warn at 20m, stale at 35m
+  #   watcher — cron every ~4h (weekdays only); warn at 300m (5h), stale at 360m (6h)
+  #   screener — cron once daily at 4:15 PM ET (weekdays only); warn at 1500m (25h),
+  #               stale at 2880m (48h) to survive the weekend gap naturally
+  @heartbeat_thresholds %{
+    "executor"          => {5, 10},
+    "portfolio_manager" => {5, 10},
+    "supervisor"        => {20, 35},
+    "watcher"           => {300, 360},
+    "screener"          => {1500, 2880}
+  }
+
+  defp heartbeat_status(nil, _agent), do: :stale
   defp heartbeat_status(nil), do: :stale
 
-  defp heartbeat_status(ts) when is_binary(ts) do
-    # Python agents write datetime.now().isoformat() — no timezone suffix.
-    # Try DateTime first (has tz), fall back to NaiveDateTime (treat as UTC).
-    age_minutes =
-      case DateTime.from_iso8601(ts) do
-        {:ok, dt, _} ->
-          DateTime.diff(DateTime.utc_now(), dt, :second) / 60
-
-        _ ->
-          case NaiveDateTime.from_iso8601(ts) do
-            {:ok, ndt} ->
-              NaiveDateTime.diff(NaiveDateTime.utc_now(), ndt, :second) / 60
-
-            _ ->
-              nil
-          end
-      end
+  defp heartbeat_status(ts, agent) when is_binary(ts) do
+    age_minutes = heartbeat_age_minutes(ts)
+    {warn, stale} = Map.get(@heartbeat_thresholds, agent, {10, 30})
 
     cond do
       is_nil(age_minutes) -> :stale
-      age_minutes < 10 -> :ok
-      age_minutes < 30 -> :warning
+      age_minutes < warn -> :ok
+      age_minutes < stale -> :warning
       true -> :stale
+    end
+  end
+
+  defp heartbeat_status(ts) when is_binary(ts) do
+    heartbeat_status(ts, "executor")
+  end
+
+  defp heartbeat_age_minutes(ts) do
+    # Python agents write datetime.now().isoformat() — no timezone suffix.
+    # Try DateTime first (has tz), fall back to NaiveDateTime (treat as UTC).
+    case DateTime.from_iso8601(ts) do
+      {:ok, dt, _} ->
+        DateTime.diff(DateTime.utc_now(), dt, :second) / 60
+
+      _ ->
+        case NaiveDateTime.from_iso8601(ts) do
+          {:ok, ndt} ->
+            NaiveDateTime.diff(NaiveDateTime.utc_now(), ndt, :second) / 60
+
+          _ ->
+            nil
+        end
     end
   end
 

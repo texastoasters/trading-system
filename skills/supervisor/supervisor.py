@@ -151,11 +151,13 @@ def run_health_check(r):
             if age_min > 5:
                 issues.append(f"{agent}: heartbeat {age_min:.0f}min old (daemon may have crashed)")
                 print(f"  ⚠️  {agent}: last heartbeat {age_min:.0f} min ago — daemon may have crashed")
+                critical_alert(f"🚨 {agent} heartbeat {age_min:.0f}min old — daemon may have crashed")
             else:
                 print(f"  ✅ {agent}: alive ({age_min:.0f}min ago)")
         else:
             issues.append(f"{agent}: no heartbeat — daemon not running")
             print(f"  ⚠️  {agent}: no heartbeat — daemon not running")
+            critical_alert(f"🚨 {agent} has no heartbeat — daemon not running")
 
     # Cron-triggered agent heartbeats — gaps between runs are expected
     # screener: runs once daily at 4:15 PM ET, flag if stale > 25 hours
