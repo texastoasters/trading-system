@@ -201,7 +201,9 @@ def run_health_check(r):
     else:
         print(f"\n  ✅ All checks passed")
 
-    # Notify on every run so silence is meaningful
+    if not issues:
+        return issues
+
     agent_lines = []
     for agent, threshold_min in [("executor", 5), ("portfolio_manager", 5),
                                   ("screener", 25 * 60), ("watcher", 5 * 60)]:
