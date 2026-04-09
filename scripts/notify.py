@@ -299,7 +299,7 @@ def universe_update(changes: list, total_instruments: int):
 
 # ── Self-test ───────────────────────────────────────────────
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     if not BOT_TOKEN or not CHAT_ID:
         print("Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to test")
         print("Falling back to console output:\n")
