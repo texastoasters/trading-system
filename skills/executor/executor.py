@@ -589,7 +589,7 @@ def process_order(r, trading_client, order):
     return False
 
 
-def daemon_loop():
+def daemon_loop():  # pragma: no cover
     """Listen for approved orders continuously."""
     r = get_redis()
     init_redis_state(r)
@@ -622,7 +622,7 @@ def daemon_loop():
             critical_alert(f"Executor error: {e}")
 
 
-def main():
+def main():  # pragma: no cover
     parser = argparse.ArgumentParser(description="Trade Executor Agent")
     parser.add_argument("--daemon", action="store_true", help="Listen continuously")
     parser.add_argument("--verify", action="store_true", help="Run startup verification only")
@@ -653,7 +653,7 @@ def main():
         pubsub.unsubscribe()
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()
 
 # v1.0.0
