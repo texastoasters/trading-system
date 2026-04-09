@@ -9,17 +9,18 @@ System context: RSI-2 mean reversion, 5 agents, Redis pub/sub, Phoenix LiveView 
 
 These are known issues documented in HANDOFF.md that can cause real harm.
 
-- [ ] **Executor: sell fill race condition** — `execute_sell` assumes fills are immediate. If market is closed, order sits ACCEPTED but executor records fake P&L, removes position from Redis, and cancels stop-loss before actual execution. Fix: gate all post-fill logic on `filled_order.status == "filled"`.
-- [ ] **Executor: accept qty=0 orders** — PM can send qty=0 when regime reduction + small account + rounding. Executor submits to Alpaca (rejected), then logs a fake fill and saves a qty=0 position to Redis. Fix: reject `quantity <= 0` at top of `execute_buy` and `execute_sell`.
-- [ ] **Watcher/PM feedback loop on qty=0 positions** — A qty=0 Redis position triggers: watcher exit → PM approve → executor fail → watcher entry → repeat forever. Fix: PM checks for existing position before approving entry; executor deletes qty≤0 positions as cleanup.
-- [ ] **Executor: submits equity market orders after market close** — 4:15 PM screener generates signals that produce orders. These fill at next open at unknown price. Fix: check `tc.get_clock().is_open` before submitting equity orders.
+- [x] **Executor: sell fill race condition** — `stop_cancelled` flag + stop-loss restore in exception handler. PR #57.
+- [x] **Executor: accept qty=0 orders** — Both `execute_buy` and `execute_sell` now reject `quantity <= 0`. PR #57.
+- [x] **Watcher/PM feedback loop on qty=0 positions** — PM dedup check rejects entry when position exists in Redis (including qty=0). Verified by tests. PR #58.
+- [x] **PM: qty=0 order after DOWNTREND halving** — Guard added after halving step in `evaluate_entry_signal`. PR #58.
+- [x] **Executor: submits equity market orders after market close** — `clock.is_open` check in both `execute_buy` and `execute_sell`. PR #57.
 
 ---
 
 ## ✅ Quick Wins (Low Effort, High Value)
 
 ### Observability & Monitoring
-- [ ] **`scripts/reconcile.py`** — Compare Redis positions vs Alpaca actual positions. Identify missing stop-losses, phantom positions, mismatched quantities. Run on startup and daily. This is explicitly called out as needed in HANDOFF.md.
+- [x] **`scripts/reconcile.py`** — Compare Redis positions vs Alpaca actual positions. Identifies phantoms, orphans, qty mismatches, missing stops. Run with `--fix` to auto-resubmit stops. 100% test coverage. PR #59.
 - [ ] **Agent heartbeat dashboard panel** — Show last-seen time for each agent (screener, watcher, PM, executor, supervisor). Green/yellow/red status based on staleness. Supervisor already writes heartbeats to Redis; dashboard just needs to read them.
 - [ ] **Stale heartbeat alert** — If any agent heartbeat is >30min old during market hours, send Telegram critical alert. Currently health checks run but don't alert specifically on stale agents.
 - [ ] **Dashboard: current regime prominently displayed** — Show RANGING/UPTREND/DOWNTREND with ADX, +DI, -DI values and a colored badge. Currently data is in Redis but not prominently surfaced.
@@ -54,7 +55,7 @@ These are known issues documented in HANDOFF.md that can cause real harm.
 - [ ] **Intraday stop monitoring** — Currently watcher polls positions every 30 min. Add intraday check: if price has dropped X% from entry intraday, generate exit signal immediately without waiting for poll.
 - [ ] **Max daily loss limit** — In addition to drawdown circuit breakers (which are cumulative), add a single-day loss limit. If today's P&L exceeds -2%, halt new entries for the rest of the day.
 - [ ] **Position age alert** — If a position has been held >5 days without triggering time-stop (maybe stuck in a narrow range), send Telegram nudge for manual review.
-- [ ] **Correlated regime adjustment** — When regime is DOWNTREND, reduce position sizes automatically (e.g. half-size), even for Tier 1. Current code adjusts thresholds but not sizes.
+- [x] **Correlated regime adjustment** — DOWNTREND halves equity position sizes. Edge case where halving → 0 shares fixed (PR #58).
 
 ### Screener & Signal Quality
 - [ ] **Volume filter on entries** — Require minimum average daily volume for entry signals. Prevents entries on thin/illiquid days that can cause bad fills.
@@ -116,13 +117,13 @@ These are known issues documented in HANDOFF.md that can cause real harm.
 
 If picking 5 things to do next, in order:
 
-1. Fix the 4 known executor bugs (HANDOFF.md) — they can cause financial state corruption
-2. `scripts/reconcile.py` — catches state divergence before it compounds
-3. Heartbeat staleness alert — ensures you know when agents die
-4. Morning briefing Telegram message — high value, very low effort
-5. Weekly summary wiring — function exists, just needs a cron call
+1. ~~Fix the 5 known bugs (HANDOFF.md)~~ ✅ Done (PRs #57, #58)
+2. ~~`scripts/reconcile.py`~~ ✅ Done (PR #59)
+3. Stale heartbeat alert — if agent heartbeat >30min during market hours, Telegram critical alert
+4. Morning briefing Telegram message — 9:20 AM ET: regime, watchlist top 5, positions, drawdown
+5. Weekly summary wiring — `notify.weekly_summary()` exists, just needs a cron call in supervisor
 
 ---
 
 *Generated by examining all agent code, dashboard, config, notification module, and git history.*
-*Last updated: 2026-04-08*
+*Last updated: 2026-04-08. All critical bugs resolved. reconcile.py shipped. Coverage: config.py, indicators.py, notify.py, executor.py, reconcile.py all at 100% (168 tests).*
