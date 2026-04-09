@@ -21,7 +21,7 @@ These are known issues documented in HANDOFF.md that can cause real harm.
 ### Observability & Monitoring
 - [ ] **`scripts/reconcile.py`** — Compare Redis positions vs Alpaca actual positions. Identify missing stop-losses, phantom positions, mismatched quantities. Run on startup and daily. This is explicitly called out as needed in HANDOFF.md.
 - [ ] **Agent heartbeat dashboard panel** — Show last-seen time for each agent (screener, watcher, PM, executor, supervisor). Green/yellow/red status based on staleness. Supervisor already writes heartbeats to Redis; dashboard just needs to read them.
-- [ ] **Stale heartbeat alert** — If any agent heartbeat is >30min old during market hours, send Telegram critical alert. Currently health checks run but don't alert specifically on stale agents.
+- [x] **Stale heartbeat alert** — Per-agent thresholds: executor/PM 5min, supervisor 20min, watcher 5h, screener 25h (48h to survive weekends). Supervisor sends `critical_alert()` when daemon agents stale. Dashboard uses same per-agent thresholds. PR #60.
 - [ ] **Dashboard: current regime prominently displayed** — Show RANGING/UPTREND/DOWNTREND with ADX, +DI, -DI values and a colored badge. Currently data is in Redis but not prominently surfaced.
 - [ ] **Dashboard: whipsaw/cooldown indicator** — Show which symbols are in 24h whipsaw cooldown or manual-exit cooldown, and when each lifts. Prevents user confusion about why signals are being skipped.
 - [ ] **Dashboard: per-agent log tail** — Live-scrolling last N lines of each agent's log file. Removes need to SSH in and `tail -f`.
@@ -116,11 +116,11 @@ These are known issues documented in HANDOFF.md that can cause real harm.
 
 If picking 5 things to do next, in order:
 
-1. Fix the 4 known executor bugs (HANDOFF.md) — they can cause financial state corruption
-2. `scripts/reconcile.py` — catches state divergence before it compounds
-3. Heartbeat staleness alert — ensures you know when agents die
-4. Morning briefing Telegram message — high value, very low effort
-5. Weekly summary wiring — function exists, just needs a cron call
+1. ~~Fix the 5 known bugs (HANDOFF.md)~~ ✅ Done (PRs #57, #58)
+2. ~~`scripts/reconcile.py`~~ ✅ Done (PR #59)
+3. ~~Stale heartbeat alert~~ ✅ Done (PR #60)
+4. Morning briefing Telegram message — 9:20 AM ET: regime, watchlist top 5, positions, drawdown
+5. Weekly summary wiring — `notify.weekly_summary()` exists, just needs a cron call in supervisor
 
 ---
 

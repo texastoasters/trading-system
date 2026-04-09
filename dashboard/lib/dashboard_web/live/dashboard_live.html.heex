@@ -100,7 +100,7 @@
     <div class="flex flex-wrap gap-4">
       <%= for agent <- ["screener", "watcher", "portfolio_manager", "executor", "supervisor"] do %>
         <% hb = @heartbeats[agent]
-        status = heartbeat_status(hb)
+        status = heartbeat_status(hb, agent)
         age = heartbeat_age(hb)
         label = String.replace(agent, "_", " ") |> String.capitalize() %>
         <div class="flex items-center gap-2">
