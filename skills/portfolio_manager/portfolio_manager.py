@@ -209,6 +209,8 @@ def evaluate_entry_signal(r, signal):
         position_size = position_size * 0.5 if not is_crypto(symbol) else position_size
         if not is_crypto(symbol):
             position_size = int(position_size)
+        if position_size < 1:
+            return None, "Position too small after DOWNTREND halving (< 1 share)"
         order_value = position_size * entry_price
         actual_risk = position_size * stop_distance
         actual_risk_pct = actual_risk / equity * 100
