@@ -234,3 +234,83 @@ class TestUniverseUpdate:
         notify.universe_update([], total_instruments=17)
         out = capsys.readouterr().out
         assert "17" in out
+
+
+# ── morning_briefing ─────────────────────────────────────────
+
+class TestMorningBriefing:
+    def _base(self, **overrides):
+        d = {
+            "regime": "RANGING",
+            "adx": 22.5,
+            "plus_di": 18.0,
+            "minus_di": 15.0,
+            "watchlist": [
+                {"symbol": "SPY", "rsi2": 8.5, "priority": "signal", "tier": 1},
+                {"symbol": "QQQ", "rsi2": 12.1, "priority": "watch", "tier": 1},
+            ],
+            "positions": {"SPY": {"symbol": "SPY", "quantity": 10}},
+            "drawdown_pct": 2.5,
+            "equity": 4875.0,
+            "system_status": "active",
+        }
+        d.update(overrides)
+        return d
+
+    def test_includes_regime(self, capsys):
+        notify.morning_briefing(self._base())
+        assert "RANGING" in capsys.readouterr().out
+
+    def test_includes_adx(self, capsys):
+        notify.morning_briefing(self._base(adx=22.5))
+        assert "22.5" in capsys.readouterr().out
+
+    def test_includes_watchlist_symbol(self, capsys):
+        notify.morning_briefing(self._base())
+        assert "SPY" in capsys.readouterr().out
+
+    def test_watchlist_capped_at_five(self, capsys):
+        watchlist = [
+            {"symbol": f"X{i}", "rsi2": float(i), "priority": "signal", "tier": 1}
+            for i in range(7)
+        ]
+        notify.morning_briefing(self._base(watchlist=watchlist))
+        out = capsys.readouterr().out
+        assert "X4" in out
+        assert "X5" not in out
+        assert "X6" not in out
+
+    def test_empty_watchlist_shows_clear(self, capsys):
+        notify.morning_briefing(self._base(watchlist=[]))
+        out = capsys.readouterr().out
+        assert "clear" in out.lower() or "no signal" in out.lower() or "nothing" in out.lower()
+
+    def test_includes_drawdown(self, capsys):
+        notify.morning_briefing(self._base(drawdown_pct=5.0))
+        assert "5.0" in capsys.readouterr().out
+
+    def test_includes_equity(self, capsys):
+        notify.morning_briefing(self._base(equity=4875.0))
+        assert "4,875" in capsys.readouterr().out
+
+    def test_position_count_shown(self, capsys):
+        notify.morning_briefing(self._base())
+        out = capsys.readouterr().out
+        assert "1" in out  # 1 open position
+
+    def test_no_positions_shown(self, capsys):
+        notify.morning_briefing(self._base(positions={}))
+        out = capsys.readouterr().out
+        assert "no open" in out.lower() or "0" in out
+
+    def test_halted_status_shown(self, capsys):
+        notify.morning_briefing(self._base(system_status="halted"))
+        assert "halted" in capsys.readouterr().out.lower()
+
+    def test_uptrend_emoji(self, capsys):
+        notify.morning_briefing(self._base(regime="UPTREND"))
+        assert "📈" in capsys.readouterr().out
+
+    def test_downtrend_emoji(self, capsys):
+        notify.morning_briefing(self._base(regime="DOWNTREND"))
+        assert "📉" in capsys.readouterr().out

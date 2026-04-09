@@ -13,6 +13,9 @@ CRON_TZ=America/New_York
 TRADING_HOME=/home/linuxuser/trading-system
 TRADING_ENV=/home/linuxuser/.trading_env
 
+# --- Morning briefing (9:20 AM ET, before market open, weekdays) -----------
+20 9 * * 1-5  linuxuser  . $TRADING_ENV && cd $TRADING_HOME && PYTHONPATH=$TRADING_HOME/scripts python3 skills/supervisor/supervisor.py --briefing 2>&1 | logger -t trading-briefing
+
 # --- Daily P&L reset (9:25 AM ET, before market open, weekdays) ------------
 25 9 * * 1-5  linuxuser  . $TRADING_ENV && cd $TRADING_HOME && PYTHONPATH=$TRADING_HOME/scripts python3 skills/supervisor/supervisor.py --reset-daily 2>&1 | logger -t trading-reset
 

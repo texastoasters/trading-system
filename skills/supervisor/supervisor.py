@@ -29,7 +29,7 @@ from config import (
 )
 from notify import (
     notify, daily_summary, weekly_summary, critical_alert,
-    drawdown_alert, universe_update, fmt_et,
+    drawdown_alert, universe_update, morning_briefing, fmt_et,
 )
 
 
@@ -562,6 +562,40 @@ def run_revalidation(r):
     return results
 
 
+# ── Morning Briefing ────────────────────────────────────────
+
+def run_morning_briefing(r):
+    """Send pre-market morning briefing. Called at 9:20 AM ET via cron."""
+    print("[Supervisor] Sending morning briefing...")
+
+    regime_raw = r.get(Keys.REGIME)
+    regime_info = json.loads(regime_raw) if regime_raw else {}
+    regime = regime_info.get("regime", "UNKNOWN")
+    adx = regime_info.get("adx", 0)
+    plus_di = regime_info.get("plus_di", 0)
+    minus_di = regime_info.get("minus_di", 0)
+
+    watchlist_raw = r.get(Keys.WATCHLIST)
+    watchlist = json.loads(watchlist_raw)[:5] if watchlist_raw else []
+
+    positions = json.loads(r.get(Keys.POSITIONS) or "{}")
+    drawdown_pct = float(r.get(Keys.DRAWDOWN) or 0)
+    equity = get_simulated_equity(r)
+    system_status = r.get(Keys.SYSTEM_STATUS) or "unknown"
+
+    morning_briefing({
+        "regime": regime,
+        "adx": adx,
+        "plus_di": plus_di,
+        "minus_di": minus_di,
+        "watchlist": watchlist,
+        "positions": positions,
+        "drawdown_pct": drawdown_pct,
+        "equity": equity,
+        "system_status": system_status,
+    })
+
+
 # ── Main ────────────────────────────────────────────────────
 
 def main():
@@ -571,6 +605,7 @@ def main():
     parser.add_argument("--eod", action="store_true", help="End-of-day review only")
     parser.add_argument("--revalidation", action="store_true", help="Monthly universe re-validation")
     parser.add_argument("--reset-daily", action="store_true", help="Reset daily counters")
+    parser.add_argument("--briefing", action="store_true", help="Send morning briefing (9:20 AM ET)")
     args = parser.parse_args()
 
     r = get_redis()
@@ -578,6 +613,8 @@ def main():
 
     if args.daemon:
         daemon_loop()
+    elif args.briefing:
+        run_morning_briefing(r)
     elif args.health:
         run_health_check(r)
     elif args.eod:

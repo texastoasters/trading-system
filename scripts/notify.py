@@ -256,6 +256,64 @@ def monthly_summary(metrics: dict):
     notify(msg)
 
 
+# ── Morning Briefing ────────────────────────────────────────
+
+def morning_briefing(metrics: dict):
+    """
+    Send pre-market morning briefing (9:20 AM ET, before open).
+    Expected metrics dict keys:
+        regime, adx, plus_di, minus_di,
+        watchlist (list of dicts: symbol, rsi2, priority, tier),
+        positions (dict keyed by symbol),
+        drawdown_pct, equity, system_status
+    """
+    d = metrics
+    regime = d.get("regime", "UNKNOWN")
+    adx = d.get("adx", 0)
+    plus_di = d.get("plus_di", 0)
+    minus_di = d.get("minus_di", 0)
+    watchlist = d.get("watchlist", [])[:5]
+    positions = d.get("positions", {})
+    drawdown_pct = d.get("drawdown_pct", 0)
+    equity = d.get("equity", 0)
+    status = d.get("system_status", "unknown")
+
+    regime_emoji = {"RANGING": "➡️", "UPTREND": "📈", "DOWNTREND": "📉"}.get(regime, "❓")
+    status_emoji = "🔴" if status == "halted" else "🟢"
+
+    if watchlist:
+        watch_lines = []
+        for w in watchlist:
+            icon = "🔴" if w.get("priority") == "strong_signal" else "🟡" if w.get("priority") == "signal" else "⚪"
+            watch_lines.append(
+                f"{icon} <b>{w['symbol']}</b> RSI-2={w['rsi2']:.1f}  "
+                f"T{w.get('tier', '?')}  [{w.get('priority', '?').replace('_', ' ')}]"
+            )
+        watchlist_block = "\n".join(watch_lines)
+    else:
+        watchlist_block = "All clear — no signals near entry conditions"
+
+    if positions:
+        pos_symbols = ", ".join(sorted(positions.keys()))
+        pos_line = f"{len(positions)} open: {pos_symbols}"
+    else:
+        pos_line = "No open positions"
+
+    msg = (
+        f"🌅 <b>MORNING BRIEFING — {_now_et().strftime('%a %b %-d, %H:%M ET')}</b>\n"
+        f"\n"
+        f"Regime: {regime_emoji} <b>{regime}</b>  ADX={adx:.1f}  +DI={plus_di:.1f}  -DI={minus_di:.1f}\n"
+        f"Equity: ${equity:,.2f}  |  Drawdown: {drawdown_pct:.1f}%\n"
+        f"Status: {status_emoji} {status}\n"
+        f"\n"
+        f"<b>Watchlist (top 5):</b>\n"
+        f"{watchlist_block}\n"
+        f"\n"
+        f"<b>Positions:</b> {pos_line}\n"
+    )
+    notify(msg)
+
+
 # ── Critical Alerts ─────────────────────────────────────────
 
 def critical_alert(message: str):
