@@ -407,6 +407,23 @@ class TestRunHealthCheck:
             issues = run_health_check(r)
         assert not any("screener" in i for i in issues)
 
+    def test_healthy_system_does_not_notify(self):
+        r = self._make_hb_redis()
+        with patch("supervisor.notify") as mock_notify, \
+             patch("supervisor.run_circuit_breakers"):
+            from supervisor import run_health_check
+            run_health_check(r)
+        mock_notify.assert_not_called()
+
+    def test_issues_trigger_notify(self):
+        r = self._make_hb_redis(executor_age_min=10)
+        with patch("supervisor.notify") as mock_notify, \
+             patch("supervisor.run_circuit_breakers"), \
+             patch("supervisor.critical_alert"):
+            from supervisor import run_health_check
+            run_health_check(r)
+        mock_notify.assert_called_once()
+
 
 # ── reset_daily ───────────────────────────────────────────────
 
