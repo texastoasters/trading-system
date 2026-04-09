@@ -248,7 +248,7 @@ def compute_all_daily(high, low, close, volume):
     }
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     # Quick self-test with synthetic data
     np.random.seed(42)
     n = 300

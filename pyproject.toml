@@ -1,0 +1,10 @@
+[tool.pytest.ini_options]
+testpaths = ["skills", "scripts"]
+pythonpath = ["scripts"]
+
+[tool.coverage.run]
+source = ["skills", "scripts"]
+omit = ["**/test_*.py", "**/__pycache__/**"]
+
+[tool.coverage.report]
+show_missing = true
