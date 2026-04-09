@@ -28,6 +28,9 @@ TRADING_ENV=/home/linuxuser/.trading_env
 # --- Supervisor end-of-day review (4:30 PM ET, after screener, weekdays) ----
 30 16 * * 1-5  linuxuser  . $TRADING_ENV && cd $TRADING_HOME && PYTHONPATH=$TRADING_HOME/scripts python3 skills/supervisor/supervisor.py --eod 2>&1 | logger -t trading-eod
 
+# --- Weekly summary (4:35 PM ET, Fridays only, after EOD review) ------------
+35 16 * * 5  linuxuser  . $TRADING_ENV && cd $TRADING_HOME && PYTHONPATH=$TRADING_HOME/scripts python3 skills/supervisor/supervisor.py --weekly 2>&1 | logger -t trading-weekly
+
 # --- Supervisor health check (every 15 min, market hours, weekdays) --------
 */15 9-15 * * 1-5  linuxuser  . $TRADING_ENV && cd $TRADING_HOME && PYTHONPATH=$TRADING_HOME/scripts python3 skills/supervisor/supervisor.py --health 2>&1 | logger -t trading-health
 

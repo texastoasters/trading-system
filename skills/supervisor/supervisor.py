@@ -562,6 +562,116 @@ def run_revalidation(r):
     return results
 
 
+# ── Weekly Summary ──────────────────────────────────────────
+
+def run_weekly_summary(r):
+    """Compute and send weekly performance summary. Called Friday 4:35 PM ET via cron."""
+    print("[Supervisor] Sending weekly summary...")
+
+    equity = get_simulated_equity(r)
+    dd = float(r.get(Keys.DRAWDOWN) or 0)
+
+    # Universe counts from Redis
+    universe = json.loads(r.get(Keys.UNIVERSE) or json.dumps(config.DEFAULT_UNIVERSE))
+    all_instruments = (
+        universe.get("tier1", []) +
+        universe.get("tier2", []) +
+        universe.get("tier3", [])
+    )
+    disabled = universe.get("disabled", [])
+    universe_size = len(all_instruments)
+    active_instruments = universe_size - len(disabled)
+    disabled_instruments = len(disabled)
+
+    # Week label (ISO)
+    today = datetime.now()
+    week_label = f"W{today.isocalendar()[1]} {today.year}"
+
+    # Defaults if DB unavailable
+    total_trades = winners = losers = 0
+    weekly_pnl = 0.0
+    best_trade = worst_trade = "N/A"
+
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+
+        # Weekly aggregates from daily_summary (last 7 days)
+        cur.execute("""
+            SELECT
+                COALESCE(SUM(trades_executed), 0),
+                COALESCE(SUM(winning_trades), 0),
+                COALESCE(SUM(losing_trades), 0),
+                COALESCE(SUM(daily_pnl), 0),
+                COALESCE(SUM(total_fees), 0)
+            FROM daily_summary
+            WHERE date >= CURRENT_DATE - INTERVAL '7 days'
+        """)
+        row = cur.fetchone()
+        if row:
+            total_trades = int(row[0])
+            winners = int(row[1])
+            losers = int(row[2])
+            weekly_pnl = float(row[3])
+
+        # Best trade this week
+        cur.execute("""
+            SELECT symbol || ' ' || CONCAT(CASE WHEN realized_pnl > 0 THEN '+' ELSE '' END,
+                   ROUND(realized_pnl / (price * quantity) * 100, 1), '%')
+            FROM trades
+            WHERE side = 'sell' AND realized_pnl IS NOT NULL
+              AND time >= NOW() - INTERVAL '7 days'
+            ORDER BY realized_pnl DESC
+            LIMIT 1
+        """)
+        row = cur.fetchone()
+        if row:
+            best_trade = row[0]
+
+        # Worst trade this week
+        cur.execute("""
+            SELECT symbol || ' ' || CONCAT(CASE WHEN realized_pnl > 0 THEN '+' ELSE '' END,
+                   ROUND(realized_pnl / (price * quantity) * 100, 1), '%')
+            FROM trades
+            WHERE side = 'sell' AND realized_pnl IS NOT NULL
+              AND time >= NOW() - INTERVAL '7 days'
+            ORDER BY realized_pnl ASC
+            LIMIT 1
+        """)
+        row = cur.fetchone()
+        if row:
+            worst_trade = row[0]
+
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"  [Supervisor] Weekly summary DB query failed: {e}")
+
+    # Compute weekly P&L %
+    start_equity = equity - weekly_pnl
+    weekly_pnl_pct = (weekly_pnl / start_equity * 100) if start_equity > 0 else 0
+
+    weekly_summary({
+        "week": week_label,
+        "equity": round(equity, 2),
+        "weekly_pnl": round(weekly_pnl, 2),
+        "weekly_pnl_pct": round(weekly_pnl_pct, 2),
+        "drawdown_pct": round(dd, 1),
+        "total_trades": total_trades,
+        "winners": winners,
+        "losers": losers,
+        "best_trade": best_trade,
+        "worst_trade": worst_trade,
+        "universe_size": universe_size,
+        "active_instruments": active_instruments,
+        "disabled_instruments": disabled_instruments,
+    })
+
+    print(f"[Supervisor] Weekly summary sent. "
+          f"W{today.isocalendar()[1]}: {total_trades} trades, "
+          f"P&L ${weekly_pnl:+.2f} ({weekly_pnl_pct:+.2f}%)")
+
+
 # ── Morning Briefing ────────────────────────────────────────
 
 def run_morning_briefing(r):
@@ -606,6 +716,7 @@ def main():
     parser.add_argument("--revalidation", action="store_true", help="Monthly universe re-validation")
     parser.add_argument("--reset-daily", action="store_true", help="Reset daily counters")
     parser.add_argument("--briefing", action="store_true", help="Send morning briefing (9:20 AM ET)")
+    parser.add_argument("--weekly", action="store_true", help="Send weekly summary (Friday 4:35 PM ET)")
     args = parser.parse_args()
 
     r = get_redis()
@@ -615,6 +726,12 @@ def main():
         daemon_loop()
     elif args.briefing:
         run_morning_briefing(r)
+    elif args.weekly:
+        try:
+            run_weekly_summary(r)
+        except Exception as e:
+            print(f"[Supervisor] Weekly summary error: {e}")
+            critical_alert(f"Weekly summary failed: {e}")
     elif args.health:
         run_health_check(r)
     elif args.eod:
