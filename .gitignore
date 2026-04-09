@@ -33,4 +33,6 @@ dashboard/_build/
 mix.lock
 dashboard/mix.lock
 
+.coverage
+
 # v1.0.0
