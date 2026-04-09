@@ -304,6 +304,7 @@ def execute_sell(r, trading_client, order):
             print(f"  [Executor] ⚠️ Market closed — deferring sell for {symbol} until next session")
             return False
 
+    stop_cancelled = False
     try:
         # Step 1: Cancel the stop-loss FIRST — Alpaca marks all shares as
         # "held_for_orders" while a GTC stop is active, making them unavailable
@@ -312,6 +313,7 @@ def execute_sell(r, trading_client, order):
         if stop_order_id:
             try:
                 trading_client.cancel_order_by_id(stop_order_id)
+                stop_cancelled = True
                 print(f"  [Executor] Cancelled stop-loss {stop_order_id} for {symbol}")
                 time.sleep(1)  # let cancellation settle before submitting sell
             except Exception as cancel_err:
@@ -439,6 +441,15 @@ def execute_sell(r, trading_client, order):
         else:
             print(f"  [Executor] ❌ Sell failed for {symbol}: {error_msg}")
             critical_alert(f"Sell failed for {symbol}: {error_msg}")
+        # If we cancelled the stop-loss but the sell did not complete, restore
+        # protection so the position is not left unguarded.
+        if stop_cancelled:
+            print(f"  [Executor] ⚠️ Restoring stop-loss for {symbol} after failed sell")
+            new_stop_id = submit_stop_loss(trading_client, symbol, quantity, pos["stop_price"])
+            if new_stop_id:
+                pos["stop_order_id"] = new_stop_id
+                positions[symbol] = pos
+                r.set(Keys.POSITIONS, json.dumps(positions))
         return False
 
 
