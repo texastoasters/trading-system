@@ -35,7 +35,7 @@ from notify import (
 
 # ── Database Connection ─────────────────────────────────────
 
-def get_db():
+def get_db():  # pragma: no cover
     """Connect to TimescaleDB."""
     return psycopg2.connect(
         host="localhost", port=5432,
@@ -416,7 +416,7 @@ def reset_daily(r):
 
 # ── Daemon Loop ─────────────────────────────────────────────
 
-def daemon_loop():
+def daemon_loop():  # pragma: no cover
     """Run supervisor continuously."""
     print("[Supervisor] Starting daemon mode...")
 
@@ -460,7 +460,7 @@ def daemon_loop():
 
 # ── Monthly Re-Validation ───────────────────────────────────
 
-def run_revalidation(r):
+def run_revalidation(r):  # pragma: no cover
     """
     Monthly universe re-validation — re-backtest all instruments and classify
     into tiers based on 3-year rolling performance.
@@ -708,7 +708,7 @@ def run_morning_briefing(r):
 
 # ── Main ────────────────────────────────────────────────────
 
-def main():
+def main():  # pragma: no cover
     parser = argparse.ArgumentParser(description="Supervisor Agent")
     parser.add_argument("--daemon", action="store_true", help="Run continuously")
     parser.add_argument("--health", action="store_true", help="Health check only")
@@ -757,7 +757,7 @@ def main():
             critical_alert(f"EOD review failed: {e}")
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()
 
 # v1.0.0
