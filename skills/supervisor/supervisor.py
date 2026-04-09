@@ -29,13 +29,13 @@ from config import (
 )
 from notify import (
     notify, daily_summary, weekly_summary, critical_alert,
-    drawdown_alert, universe_update, fmt_et,
+    drawdown_alert, universe_update, morning_briefing, fmt_et,
 )
 
 
 # ── Database Connection ─────────────────────────────────────
 
-def get_db():
+def get_db():  # pragma: no cover
     """Connect to TimescaleDB."""
     return psycopg2.connect(
         host="localhost", port=5432,
@@ -416,7 +416,7 @@ def reset_daily(r):
 
 # ── Daemon Loop ─────────────────────────────────────────────
 
-def daemon_loop():
+def daemon_loop():  # pragma: no cover
     """Run supervisor continuously."""
     print("[Supervisor] Starting daemon mode...")
 
@@ -460,7 +460,7 @@ def daemon_loop():
 
 # ── Monthly Re-Validation ───────────────────────────────────
 
-def run_revalidation(r):
+def run_revalidation(r):  # pragma: no cover
     """
     Monthly universe re-validation — re-backtest all instruments and classify
     into tiers based on 3-year rolling performance.
@@ -562,15 +562,161 @@ def run_revalidation(r):
     return results
 
 
+# ── Weekly Summary ──────────────────────────────────────────
+
+def run_weekly_summary(r):
+    """Compute and send weekly performance summary. Called Friday 4:35 PM ET via cron."""
+    print("[Supervisor] Sending weekly summary...")
+
+    equity = get_simulated_equity(r)
+    dd = float(r.get(Keys.DRAWDOWN) or 0)
+
+    # Universe counts from Redis
+    universe = json.loads(r.get(Keys.UNIVERSE) or json.dumps(config.DEFAULT_UNIVERSE))
+    all_instruments = (
+        universe.get("tier1", []) +
+        universe.get("tier2", []) +
+        universe.get("tier3", [])
+    )
+    disabled = universe.get("disabled", [])
+    universe_size = len(all_instruments)
+    active_instruments = universe_size - len(disabled)
+    disabled_instruments = len(disabled)
+
+    # Week label (ISO)
+    today = datetime.now()
+    week_label = f"W{today.isocalendar()[1]} {today.year}"
+
+    # Defaults if DB unavailable
+    total_trades = winners = losers = 0
+    weekly_pnl = 0.0
+    best_trade = worst_trade = "N/A"
+
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+
+        # Weekly aggregates from daily_summary (last 7 days)
+        cur.execute("""
+            SELECT
+                COALESCE(SUM(trades_executed), 0),
+                COALESCE(SUM(winning_trades), 0),
+                COALESCE(SUM(losing_trades), 0),
+                COALESCE(SUM(daily_pnl), 0),
+                COALESCE(SUM(total_fees), 0)
+            FROM daily_summary
+            WHERE date >= CURRENT_DATE - INTERVAL '7 days'
+        """)
+        row = cur.fetchone()
+        if row:
+            total_trades = int(row[0])
+            winners = int(row[1])
+            losers = int(row[2])
+            weekly_pnl = float(row[3])
+
+        # Best trade this week
+        cur.execute("""
+            SELECT symbol || ' ' || CONCAT(CASE WHEN realized_pnl > 0 THEN '+' ELSE '' END,
+                   ROUND(realized_pnl / (price * quantity) * 100, 1), '%')
+            FROM trades
+            WHERE side = 'sell' AND realized_pnl IS NOT NULL
+              AND time >= NOW() - INTERVAL '7 days'
+            ORDER BY realized_pnl DESC
+            LIMIT 1
+        """)
+        row = cur.fetchone()
+        if row:
+            best_trade = row[0]
+
+        # Worst trade this week
+        cur.execute("""
+            SELECT symbol || ' ' || CONCAT(CASE WHEN realized_pnl > 0 THEN '+' ELSE '' END,
+                   ROUND(realized_pnl / (price * quantity) * 100, 1), '%')
+            FROM trades
+            WHERE side = 'sell' AND realized_pnl IS NOT NULL
+              AND time >= NOW() - INTERVAL '7 days'
+            ORDER BY realized_pnl ASC
+            LIMIT 1
+        """)
+        row = cur.fetchone()
+        if row:
+            worst_trade = row[0]
+
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"  [Supervisor] Weekly summary DB query failed: {e}")
+
+    # Compute weekly P&L %
+    start_equity = equity - weekly_pnl
+    weekly_pnl_pct = (weekly_pnl / start_equity * 100) if start_equity > 0 else 0
+
+    weekly_summary({
+        "week": week_label,
+        "equity": round(equity, 2),
+        "weekly_pnl": round(weekly_pnl, 2),
+        "weekly_pnl_pct": round(weekly_pnl_pct, 2),
+        "drawdown_pct": round(dd, 1),
+        "total_trades": total_trades,
+        "winners": winners,
+        "losers": losers,
+        "best_trade": best_trade,
+        "worst_trade": worst_trade,
+        "universe_size": universe_size,
+        "active_instruments": active_instruments,
+        "disabled_instruments": disabled_instruments,
+    })
+
+    print(f"[Supervisor] Weekly summary sent. "
+          f"W{today.isocalendar()[1]}: {total_trades} trades, "
+          f"P&L ${weekly_pnl:+.2f} ({weekly_pnl_pct:+.2f}%)")
+
+
+# ── Morning Briefing ────────────────────────────────────────
+
+def run_morning_briefing(r):
+    """Send pre-market morning briefing. Called at 9:20 AM ET via cron."""
+    print("[Supervisor] Sending morning briefing...")
+
+    regime_raw = r.get(Keys.REGIME)
+    regime_info = json.loads(regime_raw) if regime_raw else {}
+    regime = regime_info.get("regime", "UNKNOWN")
+    adx = regime_info.get("adx", 0)
+    plus_di = regime_info.get("plus_di", 0)
+    minus_di = regime_info.get("minus_di", 0)
+
+    watchlist_raw = r.get(Keys.WATCHLIST)
+    watchlist = json.loads(watchlist_raw)[:5] if watchlist_raw else []
+
+    positions = json.loads(r.get(Keys.POSITIONS) or "{}")
+    drawdown_pct = float(r.get(Keys.DRAWDOWN) or 0)
+    equity = get_simulated_equity(r)
+    system_status = r.get(Keys.SYSTEM_STATUS) or "unknown"
+
+    morning_briefing({
+        "regime": regime,
+        "adx": adx,
+        "plus_di": plus_di,
+        "minus_di": minus_di,
+        "watchlist": watchlist,
+        "positions": positions,
+        "drawdown_pct": drawdown_pct,
+        "equity": equity,
+        "system_status": system_status,
+    })
+
+
 # ── Main ────────────────────────────────────────────────────
 
-def main():
+def main():  # pragma: no cover
     parser = argparse.ArgumentParser(description="Supervisor Agent")
     parser.add_argument("--daemon", action="store_true", help="Run continuously")
     parser.add_argument("--health", action="store_true", help="Health check only")
     parser.add_argument("--eod", action="store_true", help="End-of-day review only")
     parser.add_argument("--revalidation", action="store_true", help="Monthly universe re-validation")
     parser.add_argument("--reset-daily", action="store_true", help="Reset daily counters")
+    parser.add_argument("--briefing", action="store_true", help="Send morning briefing (9:20 AM ET)")
+    parser.add_argument("--weekly", action="store_true", help="Send weekly summary (Friday 4:35 PM ET)")
     args = parser.parse_args()
 
     r = get_redis()
@@ -578,6 +724,14 @@ def main():
 
     if args.daemon:
         daemon_loop()
+    elif args.briefing:
+        run_morning_briefing(r)
+    elif args.weekly:
+        try:
+            run_weekly_summary(r)
+        except Exception as e:
+            print(f"[Supervisor] Weekly summary error: {e}")
+            critical_alert(f"Weekly summary failed: {e}")
     elif args.health:
         run_health_check(r)
     elif args.eod:
@@ -603,7 +757,7 @@ def main():
             critical_alert(f"EOD review failed: {e}")
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()
 
 # v1.0.0

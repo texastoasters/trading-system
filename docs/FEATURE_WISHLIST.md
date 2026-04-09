@@ -29,8 +29,8 @@ These are known issues documented in HANDOFF.md that can cause real harm.
 - [ ] **Dashboard: simulated equity history chart** — Plot `trading:simulated_equity` over time. Even a sparkline showing today's trend would be useful.
 
 ### Alerts & Notifications
-- [ ] **Weekly summary actually sent** — `notify.py` has `weekly_summary()` defined but nothing calls it. Wire it up in supervisor at Friday 4:30 PM ET.
-- [ ] **Morning briefing Telegram message** — At 9:20 AM ET (before open), send: current regime, watchlist top 5, open positions, drawdown level, system status. Helps user know what to expect before market opens.
+- [x] **Weekly summary actually sent** — `run_weekly_summary(r)` queries 7-day rollup from TimescaleDB (trades, P&L, best/worst trade, universe size). Cron at `35 16 * * 5` (Friday 4:35 PM ET, after EOD). PR #62.
+- [x] **Morning briefing Telegram message** — At 9:20 AM ET (Mon-Fri), sends: regime+ADX, watchlist top 5, open positions, drawdown, system status. Cron at `20 9 * * 1-5`. PR #61.
 - [ ] **Drawdown progress bar in alerts** — When drawdown alerts fire, show a visual progress bar toward each threshold (10%/15%/20%) so severity is instantly clear.
 - [ ] **LLM cost daily alert** — Track cumulative LLM spend per day and alert if it exceeds a configured threshold (e.g. $1/day).
 - [ ] **Alert on manual stop-loss cancellation** — If a stop-loss order status becomes "cancelled" unexpectedly (not by executor), fire a critical alert immediately.
@@ -120,8 +120,13 @@ If picking 5 things to do next, in order:
 1. ~~Fix the 5 known bugs (HANDOFF.md)~~ ✅ Done (PRs #57, #58)
 2. ~~`scripts/reconcile.py`~~ ✅ Done (PR #59)
 3. ~~Stale heartbeat alert~~ ✅ Done (PR #60)
-4. Morning briefing Telegram message — 9:20 AM ET: regime, watchlist top 5, positions, drawdown
-5. Weekly summary wiring — `notify.weekly_summary()` exists, just needs a cron call in supervisor
+4. ~~Morning briefing Telegram message~~ ✅ Done (PR #61)
+5. ~~Weekly summary wiring~~ ✅ Done (PR #62)
+6. Agent heartbeat dashboard panel — green/yellow/red per agent; thresholds already match PR #60
+7. Dashboard: current regime display — show RANGING/UPTREND/DOWNTREND with ADX badge
+8. Dashboard: open position cards — entry price, unrealized P&L, stop distance, tier
+9. Dashboard: trade history table — paginated, from TimescaleDB
+10. Dashboard: whipsaw/cooldown indicator — show symbols in cooldown + when it lifts
 
 ---
 
