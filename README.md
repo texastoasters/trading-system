@@ -1,3 +1,5 @@
+[![Coverage Status](https://coveralls.io/repos/github/texastoasters/trading-system/badge.svg?branch=main)](https://coveralls.io/github/texastoasters/trading-system?branch=main)
+
 # Autonomous Agentic Day Trading System
 
 An autonomous trading system powered by five LLM-orchestrated agents, trading RSI-2 mean reversion across a dynamic universe of 17+ instruments via Alpaca's API.
