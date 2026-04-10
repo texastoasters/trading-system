@@ -1,0 +1,11 @@
+#!/bin/sh
+# Prevent direct commits to main or master.
+# All changes must go through a feature branch and PR.
+
+branch=$(git symbolic-ref --short HEAD 2>/dev/null)
+
+if [ "$branch" = "main" ] || [ "$branch" = "master" ]; then
+  echo "ERROR: Direct commits to '$branch' are not allowed."
+  echo "       Create a feature branch and open a PR instead."
+  exit 1
+fi
