@@ -20,17 +20,18 @@ jobs:
         run: pip install -r requirements-dev.txt
 
       - name: Run tests with coverage
-        run: pytest --cov=skills --cov=scripts --cov-report=lcov --cov-report=term-missing
+        run: |
+          pytest --cov=skills --cov=scripts --cov-report=term-missing > /tmp/python-coverage.txt 2>&1
+          cat /tmp/python-coverage.txt
         env:
           PYTHONPATH: scripts
 
-      - name: Upload Python coverage to Coveralls
-        uses: coverallsapp/github-action@v2
+      - name: Upload coverage output
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          flag-name: python
-          file: coverage.lcov
-          parallel: true
+          name: python-coverage
+          path: /tmp/python-coverage.txt
 
   elixir:
     name: Elixir tests
@@ -82,38 +83,89 @@ jobs:
 
       - name: Run tests with coverage
         working-directory: dashboard
-        run: mix coveralls.lcov
-
-      - name: Fix lcov source paths
         run: |
-          # Strip workspace prefix from absolute SF: paths, remove empty TN: lines,
-          # and drop entire records that have no DA: lines (LF:0 files confuse coveralls binary)
-          awk -v ws="$GITHUB_WORKSPACE/" '
-            /^TN:$/ { next }
-            /^SF:/ { sub("^SF:" ws, "SF:") }
-            { record = record $0 "\n"; has_da = has_da || /^DA:/ }
-            /^end_of_record/ { if (has_da) printf "%s", record; record = ""; has_da = 0 }
-          ' dashboard/cover/lcov.info > /tmp/lcov_fixed.info
-          mv /tmp/lcov_fixed.info dashboard/cover/lcov.info
+          mix coveralls > /tmp/elixir-coverage.txt 2>&1
+          cat /tmp/elixir-coverage.txt
 
-      - name: Upload Elixir coverage to Coveralls
-        uses: coverallsapp/github-action@v2
+      - name: Upload coverage output
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          flag-name: elixir
-          file: dashboard/cover/lcov.info
-          format: lcov
-          coverage-reporter-version: v0.6.14
-          parallel: true
+          name: elixir-coverage
+          path: /tmp/elixir-coverage.txt
 
-  finalize:
-    name: Finalize coverage
+  comment:
+    name: Post coverage comment
     runs-on: ubuntu-latest
     needs: [python, elixir]
     if: always()
 
     steps:
-      - uses: coverallsapp/github-action@v2
+      - uses: actions/download-artifact@v4
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          parallel-finished: true
+          name: python-coverage
+          path: /tmp
+        continue-on-error: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: elixir-coverage
+          path: /tmp
+        continue-on-error: true
+
+      - name: Post coverage comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            function read(path) {
+              try { return fs.readFileSync(path, 'utf8'); }
+              catch { return null; }
+            }
+
+            function extract(text, pattern) {
+              return text?.match(pattern)?.[1] ?? 'n/a';
+            }
+
+            const python = read('/tmp/python-coverage.txt');
+            const elixir = read('/tmp/elixir-coverage.txt');
+
+            const pyTotal  = extract(python, /^TOTAL\s+\d+\s+\d+\s+(\d+%)/m);
+            const exTotal  = extract(elixir, /^\[TOTAL\]\s+([\d.]+%)/m);
+
+            const sections = [];
+            if (python) sections.push(`<details><summary>Python detail</summary>\n\n\`\`\`\n${python.slice(-3000)}\n\`\`\`\n</details>`);
+            if (elixir) sections.push(`<details><summary>Elixir detail</summary>\n\n\`\`\`\n${elixir.slice(-3000)}\n\`\`\`\n</details>`);
+
+            const body = [
+              '## Coverage',
+              '',
+              `**Python**: ${pyTotal}  `,
+              `**Elixir**: ${exTotal}`,
+              '',
+              ...sections,
+            ].join('\n');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.user.type === 'Bot' && c.body.startsWith('## Coverage'));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
