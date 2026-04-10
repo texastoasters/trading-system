@@ -340,6 +340,10 @@ defmodule DashboardWeb.DashboardLive do
   defp heartbeat_dot(:warning), do: "bg-yellow-500"
   defp heartbeat_dot(:stale), do: "bg-red-500"
 
+  defp heartbeat_card_classes(:ok), do: {"bg-gray-900", "border-gray-700", "text-gray-200", "text-gray-600"}
+  defp heartbeat_card_classes(:warning), do: {"bg-amber-950/20", "border-amber-800", "text-amber-200", "text-amber-900"}
+  defp heartbeat_card_classes(:stale), do: {"bg-red-950/20", "border-red-900", "text-red-300", "text-red-900"}
+
   defp universe_count(nil), do: "—"
 
   defp universe_count(u) do

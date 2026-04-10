@@ -192,4 +192,78 @@ defmodule DashboardWeb.DashboardLiveTest do
       assert html =~ "-DI —"
     end
   end
+
+  describe "agent heartbeat panel" do
+    defp stale_ts, do: "2020-01-01T00:00:00"
+    defp warn_ts, do: NaiveDateTime.utc_now() |> NaiveDateTime.add(-7 * 60, :second) |> NaiveDateTime.to_iso8601()
+    defp ok_ts, do: NaiveDateTime.utc_now() |> NaiveDateTime.add(-30, :second) |> NaiveDateTime.to_iso8601()
+
+    test "stale agent card shows red border", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+
+      state = %{
+        "trading:heartbeat:executor" => stale_ts(),
+        "trading:heartbeat:screener" => nil,
+        "trading:heartbeat:watcher" => nil,
+        "trading:heartbeat:portfolio_manager" => nil,
+        "trading:heartbeat:supervisor" => nil
+      }
+
+      send(view.pid, {:state_update, state})
+      html = render(view)
+      assert html =~ "border-red-900"
+    end
+
+    test "warning agent card shows amber border", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+
+      state = %{
+        "trading:heartbeat:executor" => warn_ts(),
+        "trading:heartbeat:screener" => nil,
+        "trading:heartbeat:watcher" => nil,
+        "trading:heartbeat:portfolio_manager" => nil,
+        "trading:heartbeat:supervisor" => nil
+      }
+
+      send(view.pid, {:state_update, state})
+      html = render(view)
+      assert html =~ "border-amber-800"
+    end
+
+    test "healthy agent card shows neutral border", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+
+      state = %{
+        "trading:heartbeat:executor" => ok_ts(),
+        "trading:heartbeat:screener" => ok_ts(),
+        "trading:heartbeat:watcher" => ok_ts(),
+        "trading:heartbeat:portfolio_manager" => ok_ts(),
+        "trading:heartbeat:supervisor" => ok_ts()
+      }
+
+      send(view.pid, {:state_update, state})
+      html = render(view)
+      assert html =~ "border-gray-700"
+      refute html =~ "border-red-900"
+      refute html =~ "border-amber-800"
+    end
+
+    test "nil heartbeat renders stale card without crash", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:state_update, %{}})
+      html = render(view)
+      assert html =~ "Agents"
+      assert html =~ "border-red-900"
+    end
+
+    test "all five agents are rendered", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      html = render(view)
+      assert html =~ "Screener"
+      assert html =~ "Watcher"
+      assert html =~ "PM"
+      assert html =~ "Executor"
+      assert html =~ "Supervisor"
+    end
+  end
 end
