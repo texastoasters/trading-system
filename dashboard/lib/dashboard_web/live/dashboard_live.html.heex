@@ -197,6 +197,17 @@
                       <span class="text-gray-600 ml-1">—</span>
                     <% end %>
                   </div>
+                  <div>
+                    <span class="text-gray-500">Days:</span>
+                    <span class="text-gray-300 ml-1 font-mono">{format_hold_days(hold_days(pos["entry_date"]))}</span>
+                  </div>
+                  <% dist = stop_distance(current_price, pos["stop_price"]) %>
+                  <div>
+                    <span class="text-gray-500">to stop:</span>
+                    <span class={["ml-1 font-mono", if(dist, do: "text-orange-300", else: "text-gray-600")]}>
+                      {format_stop_distance(dist)}
+                    </span>
+                  </div>
                 </div>
                 <div class="mt-3 flex justify-end">
                   <button

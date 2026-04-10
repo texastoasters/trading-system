@@ -582,6 +582,89 @@ defmodule DashboardWeb.DashboardLiveTest do
     end
   end
 
+  describe "open position card detail" do
+    defp position_state(pos_map) do
+      %{
+        "trading:positions" => %{"SPY" => pos_map},
+        "trading:heartbeat:screener" => nil,
+        "trading:heartbeat:watcher" => nil,
+        "trading:heartbeat:portfolio_manager" => nil,
+        "trading:heartbeat:executor" => nil,
+        "trading:heartbeat:supervisor" => nil
+      }
+    end
+
+    test "hold days displays days held from entry_date", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      entry_date = Date.utc_today() |> Date.add(-3) |> Date.to_iso8601()
+
+      send(view.pid, {:state_update, position_state(%{
+        "symbol" => "SPY", "tier" => 1, "quantity" => 10,
+        "entry_price" => 480.0, "entry_date" => entry_date,
+        "stop_price" => 470.0, "current_price" => 490.0
+      })})
+
+      html = render(view)
+      assert html =~ "3d"
+    end
+
+    test "hold days shows 'today' for entry_date of today", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      entry_date = Date.utc_today() |> Date.to_iso8601()
+
+      send(view.pid, {:state_update, position_state(%{
+        "symbol" => "SPY", "tier" => 1, "quantity" => 10,
+        "entry_price" => 480.0, "entry_date" => entry_date,
+        "stop_price" => 470.0, "current_price" => 490.0
+      })})
+
+      html = render(view)
+      assert html =~ "today"
+    end
+
+    test "hold days shows dash when entry_date is nil", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+
+      send(view.pid, {:state_update, position_state(%{
+        "symbol" => "SPY", "tier" => 1, "quantity" => 10,
+        "entry_price" => 480.0, "entry_date" => nil,
+        "stop_price" => 470.0
+      })})
+
+      html = render(view)
+      assert html =~ "Days"
+    end
+
+    test "stop distance shows percentage below current price", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      entry_date = Date.utc_today() |> Date.to_iso8601()
+
+      # current=500, stop=450 → 10.0% below
+      send(view.pid, {:state_update, position_state(%{
+        "symbol" => "SPY", "tier" => 1, "quantity" => 10,
+        "entry_price" => 480.0, "entry_date" => entry_date,
+        "stop_price" => 450.0, "current_price" => 500.0
+      })})
+
+      html = render(view)
+      assert html =~ "10.0%"
+    end
+
+    test "stop distance shows dash when current_price is nil", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      entry_date = Date.utc_today() |> Date.to_iso8601()
+
+      send(view.pid, {:state_update, position_state(%{
+        "symbol" => "SPY", "tier" => 1, "quantity" => 10,
+        "entry_price" => 480.0, "entry_date" => entry_date,
+        "stop_price" => 450.0, "current_price" => nil
+      })})
+
+      html = render(view)
+      assert html =~ "to stop"
+    end
+  end
+
   describe "signal_detail/1 helpers" do
     test "entry signal shows rsi2, stop, and tier", %{conn: conn} do
       {:ok, view, _} = live(conn, "/")

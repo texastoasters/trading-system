@@ -314,6 +314,31 @@ defmodule DashboardWeb.DashboardLive do
   defp heartbeat_card_classes(:warning), do: {"bg-amber-950/20", "border-amber-800", "text-amber-200", "text-amber-900"}
   defp heartbeat_card_classes(:stale), do: {"bg-red-950/20", "border-red-900", "text-red-300", "text-red-900"}
 
+  defp hold_days(nil), do: nil
+
+  defp hold_days(entry_date_str) when is_binary(entry_date_str) do
+    case Date.from_iso8601(entry_date_str) do
+      {:ok, date} -> Date.diff(Date.utc_today(), date)
+      _ -> nil
+    end
+  end
+
+  defp format_hold_days(nil), do: "—"
+  defp format_hold_days(0), do: "today"
+  defp format_hold_days(1), do: "1d"
+  defp format_hold_days(n), do: "#{n}d"
+
+  defp stop_distance(current, stop)
+       when is_number(current) and is_number(stop) and current > 0,
+       do: (current - stop) / current * 100
+
+  defp stop_distance(_, _), do: nil
+
+  defp format_stop_distance(nil), do: "—"
+
+  defp format_stop_distance(v),
+    do: "#{:erlang.float_to_binary(v + 0.0, decimals: 1)}%"
+
   defp universe_count(nil), do: "—"
 
   defp universe_count(u) do
