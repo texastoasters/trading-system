@@ -150,7 +150,6 @@ defmodule DashboardWeb.DashboardLive do
   }
 
   defp heartbeat_status(nil, _agent), do: :stale
-  defp heartbeat_status(nil), do: :stale
 
   defp heartbeat_status(ts, agent) when is_binary(ts) do
     age_minutes = heartbeat_age_minutes(ts)
@@ -162,10 +161,6 @@ defmodule DashboardWeb.DashboardLive do
       age_minutes < stale -> :warning
       true -> :stale
     end
-  end
-
-  defp heartbeat_status(ts) when is_binary(ts) do
-    heartbeat_status(ts, "executor")
   end
 
   defp heartbeat_age_minutes(ts) do
