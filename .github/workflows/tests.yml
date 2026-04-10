@@ -1,13 +1,12 @@
 name: Tests
 
 on:
-  push:
-    branches: ["**"]
   pull_request:
     branches: [main]
 
 jobs:
-  test:
+  python:
+    name: Python tests
     runs-on: ubuntu-latest
 
     steps:
@@ -21,12 +20,152 @@ jobs:
         run: pip install -r requirements-dev.txt
 
       - name: Run tests with coverage
-        run: pytest --cov=skills --cov=scripts --cov-report=lcov --cov-report=term-missing
+        run: |
+          pytest --cov=skills --cov=scripts --cov-report=term-missing > /tmp/python-coverage.txt 2>&1
+          cat /tmp/python-coverage.txt
         env:
           PYTHONPATH: scripts
 
-      - name: Upload coverage to Coveralls
-        uses: coverallsapp/github-action@v2
+      - name: Upload coverage output
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          file: coverage.lcov
+          name: python-coverage
+          path: /tmp/python-coverage.txt
+
+  elixir:
+    name: Elixir tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: dashboard_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      MIX_ENV: test
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/dashboard_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.17"
+          otp-version: "27"
+
+      - name: Cache Mix deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            dashboard/deps
+            dashboard/_build
+          key: mix-${{ runner.os }}-${{ hashFiles('dashboard/mix.lock') }}
+          restore-keys: mix-${{ runner.os }}-
+
+      - name: Install Mix dependencies
+        working-directory: dashboard
+        run: mix deps.get
+
+      - name: Set up database
+        working-directory: dashboard
+        run: mix ecto.create && mix ecto.migrate
+
+      - name: Run tests with coverage
+        working-directory: dashboard
+        run: |
+          mix coveralls > /tmp/elixir-coverage.txt 2>&1
+          cat /tmp/elixir-coverage.txt
+
+      - name: Upload coverage output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: elixir-coverage
+          path: /tmp/elixir-coverage.txt
+
+  comment:
+    name: Post coverage comment
+    runs-on: ubuntu-latest
+    needs: [python, elixir]
+    if: always()
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-coverage
+          path: /tmp
+        continue-on-error: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: elixir-coverage
+          path: /tmp
+        continue-on-error: true
+
+      - name: Post coverage comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            function read(path) {
+              try { return fs.readFileSync(path, 'utf8'); }
+              catch { return null; }
+            }
+
+            function extract(text, pattern) {
+              return text?.match(pattern)?.[1] ?? 'n/a';
+            }
+
+            const python = read('/tmp/python-coverage.txt');
+            const elixir = read('/tmp/elixir-coverage.txt');
+
+            const pyTotal  = extract(python, /^TOTAL\s+\d+\s+\d+\s+(\d+%)/m);
+            const exTotal  = extract(elixir, /^\[TOTAL\]\s+([\d.]+%)/m);
+
+            const sections = [];
+            if (python) sections.push(`<details><summary>Python detail</summary>\n\n\`\`\`\n${python.slice(-3000)}\n\`\`\`\n</details>`);
+            if (elixir) sections.push(`<details><summary>Elixir detail</summary>\n\n\`\`\`\n${elixir.slice(-3000)}\n\`\`\`\n</details>`);
+
+            const body = [
+              '## Coverage',
+              '',
+              `**Python**: ${pyTotal}  `,
+              `**Elixir**: ${exTotal}`,
+              '',
+              ...sections,
+            ].join('\n');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.user.type === 'Bot' && c.body.startsWith('## Coverage'));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
