@@ -85,7 +85,7 @@ jobs:
         run: mix coveralls.lcov
 
       - name: Fix lcov source paths
-        run: sed -i 's|^SF:|SF:dashboard/|' dashboard/cover/lcov.info
+        run: sed -i "s|^SF:${GITHUB_WORKSPACE}/||" dashboard/cover/lcov.info
 
       - name: Upload Elixir coverage to Coveralls
         uses: coverallsapp/github-action@v2
