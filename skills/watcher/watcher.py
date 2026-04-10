@@ -469,7 +469,7 @@ def is_market_hours():
         return market_open <= now_et <= market_close
 
 
-def daemon_loop():
+def daemon_loop():  # pragma: no cover
     """Run evaluation cycles continuously."""
     print("[Watcher] Starting daemon mode...")
     print("[Watcher] Market hours: every 5 minutes | Off-hours: every 30 minutes")
@@ -493,7 +493,7 @@ def daemon_loop():
         time.sleep(sleep_duration)
 
 
-def main():
+def main():  # pragma: no cover
     parser = argparse.ArgumentParser(description="Watcher Agent")
     parser.add_argument("--daemon", action="store_true", help="Run continuously")
     args = parser.parse_args()
@@ -504,7 +504,7 @@ def main():
         run_cycle()
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()
 
 # v1.0.0
