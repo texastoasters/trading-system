@@ -22,18 +22,18 @@ defmodule Dashboard.Schemas.Trade do
     field :notes, :string
   end
 
+  @doc "Base query ordered newest first."
+  def ordered do
+    from t in __MODULE__, order_by: [desc: t.time]
+  end
+
   @doc "Return the N most recent trades, newest first."
   def recent(limit \\ 20) do
-    from t in __MODULE__,
-      order_by: [desc: t.time],
-      limit: ^limit
+    ordered() |> limit(^limit)
   end
 
   @doc "Return trades for a specific symbol."
   def for_symbol(symbol, limit \\ 50) do
-    from t in __MODULE__,
-      where: t.symbol == ^symbol,
-      order_by: [desc: t.time],
-      limit: ^limit
+    ordered() |> where([t], t.symbol == ^symbol) |> limit(^limit)
   end
 end

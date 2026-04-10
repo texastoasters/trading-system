@@ -70,6 +70,26 @@ defmodule Dashboard.Queries do
     end
   end
 
+  @doc "Paginated trades, newest first."
+  def paginated_trades(page \\ 1, per_page \\ 50) do
+    offset = (page - 1) * per_page
+
+    try do
+      Trade.ordered() |> limit(^per_page) |> offset(^offset) |> Repo.all()
+    rescue
+      _ -> []
+    end
+  end
+
+  @doc "Total number of trade records."
+  def trade_count do
+    try do
+      Repo.aggregate(Trade, :count)
+    rescue
+      _ -> 0
+    end
+  end
+
   @doc "Total realized P&L from the trades table."
   def total_realized_pnl do
     try do
