@@ -66,6 +66,7 @@ defmodule Dashboard.MixProject do
 
       # Code quality (dev/test only)
       {:floki, ">= 0.30.0", only: :test},
+      {:lazy_html, ">= 0.1.0", only: :test},
       {:excoveralls, "~> 0.18", only: :test}
     ]
   end

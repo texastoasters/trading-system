@@ -9,6 +9,14 @@ if System.get_env("PHX_SERVER") do
   config :dashboard, DashboardWeb.Endpoint, server: true
 end
 
+if config_env() == :test do
+  if url = System.get_env("DATABASE_URL") do
+    config :dashboard, Dashboard.Repo,
+      url: url,
+      pool: Ecto.Adapters.SQL.Sandbox
+  end
+end
+
 if config_env() == :prod do
   database_url =
     System.get_env("DATABASE_URL") ||
