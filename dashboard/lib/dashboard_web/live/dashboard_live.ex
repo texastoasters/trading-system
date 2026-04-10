@@ -46,6 +46,7 @@ defmodule DashboardWeb.DashboardLive do
       |> assign(:watchlist, [])
       |> assign(:universe, nil)
       |> assign(:heartbeats, %{})
+      |> assign(:cooldowns, [])
       # Live signal feed (from pub/sub)
       |> assign(:live_signals, [])
       # Market clock
@@ -89,6 +90,7 @@ defmodule DashboardWeb.DashboardLive do
       |> assign(:watchlist, state["trading:watchlist"] || [])
       |> assign(:universe, state["trading:universe"])
       |> assign(:heartbeats, heartbeats)
+      |> assign(:cooldowns, state["trading:cooldowns"] || [])
 
     {:noreply, socket}
   end
@@ -338,6 +340,40 @@ defmodule DashboardWeb.DashboardLive do
 
   defp format_stop_distance(v),
     do: "#{:erlang.float_to_binary(v + 0.0, decimals: 1)}%"
+
+  # threshold = exit_price * 0.97
+  defp manual_exit_threshold(exit_price), do: format_price(exit_price * 0.97)
+
+  defp whipsaw_lifts_at(started_at) when is_binary(started_at) do
+    # Python writes datetime.now().isoformat() — no tz suffix — but mirror heartbeat
+    # parsing to handle any tz-aware variant safely.
+    ndt =
+      case DateTime.from_iso8601(started_at) do
+        {:ok, dt, _} -> DateTime.to_naive(dt)
+        _ ->
+          case NaiveDateTime.from_iso8601(started_at) do
+            {:ok, ndt} -> ndt
+            _ -> nil
+          end
+      end
+
+    case ndt do
+      nil ->
+        "—"
+
+      _ ->
+        lifts = NaiveDateTime.add(ndt, 86_400, :second)
+        remaining = NaiveDateTime.diff(lifts, NaiveDateTime.utc_now(), :second)
+
+        cond do
+          remaining <= 0 -> "lifting soon"
+          remaining < 3600 -> "#{div(remaining, 60)}m"
+          true -> "#{div(remaining, 3600)}h #{rem(div(remaining, 60), 60)}m"
+        end
+    end
+  end
+
+  defp whipsaw_lifts_at(_), do: "—"
 
   defp universe_count(nil), do: "—"
 

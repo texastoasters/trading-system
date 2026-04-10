@@ -264,6 +264,34 @@
           </div>
         <% end %>
       </div>
+      <%= if @cooldowns != [] do %>
+        <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+          <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
+            Cooldowns ({length(@cooldowns)})
+          </h2>
+          <div class="space-y-1.5">
+            <%= for cd <- @cooldowns do %>
+              <div class="flex items-center justify-between text-xs">
+                <div class="flex items-center gap-2">
+                  <span class="font-mono font-semibold text-white w-16">{cd["symbol"]}</span>
+                  <span class="text-amber-400 font-medium">{cd["type"]}</span>
+                </div>
+                <div class="text-gray-400 text-right">
+                  <%= case cd["type"] do %>
+                    <% "whipsaw" -> %>
+                      <span class="text-gray-500">lifts in</span>
+                      <span class="font-mono text-amber-300 ml-1">{whipsaw_lifts_at(cd["started_at"])}</span>
+                    <% "manual_exit" -> %>
+                      <span class="text-gray-500">re-entry ≤</span>
+                      <span class="font-mono text-amber-300 ml-1">{manual_exit_threshold(cd["exit_price"])}</span>
+                    <% _ -> %>
+                  <% end %>
+                </div>
+              </div>
+            <% end %>
+          </div>
+        </div>
+      <% end %>
     </div>
 
     <div class="space-y-4">

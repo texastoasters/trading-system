@@ -665,6 +665,77 @@ defmodule DashboardWeb.DashboardLiveTest do
     end
   end
 
+  describe "cooldown panel" do
+    defp cooldown_state(cooldowns) do
+      %{
+        "trading:cooldowns" => cooldowns,
+        "trading:heartbeat:screener" => nil,
+        "trading:heartbeat:watcher" => nil,
+        "trading:heartbeat:portfolio_manager" => nil,
+        "trading:heartbeat:executor" => nil,
+        "trading:heartbeat:supervisor" => nil
+      }
+    end
+
+    test "initial cooldowns assign is empty list", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.cooldowns == []
+    end
+
+    test "state_update with cooldowns populates assign", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      cooldowns = [%{"symbol" => "SPY", "type" => "whipsaw", "started_at" => "2026-04-10T10:00:00"}]
+      send(view.pid, {:state_update, cooldown_state(cooldowns)})
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert length(assigns.cooldowns) == 1
+    end
+
+    test "whipsaw cooldown shows symbol and type", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      started = NaiveDateTime.utc_now() |> NaiveDateTime.add(-3600, :second) |> NaiveDateTime.to_iso8601()
+      cooldowns = [%{"symbol" => "SPY", "type" => "whipsaw", "started_at" => started}]
+      send(view.pid, {:state_update, cooldown_state(cooldowns)})
+      html = render(view)
+      assert html =~ "SPY"
+      assert html =~ "whipsaw"
+    end
+
+    test "manual_exit cooldown shows symbol, type, and threshold price", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      cooldowns = [%{"symbol" => "QQQ", "type" => "manual_exit", "exit_price" => 480.0}]
+      send(view.pid, {:state_update, cooldown_state(cooldowns)})
+      html = render(view)
+      assert html =~ "QQQ"
+      assert html =~ "manual_exit"
+      # threshold = 480.0 * 0.97 = 465.60
+      assert html =~ "465.60"
+    end
+
+    test "empty cooldowns list shows no cooldown panel", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:state_update, cooldown_state([])})
+      html = render(view)
+      refute html =~ "Cooldowns"
+    end
+
+    test "non-empty cooldowns shows panel heading", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      started = NaiveDateTime.utc_now() |> NaiveDateTime.add(-3600, :second) |> NaiveDateTime.to_iso8601()
+      cooldowns = [%{"symbol" => "NVDA", "type" => "whipsaw", "started_at" => started}]
+      send(view.pid, {:state_update, cooldown_state(cooldowns)})
+      html = render(view)
+      assert html =~ "Cooldowns"
+    end
+
+    test "nil cooldowns in state defaults to empty list", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:state_update, cooldown_state(nil)})
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.cooldowns == []
+    end
+  end
+
   describe "signal_detail/1 helpers" do
     test "entry signal shows rsi2, stop, and tier", %{conn: conn} do
       {:ok, view, _} = live(conn, "/")

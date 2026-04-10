@@ -10,6 +10,7 @@ defmodule Dashboard.RedisPoller do
   require Logger
 
   @poll_interval_ms 2_000
+  @cooldown_ttl_s 30
 
   # Redis keys to fetch on each poll (mirrors Keys class in config.py)
   @redis_keys [
@@ -32,7 +33,7 @@ defmodule Dashboard.RedisPoller do
   ]
 
   def start_link(_opts) do
-    GenServer.start_link(__MODULE__, %{}, name: __MODULE__)
+    GenServer.start_link(__MODULE__, %{cooldown_cache: {[], 0}}, name: __MODULE__)
   end
 
   @impl true
@@ -43,7 +44,10 @@ defmodule Dashboard.RedisPoller do
 
   @impl true
   def handle_info(:poll, state) do
-    case poll_redis() do
+    now = System.monotonic_time(:second)
+    {cooldowns, updated_state} = maybe_fetch_cooldowns(state, now)
+
+    case poll_redis(cooldowns) do
       {:ok, parsed} ->
         Phoenix.PubSub.broadcast(Dashboard.PubSub, "dashboard:state", {:state_update, parsed})
 
@@ -52,26 +56,71 @@ defmodule Dashboard.RedisPoller do
     end
 
     schedule_poll()
-    {:noreply, state}
+    {:noreply, updated_state}
+  end
+
+  defp maybe_fetch_cooldowns(%{cooldown_cache: {cached, fetched_at}} = state, now) do
+    if now - fetched_at < @cooldown_ttl_s do
+      {cached, state}
+    else
+      fresh = fetch_cooldowns()
+      {fresh, %{state | cooldown_cache: {fresh, now}}}
+    end
   end
 
   defp schedule_poll do
     Process.send_after(self(), :poll, @poll_interval_ms)
   end
 
-  defp poll_redis do
+  defp poll_redis(cooldowns) do
     commands = Enum.map(@redis_keys, fn key -> ["GET", key] end)
 
     case Redix.pipeline(:redix, commands) do
       {:ok, values} ->
         pairs = Enum.zip(@redis_keys, values)
         parsed = parse_redis_values(pairs)
-        {:ok, parsed}
+        {:ok, Map.put(parsed, "trading:cooldowns", cooldowns)}
 
       {:error, reason} ->
         {:error, reason}
     end
   end
+
+  defp fetch_cooldowns do
+    case Redix.pipeline(:redix, [
+      ["KEYS", "trading:whipsaw:*"],
+      ["KEYS", "trading:manual_exit:*"]
+    ]) do
+      {:ok, [whipsaw_keys, manual_keys]} ->
+        all_keys = whipsaw_keys ++ manual_keys
+
+        case Redix.pipeline(:redix, Enum.map(all_keys, &["GET", &1])) do
+          {:ok, values} ->
+            all_keys
+            |> Enum.zip(values)
+            |> Enum.flat_map(fn {key, val} -> parse_cooldown(key, val) end)
+
+          _ ->
+            []
+        end
+
+      _ ->
+        []
+    end
+  end
+
+  defp parse_cooldown("trading:whipsaw:" <> symbol, val) when is_binary(val) do
+    [%{"symbol" => symbol, "type" => "whipsaw", "started_at" => val}]
+  end
+
+  defp parse_cooldown("trading:manual_exit:" <> symbol, val) when is_binary(val) do
+    case Float.parse(val) do
+      {price, _} -> [%{"symbol" => symbol, "type" => "manual_exit", "exit_price" => price}]
+      _ -> []
+    end
+  end
+
+  defp parse_cooldown(_, _), do: []
 
   defp parse_redis_values(pairs) do
     Enum.reduce(pairs, %{}, fn {key, val}, acc ->
