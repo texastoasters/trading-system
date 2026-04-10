@@ -133,4 +133,63 @@ defmodule DashboardWeb.DashboardLiveTest do
       assert render(view) =~ "RSI-2 Trading System"
     end
   end
+
+  describe "regime display" do
+    defp regime_state(regime_map) do
+      %{
+        "trading:regime" => regime_map,
+        "trading:heartbeat:screener" => nil,
+        "trading:heartbeat:watcher" => nil,
+        "trading:heartbeat:portfolio_manager" => nil,
+        "trading:heartbeat:executor" => nil,
+        "trading:heartbeat:supervisor" => nil
+      }
+    end
+
+    test "UPTREND regime card has green left border", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:state_update, regime_state(%{"regime" => "UPTREND", "adx" => 28.4, "plus_di" => 22.1, "minus_di" => 14.3})})
+      html = render(view)
+      assert html =~ "border-l-green-500"
+    end
+
+    test "DOWNTREND regime card has red left border", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:state_update, regime_state(%{"regime" => "DOWNTREND", "adx" => 31.2, "plus_di" => 11.0, "minus_di" => 24.5})})
+      html = render(view)
+      assert html =~ "border-l-red-500"
+    end
+
+    test "RANGING regime card has gray left border", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:state_update, regime_state(%{"regime" => "RANGING", "adx" => 14.1, "plus_di" => 18.0, "minus_di" => 16.0})})
+      html = render(view)
+      assert html =~ "border-l-gray-600"
+    end
+
+    test "nil regime card has gray left border and does not crash", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:state_update, regime_state(nil)})
+      html = render(view)
+      assert html =~ "border-l-gray-600"
+    end
+
+    test "+DI and -DI values are displayed when present", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:state_update, regime_state(%{"regime" => "UPTREND", "adx" => 28.4, "plus_di" => 22.1, "minus_di" => 14.3})})
+      html = render(view)
+      assert html =~ "+DI"
+      assert html =~ "-DI"
+      assert html =~ "22.1"
+      assert html =~ "14.3"
+    end
+
+    test "+DI and -DI show dashes when regime is nil", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:state_update, regime_state(nil)})
+      html = render(view)
+      assert html =~ "+DI —"
+      assert html =~ "-DI —"
+    end
+  end
 end

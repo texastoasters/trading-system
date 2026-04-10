@@ -63,7 +63,7 @@
       <div class="text-xs text-gray-600 mt-0.5">day trades</div>
     </div>
 
-    <div class="bg-gray-800 rounded-lg border border-gray-700 p-3">
+    <div class={["bg-gray-800 rounded-lg border border-gray-700 border-l-4 p-3", regime_border_class(@regime)]}>
       <div class="text-xs text-gray-500 uppercase tracking-wider">Regime</div>
       <div class="text-lg font-bold text-white mt-1">
         {regime_emoji(@regime)} {regime_name(@regime)}
@@ -72,6 +72,17 @@
         ADX {if adx_value(@regime),
           do: :erlang.float_to_binary(adx_value(@regime) + 0.0, decimals: 1),
           else: "—"}
+      </div>
+      <div class="text-xs mt-0.5">
+        <% pdi = plus_di_value(@regime)
+           mdi = minus_di_value(@regime) %>
+        <%= if pdi && mdi do %>
+          <span class="text-green-500">▲ +DI {:erlang.float_to_binary(pdi + 0.0, decimals: 1)}</span>
+          <span class="text-gray-600 mx-1">·</span>
+          <span class="text-red-400">▼ -DI {:erlang.float_to_binary(mdi + 0.0, decimals: 1)}</span>
+        <% else %>
+          <span class="text-gray-700">+DI — · -DI —</span>
+        <% end %>
       </div>
     </div>
 

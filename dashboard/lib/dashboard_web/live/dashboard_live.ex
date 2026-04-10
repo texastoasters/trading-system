@@ -225,6 +225,20 @@ defmodule DashboardWeb.DashboardLive do
   defp adx_value(%{"adx" => adx}), do: adx
   defp adx_value(_), do: nil
 
+  defp regime_border_class(nil), do: "border-l-gray-600"
+  defp regime_border_class(%{"regime" => "UPTREND"}), do: "border-l-green-500"
+  defp regime_border_class(%{"regime" => "DOWNTREND"}), do: "border-l-red-500"
+  defp regime_border_class(%{"regime" => "RANGING"}), do: "border-l-gray-600"
+  defp regime_border_class(_), do: "border-l-gray-600"
+
+  defp plus_di_value(nil), do: nil
+  defp plus_di_value(%{"plus_di" => v}), do: v
+  defp plus_di_value(_), do: nil
+
+  defp minus_di_value(nil), do: nil
+  defp minus_di_value(%{"minus_di" => v}), do: v
+  defp minus_di_value(_), do: nil
+
   defp format_price(nil), do: "—"
   defp format_price(v) when is_float(v), do: "$#{:erlang.float_to_binary(v, decimals: 2)}"
   defp format_price(v), do: "$#{v}"
