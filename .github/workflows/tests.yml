@@ -86,13 +86,15 @@ jobs:
         working-directory: dashboard
         run: mix coveralls.lcov
 
+      - name: Fix lcov source paths
+        run: sed -i 's|^SF:|SF:dashboard/|' dashboard/cover/lcov.info
+
       - name: Upload Elixir coverage to Coveralls
         uses: coverallsapp/github-action@v2
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           flag-name: elixir
           file: dashboard/cover/lcov.info
-          base-path: dashboard
           parallel: true
 
   finalize:
