@@ -85,7 +85,16 @@ jobs:
         run: mix coveralls.lcov
 
       - name: Fix lcov source paths
-        run: sed -i -e "s|^SF:${GITHUB_WORKSPACE}/||" -e "/^TN:$/d" dashboard/cover/lcov.info
+        run: |
+          # Strip workspace prefix from absolute SF: paths, remove empty TN: lines,
+          # and drop entire records that have no DA: lines (LF:0 files confuse coveralls binary)
+          awk -v ws="$GITHUB_WORKSPACE/" '
+            /^TN:$/ { next }
+            /^SF:/ { sub("^SF:" ws, "SF:") }
+            { record = record $0 "\n"; has_da = has_da || /^DA:/ }
+            /^end_of_record/ { if (has_da) printf "%s", record; record = ""; has_da = 0 }
+          ' dashboard/cover/lcov.info > /tmp/lcov_fixed.info
+          mv /tmp/lcov_fixed.info dashboard/cover/lcov.info
 
       - name: Upload Elixir coverage to Coveralls
         uses: coverallsapp/github-action@v2
