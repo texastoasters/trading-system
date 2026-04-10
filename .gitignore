@@ -32,7 +32,10 @@ _build/
 dashboard/_build/
 mix.lock
 dashboard/mix.lock
+dashboard/erl_crash.dump
 
+# test coverage
 .coverage
+dashboard/cover/
 
 # v1.0.0
