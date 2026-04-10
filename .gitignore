@@ -39,3 +39,5 @@ dashboard/erl_crash.dump
 dashboard/cover/
 
 # v1.0.0
+.superpowers
+.worktrees/

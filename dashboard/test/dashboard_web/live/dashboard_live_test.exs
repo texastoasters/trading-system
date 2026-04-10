@@ -133,4 +133,137 @@ defmodule DashboardWeb.DashboardLiveTest do
       assert render(view) =~ "RSI-2 Trading System"
     end
   end
+
+  describe "regime display" do
+    defp regime_state(regime_map) do
+      %{
+        "trading:regime" => regime_map,
+        "trading:heartbeat:screener" => nil,
+        "trading:heartbeat:watcher" => nil,
+        "trading:heartbeat:portfolio_manager" => nil,
+        "trading:heartbeat:executor" => nil,
+        "trading:heartbeat:supervisor" => nil
+      }
+    end
+
+    test "UPTREND regime card has green left border", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:state_update, regime_state(%{"regime" => "UPTREND", "adx" => 28.4, "plus_di" => 22.1, "minus_di" => 14.3})})
+      html = render(view)
+      assert html =~ "border-l-green-500"
+    end
+
+    test "DOWNTREND regime card has red left border", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:state_update, regime_state(%{"regime" => "DOWNTREND", "adx" => 31.2, "plus_di" => 11.0, "minus_di" => 24.5})})
+      html = render(view)
+      assert html =~ "border-l-red-500"
+    end
+
+    test "RANGING regime card has gray left border", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:state_update, regime_state(%{"regime" => "RANGING", "adx" => 14.1, "plus_di" => 18.0, "minus_di" => 16.0})})
+      html = render(view)
+      assert html =~ "border-l-gray-600"
+    end
+
+    test "nil regime card has gray left border and does not crash", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:state_update, regime_state(nil)})
+      html = render(view)
+      assert html =~ "border-l-gray-600"
+    end
+
+    test "+DI and -DI values are displayed when present", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:state_update, regime_state(%{"regime" => "UPTREND", "adx" => 28.4, "plus_di" => 22.1, "minus_di" => 14.3})})
+      html = render(view)
+      assert html =~ "+DI"
+      assert html =~ "-DI"
+      assert html =~ "22.1"
+      assert html =~ "14.3"
+    end
+
+    test "+DI and -DI show dashes when regime is nil", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:state_update, regime_state(nil)})
+      html = render(view)
+      assert html =~ "+DI —"
+      assert html =~ "-DI —"
+    end
+  end
+
+  describe "agent heartbeat panel" do
+    defp stale_ts, do: "2020-01-01T00:00:00"
+    defp warn_ts, do: NaiveDateTime.utc_now() |> NaiveDateTime.add(-7 * 60, :second) |> NaiveDateTime.to_iso8601()
+    defp ok_ts, do: NaiveDateTime.utc_now() |> NaiveDateTime.add(-30, :second) |> NaiveDateTime.to_iso8601()
+
+    test "stale agent card shows red border", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+
+      state = %{
+        "trading:heartbeat:executor" => stale_ts(),
+        "trading:heartbeat:screener" => nil,
+        "trading:heartbeat:watcher" => nil,
+        "trading:heartbeat:portfolio_manager" => nil,
+        "trading:heartbeat:supervisor" => nil
+      }
+
+      send(view.pid, {:state_update, state})
+      html = render(view)
+      assert html =~ "border-red-900"
+    end
+
+    test "warning agent card shows amber border", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+
+      state = %{
+        "trading:heartbeat:executor" => warn_ts(),
+        "trading:heartbeat:screener" => nil,
+        "trading:heartbeat:watcher" => nil,
+        "trading:heartbeat:portfolio_manager" => nil,
+        "trading:heartbeat:supervisor" => nil
+      }
+
+      send(view.pid, {:state_update, state})
+      html = render(view)
+      assert html =~ "border-amber-800"
+    end
+
+    test "healthy agent card shows neutral border", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+
+      state = %{
+        "trading:heartbeat:executor" => ok_ts(),
+        "trading:heartbeat:screener" => ok_ts(),
+        "trading:heartbeat:watcher" => ok_ts(),
+        "trading:heartbeat:portfolio_manager" => ok_ts(),
+        "trading:heartbeat:supervisor" => ok_ts()
+      }
+
+      send(view.pid, {:state_update, state})
+      html = render(view)
+      assert html =~ "border-gray-700"
+      refute html =~ "border-red-900"
+      refute html =~ "border-amber-800"
+    end
+
+    test "nil heartbeat renders stale card without crash", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:state_update, %{}})
+      html = render(view)
+      assert html =~ "Agents"
+      assert html =~ "border-red-900"
+    end
+
+    test "all five agents are rendered", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      html = render(view)
+      assert html =~ "Screener"
+      assert html =~ "Watcher"
+      assert html =~ "PM"
+      assert html =~ "Executor"
+      assert html =~ "Supervisor"
+    end
+  end
 end

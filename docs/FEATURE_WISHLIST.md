@@ -21,9 +21,9 @@ These are known issues documented in HANDOFF.md that can cause real harm.
 
 ### Observability & Monitoring
 - [x] **`scripts/reconcile.py`** — Compare Redis positions vs Alpaca actual positions. Identifies phantoms, orphans, qty mismatches, missing stops. Run with `--fix` to auto-resubmit stops. 100% test coverage. PR #59.
-- [ ] **Agent heartbeat dashboard panel** — Show last-seen time for each agent (screener, watcher, PM, executor, supervisor). Green/yellow/red status based on staleness. Supervisor already writes heartbeats to Redis; dashboard just needs to read them.
+- [x] **Agent heartbeat dashboard panel** — Show last-seen time for each agent (screener, watcher, PM, executor, supervisor). Green/yellow/red status based on staleness. Supervisor already writes heartbeats to Redis; dashboard just needs to read them.
 - [x] **Stale heartbeat alert** — Per-agent thresholds: executor/PM 5min, supervisor 20min, watcher 5h, screener 25h (48h to survive weekends). Supervisor sends `critical_alert()` when daemon agents stale. Dashboard uses same per-agent thresholds. PR #60.
-- [ ] **Dashboard: current regime prominently displayed** — Show RANGING/UPTREND/DOWNTREND with ADX, +DI, -DI values and a colored badge. Currently data is in Redis but not prominently surfaced.
+- [x] **Dashboard: current regime prominently displayed** — Show RANGING/UPTREND/DOWNTREND with ADX, +DI, -DI values and a colored badge. Currently data is in Redis but not prominently surfaced.
 - [ ] **Dashboard: whipsaw/cooldown indicator** — Show which symbols are in 24h whipsaw cooldown or manual-exit cooldown, and when each lifts. Prevents user confusion about why signals are being skipped.
 - [ ] **Dashboard: per-agent log tail** — Live-scrolling last N lines of each agent's log file. Removes need to SSH in and `tail -f`.
 - [ ] **Dashboard: simulated equity history chart** — Plot `trading:simulated_equity` over time. Even a sparkline showing today's trend would be useful.
@@ -122,8 +122,8 @@ If picking 5 things to do next, in order:
 3. ~~Stale heartbeat alert~~ ✅ Done (PR #60)
 4. ~~Morning briefing Telegram message~~ ✅ Done (PR #61)
 5. ~~Weekly summary wiring~~ ✅ Done (PR #62)
-6. Agent heartbeat dashboard panel — green/yellow/red per agent; thresholds already match PR #60
-7. Dashboard: current regime display — show RANGING/UPTREND/DOWNTREND with ADX badge
+6. ~~Agent heartbeat dashboard panel~~ ✅ Done
+7. ~~Dashboard: current regime display~~ ✅ Done
 8. Dashboard: open position cards — entry price, unrealized P&L, stop distance, tier
 9. Dashboard: trade history table — paginated, from TimescaleDB
 10. Dashboard: whipsaw/cooldown indicator — show symbols in cooldown + when it lifts

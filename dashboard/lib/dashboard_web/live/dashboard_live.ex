@@ -150,7 +150,6 @@ defmodule DashboardWeb.DashboardLive do
   }
 
   defp heartbeat_status(nil, _agent), do: :stale
-  defp heartbeat_status(nil), do: :stale
 
   defp heartbeat_status(ts, agent) when is_binary(ts) do
     age_minutes = heartbeat_age_minutes(ts)
@@ -162,10 +161,6 @@ defmodule DashboardWeb.DashboardLive do
       age_minutes < stale -> :warning
       true -> :stale
     end
-  end
-
-  defp heartbeat_status(ts) when is_binary(ts) do
-    heartbeat_status(ts, "executor")
   end
 
   defp heartbeat_age_minutes(ts) do
@@ -224,6 +219,20 @@ defmodule DashboardWeb.DashboardLive do
   defp adx_value(nil), do: nil
   defp adx_value(%{"adx" => adx}), do: adx
   defp adx_value(_), do: nil
+
+  defp regime_border_class(nil), do: "border-l-gray-600"
+  defp regime_border_class(%{"regime" => "UPTREND"}), do: "border-l-green-500"
+  defp regime_border_class(%{"regime" => "DOWNTREND"}), do: "border-l-red-500"
+  defp regime_border_class(%{"regime" => "RANGING"}), do: "border-l-gray-600"
+  defp regime_border_class(_), do: "border-l-gray-600"
+
+  defp plus_di_value(nil), do: nil
+  defp plus_di_value(%{"plus_di" => v}), do: v
+  defp plus_di_value(_), do: nil
+
+  defp minus_di_value(nil), do: nil
+  defp minus_di_value(%{"minus_di" => v}), do: v
+  defp minus_di_value(_), do: nil
 
   defp format_price(nil), do: "—"
   defp format_price(v) when is_float(v), do: "$#{:erlang.float_to_binary(v, decimals: 2)}"
@@ -325,6 +334,10 @@ defmodule DashboardWeb.DashboardLive do
   defp heartbeat_dot(:ok), do: "bg-green-500"
   defp heartbeat_dot(:warning), do: "bg-yellow-500"
   defp heartbeat_dot(:stale), do: "bg-red-500"
+
+  defp heartbeat_card_classes(:ok), do: {"bg-gray-900", "border-gray-700", "text-gray-200", "text-gray-600"}
+  defp heartbeat_card_classes(:warning), do: {"bg-amber-950/20", "border-amber-800", "text-amber-200", "text-amber-900"}
+  defp heartbeat_card_classes(:stale), do: {"bg-red-950/20", "border-red-900", "text-red-300", "text-red-900"}
 
   defp universe_count(nil), do: "—"
 

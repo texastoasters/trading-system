@@ -63,7 +63,7 @@
       <div class="text-xs text-gray-600 mt-0.5">day trades</div>
     </div>
 
-    <div class="bg-gray-800 rounded-lg border border-gray-700 p-3">
+    <div class={["bg-gray-800 rounded-lg border border-gray-700 border-l-4 p-3", regime_border_class(@regime)]}>
       <div class="text-xs text-gray-500 uppercase tracking-wider">Regime</div>
       <div class="text-lg font-bold text-white mt-1">
         {regime_emoji(@regime)} {regime_name(@regime)}
@@ -72,6 +72,17 @@
         ADX {if adx_value(@regime),
           do: :erlang.float_to_binary(adx_value(@regime) + 0.0, decimals: 1),
           else: "—"}
+      </div>
+      <div class="text-xs mt-0.5">
+        <% pdi = plus_di_value(@regime)
+           mdi = minus_di_value(@regime) %>
+        <%= if pdi && mdi do %>
+          <span class="text-green-500">▲ +DI {:erlang.float_to_binary(pdi + 0.0, decimals: 1)}</span>
+          <span class="text-gray-600 mx-1">·</span>
+          <span class="text-red-400">▼ -DI {:erlang.float_to_binary(mdi + 0.0, decimals: 1)}</span>
+        <% else %>
+          <span class="text-gray-700">+DI — · -DI —</span>
+        <% end %>
       </div>
     </div>
 
@@ -97,18 +108,17 @@
 
   <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
     <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Agents</h2>
-    <div class="flex flex-wrap gap-4">
+    <div class="grid grid-cols-5 gap-3">
       <%= for agent <- ["screener", "watcher", "portfolio_manager", "executor", "supervisor"] do %>
         <% hb = @heartbeats[agent]
         status = heartbeat_status(hb, agent)
         age = heartbeat_age(hb)
-        label = String.replace(agent, "_", " ") |> String.capitalize() %>
-        <div class="flex items-center gap-2">
-          <span class={["w-2 h-2 rounded-full flex-shrink-0", heartbeat_dot(status)]}></span>
-          <div>
-            <div class="text-sm font-medium text-gray-200 capitalize">{label}</div>
-            <div class="text-xs text-gray-600">{age}</div>
-          </div>
+        label = if agent == "portfolio_manager", do: "PM", else: String.capitalize(agent)
+        {bg_class, border_class, name_class, age_class} = heartbeat_card_classes(status) %>
+        <div class={["rounded-lg border p-2.5 text-center", bg_class, border_class]}>
+          <div class={["w-2.5 h-2.5 rounded-full mx-auto mb-1.5", heartbeat_dot(status)]}></div>
+          <div class={["text-xs font-semibold", name_class]}>{label}</div>
+          <div class={["text-xs mt-0.5", age_class]}>{age}</div>
         </div>
       <% end %>
     </div>
