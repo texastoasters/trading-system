@@ -15,6 +15,7 @@ defmodule DashboardWeb.Telemetry do
     Supervisor.init(children, strategy: :one_for_one)
   end
 
+  # metrics/0 is defined for future LiveDashboard integration but has no consumer in this app.
   # coveralls-ignore-start
   def metrics do
     [
