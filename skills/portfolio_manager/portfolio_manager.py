@@ -341,7 +341,7 @@ def process_pending_signals(r):
     return count
 
 
-def daemon_loop():
+def daemon_loop():  # pragma: no cover
     """Listen for signals continuously."""
     print("[PM] Starting daemon mode — listening for signals...")
 
@@ -369,7 +369,7 @@ def daemon_loop():
             critical_alert(f"Portfolio Manager error: {e}")
 
 
-def main():
+def main():  # pragma: no cover
     parser = argparse.ArgumentParser(description="Portfolio Manager Agent")
     parser.add_argument("--daemon", action="store_true", help="Listen for signals continuously")
     args = parser.parse_args()
@@ -385,7 +385,7 @@ def main():
         print(f"[PM] Processed {count} pending signal(s)")
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()
 
 # v1.0.0

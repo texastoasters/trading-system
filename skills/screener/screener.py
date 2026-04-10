@@ -245,7 +245,7 @@ def run_scan():
     return watchlist
 
 
-def daemon_loop():
+def daemon_loop():  # pragma: no cover
     """Run scans on schedule."""
     print("[Screener] Starting daemon mode...")
     while True:
@@ -267,7 +267,7 @@ def daemon_loop():
         time.sleep(60)  # check every minute
 
 
-def main():
+def main():  # pragma: no cover
     parser = argparse.ArgumentParser(description="Screener Agent")
     parser.add_argument("--daemon", action="store_true", help="Run continuously")
     args = parser.parse_args()
@@ -278,7 +278,7 @@ def main():
         run_scan()
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()
 
 # v1.0.0
