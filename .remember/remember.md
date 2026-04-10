@@ -1,20 +1,12 @@
 # Handoff
 
 ## State
-Implemented wishlist items #6 + #7 (dashboard heartbeat panel + regime display).
-PR #67 open: `feat/dashboard-heartbeat-regime`. 39 tests passing.
-Worktree at `.worktrees/feat/dashboard-heartbeat-regime`.
+Fixed stop-loss auto-trigger bug: when Alpaca fills a GTC stop server-side, executor now reconciles Redis instead of looping forever trying to sell a closed position. Added `_reconcile_stop_filled` helper, updated `execute_sell` and `verify_startup`. 63/63 tests passing on `feat/elixir-coverage` branch.
 
-## What shipped
-- Heartbeat panel: 5-column grid cards, stale=red, warn=amber, ok=gray
-- Regime card: colored left border (green/red/gray) + +DI/-DI row below ADX
-- Removed dead heartbeat_status/1 1-arity clauses
-
-## Next (wishlist order)
-8. Dashboard: open position cards — entry price, unrealized P&L, stop distance, tier (already partially implemented)
-9. Dashboard: trade history table — paginated from TimescaleDB
-10. Dashboard: whipsaw/cooldown indicator
+## Next
+1. Run `cpr` — commit + push + PR not yet done (user just asked)
+2. Manually clear the stuck Redis position on the VPS (or restart executor daemon — verify_startup will auto-reconcile)
 
 ## Context
-FEATURE_WISHLIST.md items 1-7 all ✅. Items 8-10 are all dashboard work.
-Main branch has spec+plan docs committed (docs/superpowers/specs/ and docs/superpowers/plans/).
+- patch target is `executor.exit_alert` not `notify.exit_alert` (executor uses `from notify import exit_alert`)
+- `test_stop_cancel_failure_stop_not_filled_proceeds_with_market_sell` replaced the old `test_stop_cancel_failure_proceeds` — needed side_effect list to separate stop-check call from fill-poll calls

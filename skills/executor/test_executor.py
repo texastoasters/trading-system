@@ -710,15 +710,18 @@ class TestExecuteSell:
             result = execute_sell(r, tc, make_sell_signal())
         assert result is False
 
-    def test_stop_cancel_failure_proceeds(self):
-        """If cancel_order_by_id raises (stop already triggered), proceed with sell."""
+    def test_stop_cancel_failure_stop_not_filled_proceeds_with_market_sell(self):
+        """If cancel raises and stop is not 'filled', proceed with market sell."""
         pos = make_position()
         r, store = make_redis({"SPY": pos})
 
-        filled = MagicMock()
-        filled.status = "filled"
-        filled.filled_avg_price = "505.00"
-        filled.filled_qty = "10"
+        stop_check = MagicMock()
+        stop_check.status = "cancelled"  # stop not filled → proceed to market sell
+
+        fill_poll = MagicMock()
+        fill_poll.status = "filled"
+        fill_poll.filled_avg_price = "505.00"
+        fill_poll.filled_qty = "10"
         submitted = MagicMock()
         submitted.id = "ord-1"
 
@@ -726,13 +729,64 @@ class TestExecuteSell:
         tc.get_clock.return_value = make_clock(is_open=True)
         tc.cancel_order_by_id.side_effect = Exception("already triggered")
         tc.submit_order.return_value = submitted
-        tc.get_order_by_id.return_value = filled
+        # First call: stop-status check → cancelled; subsequent calls: fill poll → filled
+        tc.get_order_by_id.side_effect = [stop_check] + [fill_poll] * 5
 
         with patch("time.sleep"), patch("notify.exit_alert"):
             from executor import execute_sell
             result = execute_sell(r, tc, make_sell_signal())
-        # stop_cancelled stays False → no stop restore in exception (if sell succeeds, fine)
         assert result is True
+        tc.submit_order.assert_called_once()  # market sell was submitted
+
+    def test_stop_already_filled_by_alpaca_reconciles_redis_without_market_sell(self):
+        """When Alpaca auto-triggers stop-loss, executor reconciles Redis without attempting market sell."""
+        pos = make_position(qty=10, entry=500.0, stop=490.0, stop_order_id="stop-456")
+        r, store = make_redis({"SPY": pos})
+
+        stop_order = MagicMock()
+        stop_order.status = "filled"
+
+        tc = MagicMock()
+        tc.get_clock.return_value = make_clock(is_open=True)
+        tc.cancel_order_by_id.side_effect = Exception("order is not cancelable")
+        tc.get_order_by_id.return_value = stop_order
+
+        with patch("time.sleep"), patch("executor.exit_alert") as mock_alert:
+            from executor import execute_sell
+            result = execute_sell(r, tc, make_sell_signal())
+
+        assert result is True
+        # Position removed from Redis
+        assert "SPY" not in json.loads(store["trading:positions"])
+        # No market sell attempted
+        tc.submit_order.assert_not_called()
+        # Equity updated at stop price: pnl = (490 - 500) * 10 = -100 → equity = 4900
+        assert float(store["trading:simulated_equity"]) == pytest.approx(4900.0)
+        # Notification sent
+        mock_alert.assert_called_once()
+        call_kwargs = mock_alert.call_args[1]
+        assert call_kwargs["symbol"] == "SPY"
+        assert call_kwargs["exit_price"] == pytest.approx(490.0)
+
+    def test_stop_already_filled_clears_exit_signaled_flag(self):
+        """Reconciling a stop-filled position clears the exit_signaled Redis key."""
+        pos = make_position(stop_order_id="stop-456")
+        r, store = make_redis({"SPY": pos})
+        r.delete = MagicMock()
+
+        stop_order = MagicMock()
+        stop_order.status = "filled"
+
+        tc = MagicMock()
+        tc.get_clock.return_value = make_clock(is_open=True)
+        tc.cancel_order_by_id.side_effect = Exception("already triggered")
+        tc.get_order_by_id.return_value = stop_order
+
+        with patch("time.sleep"), patch("executor.exit_alert"):
+            from executor import execute_sell
+            execute_sell(r, tc, make_sell_signal())
+
+        r.delete.assert_called_once_with("trading:exit_signaled:SPY")
 
 
 # ── TestCancelExistingOrders ─────────────────────────────────
@@ -918,6 +972,25 @@ class TestVerifyStartup:
         from executor import verify_startup
         verify_startup(tc, r)
         tc.submit_order.assert_called_once()
+
+    def test_position_with_filled_stop_reconciles_redis(self):
+        """When stop order is 'filled' at startup, position removed from Redis and equity updated."""
+        pos = make_position(qty=10, entry=500.0, stop=490.0, stop_order_id="stop-456")
+        r, store = make_redis({"SPY": pos})
+        r.delete = MagicMock()
+
+        tc = self._make_tc(stop_status="filled")
+
+        with patch("executor.exit_alert") as mock_alert:
+            from executor import verify_startup
+            verify_startup(tc, r)
+
+        # Position removed
+        assert "SPY" not in json.loads(store["trading:positions"])
+        # Equity updated: pnl = (490 - 500) * 10 = -100
+        assert float(store["trading:simulated_equity"]) == pytest.approx(4900.0)
+        # Notification sent
+        mock_alert.assert_called_once()
 
     def test_checks_failed_exits(self):
         r, _ = make_redis({})
