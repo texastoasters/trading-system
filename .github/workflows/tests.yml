@@ -7,7 +7,8 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  python:
+    name: Python tests
     runs-on: ubuntu-latest
 
     steps:
@@ -25,8 +26,79 @@ jobs:
         env:
           PYTHONPATH: scripts
 
-      - name: Upload coverage to Coveralls
+      - name: Upload Python coverage to Coveralls
         uses: coverallsapp/github-action@v2
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
+          flag-name: python
           file: coverage.lcov
+          parallel: true
+
+  elixir:
+    name: Elixir tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: dashboard_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      MIX_ENV: test
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/dashboard_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.17"
+          otp-version: "27"
+
+      - name: Cache Mix deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            dashboard/deps
+            dashboard/_build
+          key: mix-${{ runner.os }}-${{ hashFiles('dashboard/mix.lock') }}
+          restore-keys: mix-${{ runner.os }}-
+
+      - name: Install Mix dependencies
+        working-directory: dashboard
+        run: mix deps.get
+
+      - name: Run tests with coverage
+        working-directory: dashboard
+        run: mix coveralls.lcov
+
+      - name: Upload Elixir coverage to Coveralls
+        uses: coverallsapp/github-action@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          flag-name: elixir
+          file: dashboard/cover/lcov.info
+          parallel: true
+
+  finalize:
+    name: Finalize coverage
+    runs-on: ubuntu-latest
+    needs: [python, elixir]
+    if: always()
+
+    steps:
+      - uses: coverallsapp/github-action@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          parallel-finished: true
+          carryforward: "python,elixir"

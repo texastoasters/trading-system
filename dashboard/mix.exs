@@ -9,7 +9,13 @@ defmodule Dashboard.MixProject do
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
-      deps: deps()
+      deps: deps(),
+      test_coverage: [tool: ExCoveralls],
+      preferred_cli_env: [
+        "coveralls.lcov": :test,
+        "coveralls.html": :test,
+        coveralls: :test
+      ]
     ]
   end
 
@@ -59,7 +65,8 @@ defmodule Dashboard.MixProject do
       {:esbuild, "~> 0.8", runtime: Mix.env() == :dev},
 
       # Code quality (dev/test only)
-      {:floki, ">= 0.30.0", only: :test}
+      {:floki, ">= 0.30.0", only: :test},
+      {:excoveralls, "~> 0.18", only: :test}
     ]
   end
 
