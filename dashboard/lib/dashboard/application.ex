@@ -45,9 +45,11 @@ defmodule Dashboard.Application do
     Supervisor.start_link(children, opts)
   end
 
+  # coveralls-ignore-start
   @impl true
   def config_change(changed, _new, removed) do
     DashboardWeb.Endpoint.config_change(changed, removed)
     :ok
   end
+  # coveralls-ignore-end
 end

@@ -15,6 +15,7 @@ defmodule DashboardWeb.Telemetry do
     Supervisor.init(children, strategy: :one_for_one)
   end
 
+  # coveralls-ignore-start
   def metrics do
     [
       # Phoenix Metrics
@@ -34,6 +35,7 @@ defmodule DashboardWeb.Telemetry do
       summary("vm.total_run_queue_lengths.cpu")
     ]
   end
+  # coveralls-ignore-end
 
   defp periodic_measurements do
     []

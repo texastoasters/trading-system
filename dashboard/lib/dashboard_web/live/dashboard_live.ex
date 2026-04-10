@@ -294,31 +294,6 @@ defmodule DashboardWeb.DashboardLive do
   defp market_status(%{"is_open" => true}), do: {"OPEN", "text-green-400"}
   defp market_status(%{"is_open" => false}), do: {"CLOSED", "text-gray-500"}
 
-  defp position_pnl_pct(pos, equity) when is_map(pos) and is_float(equity) do
-    entry = get_float(pos, "entry_price")
-    qty = get_float(pos, "quantity")
-
-    with true <- entry > 0,
-         true <- qty > 0,
-         true <- equity > 0 do
-      # We don't have current price in Redis positions, show cost as % of equity
-      cost = entry * qty
-      cost / equity * 100
-    else
-      _ -> nil
-    end
-  end
-
-  defp position_pnl_pct(_, _), do: nil
-
-  defp get_float(map, key) do
-    case map[key] do
-      v when is_float(v) -> v
-      v when is_integer(v) -> v * 1.0
-      v when is_binary(v) -> String.to_float(v)
-      _ -> 0.0
-    end
-  end
 
   defp tier_badge(1), do: {"T1", "bg-yellow-900/40 text-yellow-400 border-yellow-700"}
   defp tier_badge(2), do: {"T2", "bg-blue-900/40 text-blue-400 border-blue-700"}
