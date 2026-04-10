@@ -4,7 +4,15 @@ pythonpath = ["scripts"]
 
 [tool.coverage.run]
 source = ["skills", "scripts"]
-omit = ["**/test_*.py", "**/__pycache__/**"]
+omit = [
+    "**/test_*.py",
+    "**/__pycache__/**",
+    "scripts/backtest_*.py",
+    "scripts/backtest_rsi2_expanded.py",
+    "scripts/backtest_rsi2_universe.py",
+    "scripts/discover_universe.py",
+    "scripts/verify_alpaca.py",
+]
 
 [tool.coverage.report]
 show_missing = true
