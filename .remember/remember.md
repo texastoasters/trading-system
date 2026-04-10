@@ -1,12 +1,20 @@
 # Handoff
 
 ## State
-Increased test coverage for `skills/portfolio_manager/portfolio_manager.py` from 41% → 86%. Added 33 new tests covering drawdown circuit breakers, position limits/displacement, BTC fee check, sizing edge cases, exit signals, process_signal, and process_pending_signals. 261 tests passing. On branch `feat/morning-briefing`.
+Implemented wishlist items #6 + #7 (dashboard heartbeat panel + regime display).
+PR #67 open: `feat/dashboard-heartbeat-regime`. 39 tests passing.
+Worktree at `.worktrees/feat/dashboard-heartbeat-regime`.
 
-## Next
-1. Run `cpr` to commit + push + PR the PM test additions
-2. Add tests for `skills/screener/screener.py` (0% coverage, no test file)
-3. Add tests for `skills/watcher/watcher.py` (0% coverage, no test file)
+## What shipped
+- Heartbeat panel: 5-column grid cards, stale=red, warn=amber, ok=gray
+- Regime card: colored left border (green/red/gray) + +DI/-DI row below ADX
+- Removed dead heartbeat_status/1 1-arity clauses
+
+## Next (wishlist order)
+8. Dashboard: open position cards — entry price, unrealized P&L, stop distance, tier (already partially implemented)
+9. Dashboard: trade history table — paginated from TimescaleDB
+10. Dashboard: whipsaw/cooldown indicator
 
 ## Context
-`get_drawdown` computes from SIMULATED_EQUITY/PEAK_EQUITY — not from `Keys.DRAWDOWN` directly. Drawdown tests must set those two keys. Remaining uncovered lines (346-369, 373-385) are daemon_loop/main — require live Redis, skip.
+FEATURE_WISHLIST.md items 1-7 all ✅. Items 8-10 are all dashboard work.
+Main branch has spec+plan docs committed (docs/superpowers/specs/ and docs/superpowers/plans/).
