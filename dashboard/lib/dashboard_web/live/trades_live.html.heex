@@ -1,0 +1,106 @@
+<div class="min-h-screen bg-gray-900 text-gray-100 p-4 space-y-4">
+
+  <div class="flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <a href="/" class="text-gray-500 hover:text-gray-300 transition-colors text-sm">← Dashboard</a>
+      <h1 class="text-lg font-bold text-white tracking-tight">Trade History</h1>
+    </div>
+    <span class="text-sm text-gray-500">{@total_count} total trades</span>
+  </div>
+
+  <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+    <div class="overflow-x-auto">
+      <table class="w-full text-xs">
+        <thead>
+          <tr class="text-gray-500 border-b border-gray-700">
+            <th class="text-left pb-2 pr-3">Time</th>
+            <th class="text-left pb-2 pr-3">Symbol</th>
+            <th class="text-left pb-2 pr-3">Side</th>
+            <th class="text-right pb-2 pr-3">Qty</th>
+            <th class="text-right pb-2 pr-3">Price</th>
+            <th class="text-right pb-2 pr-3">Value</th>
+            <th class="text-right pb-2 pr-3">P&L</th>
+            <th class="text-left pb-2 pr-3">Strategy</th>
+            <th class="text-left pb-2">Notes</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-700/30">
+          <%= if @trades == [] do %>
+            <tr>
+              <td colspan="9" class="py-8 text-center text-gray-600 italic">No trades recorded yet</td>
+            </tr>
+          <% else %>
+            <%= for trade <- @trades do %>
+              <tr class="hover:bg-gray-700/20 transition-colors">
+                <td class="py-1.5 pr-3 text-gray-500 whitespace-nowrap">
+                  {Calendar.strftime(trade.time, "%b %d %-I:%M%p")}
+                </td>
+                <td class="py-1.5 pr-3 font-mono font-semibold text-white">
+                  {trade.symbol}
+                </td>
+                <td class={[
+                  "py-1.5 pr-3 font-medium uppercase",
+                  if(trade.side == "buy", do: "text-blue-400", else: "text-orange-400")
+                ]}>
+                  {trade.side}
+                </td>
+                <td class="py-1.5 pr-3 text-right text-gray-300 font-mono">
+                  {Decimal.round(trade.quantity, 4)}
+                </td>
+                <td class="py-1.5 pr-3 text-right text-gray-300 font-mono">
+                  ${Decimal.round(trade.price, 2)}
+                </td>
+                <td class="py-1.5 pr-3 text-right text-gray-300 font-mono">
+                  ${Decimal.round(trade.total_value, 2)}
+                </td>
+                <td class={["py-1.5 pr-3 text-right font-mono", pnl_class(trade.realized_pnl)]}>
+                  {format_signed(trade.realized_pnl)}
+                </td>
+                <td class="py-1.5 pr-3 text-gray-500 truncate max-w-24">
+                  {trade.strategy || "—"}
+                </td>
+                <td class="py-1.5 text-gray-500 truncate max-w-40">
+                  {trade.notes || "—"}
+                </td>
+              </tr>
+            <% end %>
+          <% end %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="flex items-center justify-between text-sm">
+    <button
+      phx-click="prev_page"
+      disabled={@page == 1}
+      class={[
+        "px-3 py-1.5 rounded border text-xs font-medium transition-colors",
+        if(@page == 1,
+          do: "border-gray-700 text-gray-600 cursor-not-allowed",
+          else: "border-gray-600 text-gray-300 hover:bg-gray-700 hover:border-gray-500"
+        )
+      ]}
+    >
+      ← Previous
+    </button>
+
+    <span class="text-gray-500 text-xs">
+      Page {@page} of {@last_page}
+    </span>
+
+    <button
+      phx-click="next_page"
+      disabled={@page >= @last_page}
+      class={[
+        "px-3 py-1.5 rounded border text-xs font-medium transition-colors",
+        if(@page >= @last_page,
+          do: "border-gray-700 text-gray-600 cursor-not-allowed",
+          else: "border-gray-600 text-gray-300 hover:bg-gray-700 hover:border-gray-500"
+        )
+      ]}
+    >
+      Next →
+    </button>
+  </div>
+</div>
