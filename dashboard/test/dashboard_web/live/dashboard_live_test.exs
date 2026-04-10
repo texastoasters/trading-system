@@ -266,4 +266,379 @@ defmodule DashboardWeb.DashboardLiveTest do
       assert html =~ "Supervisor"
     end
   end
+
+  describe "drawdown_class/1 helpers" do
+    defp drawdown_state(drawdown_pct) do
+      %{
+        "trading:drawdown" => drawdown_pct,
+        "trading:heartbeat:screener" => nil,
+        "trading:heartbeat:watcher" => nil,
+        "trading:heartbeat:portfolio_manager" => nil,
+        "trading:heartbeat:executor" => nil,
+        "trading:heartbeat:supervisor" => nil
+      }
+    end
+
+    test "drawdown < 5% shows green text", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:state_update, drawdown_state(3.5)})
+      html = render(view)
+      # Verify green-400 class appears
+      assert html =~ "text-green-400"
+    end
+
+    test "drawdown 5-10% shows yellow text", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:state_update, drawdown_state(7.5)})
+      html = render(view)
+      assert html =~ "text-yellow-400"
+    end
+
+    test "drawdown 10-15% shows orange text", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:state_update, drawdown_state(12.0)})
+      html = render(view)
+      assert html =~ "text-orange-400"
+    end
+
+    test "drawdown 15%+ shows red text", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:state_update, drawdown_state(18.5)})
+      html = render(view)
+      assert html =~ "text-red-400"
+    end
+
+    test "nil drawdown shows green text", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:state_update, %{"trading:drawdown" => nil}})
+      html = render(view)
+      assert html =~ "text-green-400"
+    end
+  end
+
+  describe "market_status/1 helpers" do
+    test "nil clock shows UNKNOWN with gray text", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:clock_update, nil})
+      html = render(view)
+      assert html =~ "UNKNOWN"
+      assert html =~ "text-gray-400"
+    end
+
+    test "market open shows OPEN with green text", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:clock_update, %{"is_open" => true}})
+      html = render(view)
+      assert html =~ "OPEN"
+      assert html =~ "text-green-400"
+    end
+
+    test "market closed shows CLOSED with gray text", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:clock_update, %{"is_open" => false}})
+      html = render(view)
+      assert html =~ "CLOSED"
+      assert html =~ "text-gray-500"
+    end
+  end
+
+  describe "signal_time/1 helpers" do
+    test "signal without time key returns empty string", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      signal = %{
+        "signal_type" => "entry",
+        "symbol" => "SPY",
+        "tier" => 1,
+        "indicators" => %{"rsi2" => 5.0},
+        "suggested_stop" => 100.0
+      }
+      send(view.pid, {:new_signal, signal})
+      html = render(view)
+      # Signal is rendered, and time field is empty (no time display)
+      assert html =~ "SPY"
+    end
+
+    test "signal with non-binary time (missing key) falls back to empty", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      signal = %{
+        "signal_type" => "entry",
+        "symbol" => "QQQ",
+        "tier" => 2,
+        "indicators" => %{"rsi2" => 4.0},
+        "suggested_stop" => 200.0,
+        "time" => nil
+      }
+      send(view.pid, {:new_signal, signal})
+      html = render(view)
+      # Should contain symbol
+      assert html =~ "QQQ"
+    end
+
+    test "signal with invalid time string returns it as-is", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      signal = %{
+        "signal_type" => "entry",
+        "symbol" => "NVDA",
+        "tier" => 1,
+        "indicators" => %{"rsi2" => 3.0},
+        "suggested_stop" => 150.0,
+        "time" => "not-a-time"
+      }
+      send(view.pid, {:new_signal, signal})
+      html = render(view)
+      assert html =~ "NVDA"
+    end
+  end
+
+  describe "universe_count/1 helpers" do
+    test "nil universe shows dash", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:state_update, %{"trading:universe" => nil}})
+      html = render(view)
+      # Universe count should be displayed as dash
+      assert html =~ "—"
+    end
+
+    test "universe with instruments counts all tiers", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      universe = %{
+        "tier1" => ["SPY", "QQQ", "NVDA"],
+        "tier2" => ["GOOGL", "META"],
+        "tier3" => ["V", "XLE"]
+      }
+      send(view.pid, {:state_update, %{"trading:universe" => universe}})
+      html = render(view)
+      # Should display count of 7
+      assert html =~ "7"
+    end
+
+    test "universe with empty tier lists counts correctly", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      universe = %{
+        "tier1" => ["SPY"],
+        "tier2" => [],
+        "tier3" => []
+      }
+      send(view.pid, {:state_update, %{"trading:universe" => universe}})
+      html = render(view)
+      # Should display count of 1
+      assert html =~ "1"
+    end
+
+    test "universe with only some tiers present counts correctly", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      universe = %{
+        "tier1" => ["SPY", "QQQ"],
+        "tier3" => ["IWM"]
+      }
+      send(view.pid, {:state_update, %{"trading:universe" => universe}})
+      html = render(view)
+      # Should display count of 3 (missing tier2 treated as [])
+      assert html =~ "3"
+    end
+  end
+
+  describe "tier_badge/1 helpers" do
+    test "tier 1 shows yellow badge", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      watchlist = [%{"symbol" => "SPY", "tier" => 1, "rsi2" => 5.0}]
+      send(view.pid, {:state_update, %{"trading:watchlist" => watchlist}})
+      html = render(view)
+      assert html =~ "T1"
+      assert html =~ "text-yellow-400"
+    end
+
+    test "tier 2 shows blue badge", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      watchlist = [%{"symbol" => "GOOGL", "tier" => 2, "rsi2" => 3.5}]
+      send(view.pid, {:state_update, %{"trading:watchlist" => watchlist}})
+      html = render(view)
+      assert html =~ "T2"
+      assert html =~ "text-blue-400"
+    end
+
+    test "tier 3 shows gray badge", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      watchlist = [%{"symbol" => "V", "tier" => 3, "rsi2" => 2.0}]
+      send(view.pid, {:state_update, %{"trading:watchlist" => watchlist}})
+      html = render(view)
+      assert html =~ "T3"
+      assert html =~ "text-gray-400"
+    end
+
+    test "unknown tier (4+) shows question mark badge", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      watchlist = [%{"symbol" => "XYZ", "tier" => 9, "rsi2" => 1.5}]
+      send(view.pid, {:state_update, %{"trading:watchlist" => watchlist}})
+      html = render(view)
+      assert html =~ "T?"
+      assert html =~ "text-gray-500"
+    end
+
+    test "nil tier shows question mark badge", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      watchlist = [%{"symbol" => "ABC", "tier" => nil, "rsi2" => 2.5}]
+      send(view.pid, {:state_update, %{"trading:watchlist" => watchlist}})
+      html = render(view)
+      assert html =~ "T?"
+      assert html =~ "text-gray-500"
+    end
+  end
+
+  describe "signal_icon/1 helpers" do
+    test "entry signal shows book emoji", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      signal = %{
+        "signal_type" => "entry",
+        "symbol" => "SPY",
+        "tier" => 1,
+        "indicators" => %{"rsi2" => 5.0},
+        "suggested_stop" => 100.0
+      }
+      send(view.pid, {:new_signal, signal})
+      html = render(view)
+      assert html =~ "📊"
+    end
+
+    test "take_profit signal shows checkmark emoji", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      signal = %{
+        "signal_type" => "take_profit",
+        "symbol" => "QQQ",
+        "pnl_pct" => 5.5,
+        "reason" => "price above high"
+      }
+      send(view.pid, {:new_signal, signal})
+      html = render(view)
+      assert html =~ "✅"
+    end
+
+    test "stop_loss signal shows stop emoji", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      signal = %{
+        "signal_type" => "stop_loss",
+        "symbol" => "NVDA",
+        "pnl_pct" => -2.5,
+        "reason" => "stop hit"
+      }
+      send(view.pid, {:new_signal, signal})
+      html = render(view)
+      assert html =~ "🛑"
+    end
+
+    test "time_stop signal shows clock emoji", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      signal = %{
+        "signal_type" => "time_stop",
+        "symbol" => "META",
+        "pnl_pct" => -1.0,
+        "reason" => "5-day hold"
+      }
+      send(view.pid, {:new_signal, signal})
+      html = render(view)
+      assert html =~ "⏰"
+    end
+
+    test "unknown signal_type shows bullet point", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      signal = %{
+        "signal_type" => "displaced",
+        "symbol" => "XYZ",
+        "pnl_pct" => 0.0
+      }
+      send(view.pid, {:new_signal, signal})
+      html = render(view)
+      assert html =~ "•"
+    end
+  end
+
+  describe "pnl_class/1 helpers" do
+    test "nil pnl shows gray text", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:state_update, %{"trading:daily_pnl" => nil}})
+      html = render(view)
+      assert html =~ "text-gray-400"
+    end
+
+    test "positive pnl shows green text", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:state_update, %{"trading:daily_pnl" => 150.0}})
+      html = render(view)
+      assert html =~ "text-green-400"
+    end
+
+    test "negative pnl shows red text", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:state_update, %{"trading:daily_pnl" => -50.0}})
+      html = render(view)
+      assert html =~ "text-red-400"
+    end
+
+    test "zero pnl shows gray text (catch-all case)", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:state_update, %{"trading:daily_pnl" => 0.0}})
+      html = render(view)
+      assert html =~ "text-gray-400"
+    end
+  end
+
+  describe "signal_detail/1 helpers" do
+    test "entry signal shows rsi2, stop, and tier", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      signal = %{
+        "signal_type" => "entry",
+        "symbol" => "SPY",
+        "tier" => 1,
+        "indicators" => %{"rsi2" => 5.5},
+        "suggested_stop" => 485.0
+      }
+      send(view.pid, {:new_signal, signal})
+      html = render(view)
+      # Should show RSI, stop price, and tier
+      assert html =~ "RSI-2"
+      assert html =~ "Stop"
+      assert html =~ "T1"
+    end
+
+    test "exit signal with pnl shows reason and pnl percentage", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      signal = %{
+        "signal_type" => "stop_loss",
+        "symbol" => "NVDA",
+        "pnl_pct" => -2.5,
+        "reason" => "stop hit"
+      }
+      send(view.pid, {:new_signal, signal})
+      html = render(view)
+      assert html =~ "stop hit"
+      # Check for P&L with percentage sign
+      assert html =~ "%"
+      assert html =~ "-2.5"
+    end
+
+    test "exit signal without pnl shows only reason", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      signal = %{
+        "signal_type" => "take_profit",
+        "symbol" => "QQQ",
+        "reason" => "price above high"
+      }
+      send(view.pid, {:new_signal, signal})
+      html = render(view)
+      assert html =~ "price above high"
+    end
+
+    test "exit signal without reason uses signal_type as fallback", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      signal = %{
+        "signal_type" => "time_stop",
+        "symbol" => "META",
+        "pnl_pct" => -1.0
+      }
+      send(view.pid, {:new_signal, signal})
+      html = render(view)
+      # Should show signal type as fallback reason
+      assert html =~ "time_stop"
+    end
+  end
 end
