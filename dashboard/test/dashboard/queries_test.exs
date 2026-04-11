@@ -100,4 +100,84 @@ defmodule Dashboard.QueriesTest do
       assert Queries.instrument_performance(:all) == []
     end
   end
+
+  describe "drawdown_attribution/2" do
+    test "returns empty list when positions empty and no trades" do
+      assert Queries.drawdown_attribution(%{}) == []
+    end
+
+    test "nil peak_date uses 30-day fallback without crashing" do
+      assert Queries.drawdown_attribution(%{}, nil) == []
+    end
+
+    test "explicit peak_date accepted" do
+      assert Queries.drawdown_attribution(%{}, ~D[2026-01-01]) == []
+    end
+
+    test "includes unrealized loss from open position" do
+      # entry 500 × qty 10 × -2% / 100 = -100.0
+      positions = %{
+        "SPY" => %{"entry_price" => "500.0", "quantity" => "10", "unrealized_pnl_pct" => "-2.0"}
+      }
+
+      result = Queries.drawdown_attribution(positions)
+
+      assert length(result) == 1
+      [row] = result
+      assert row.symbol == "SPY"
+      assert_in_delta row.unrealized_pnl, -100.0, 0.001
+      assert_in_delta row.realized_pnl, 0.0, 0.001
+      assert_in_delta row.total_pnl, -100.0, 0.001
+    end
+
+    test "excludes positions with zero net contribution" do
+      positions = %{
+        "SPY" => %{"entry_price" => "500.0", "quantity" => "10", "unrealized_pnl_pct" => "0.0"}
+      }
+
+      assert Queries.drawdown_attribution(positions) == []
+    end
+
+    test "includes positions with positive contribution (non-zero)" do
+      positions = %{
+        "SPY" => %{"entry_price" => "500.0", "quantity" => "10", "unrealized_pnl_pct" => "5.0"}
+      }
+
+      result = Queries.drawdown_attribution(positions)
+      assert length(result) == 1
+      [row] = result
+      assert_in_delta row.total_pnl, 250.0, 0.001
+    end
+
+    test "sorts worst first (ascending by total_pnl)" do
+      # SPY: 500 × 10 × -1% / 100 = -50.0
+      # QQQ: 400 × 5  × -3% / 100 = -60.0  ← worst
+      positions = %{
+        "SPY" => %{"entry_price" => "500.0", "quantity" => "10", "unrealized_pnl_pct" => "-1.0"},
+        "QQQ" => %{"entry_price" => "400.0", "quantity" => "5", "unrealized_pnl_pct" => "-3.0"}
+      }
+
+      result = Queries.drawdown_attribution(positions)
+      assert length(result) == 2
+      [first, second] = result
+      assert first.total_pnl < second.total_pnl
+      assert first.symbol == "QQQ"
+      assert second.symbol == "SPY"
+    end
+
+    test "gracefully handles missing position fields" do
+      assert Queries.drawdown_attribution(%{"SPY" => %{}}) == []
+    end
+
+    test "gracefully handles non-string numeric position fields" do
+      positions = %{
+        "SPY" => %{"entry_price" => 500.0, "quantity" => 10, "unrealized_pnl_pct" => -2.0}
+      }
+
+      result = Queries.drawdown_attribution(positions)
+      assert length(result) == 1
+      [row] = result
+      assert_in_delta row.total_pnl, -100.0, 0.001
+    end
+  end
 end
