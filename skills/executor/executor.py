@@ -80,17 +80,22 @@ def update_simulated_equity(r, pnl_dollar):
 
 # ── Stop-Loss Reconciliation ────────────────────────────────
 
-def _reconcile_stop_filled(r, pos, positions, symbol):
+def _reconcile_stop_filled(r, pos, positions, symbol, fill_price=None):
     """Clean up Redis when Alpaca auto-triggered a GTC stop-loss.
 
     Call this when we detect the stop order is already 'filled' on Alpaca,
     meaning the position was closed server-side without us knowing.  Updates
-    simulated equity at the stop price, removes the position from Redis, and
-    sends the exit notification.
+    simulated equity at the actual fill price (or falls back to stop_price if
+    fill_price is not provided), removes the position from Redis, and sends
+    the exit notification.
+
+    Args:
+        fill_price: Actual fill price from Alpaca order. If None, falls back
+                    to pos['stop_price'] (original behavior).
     """
     quantity = pos["quantity"]
     entry_price = pos["entry_price"]
-    fill_price = float(pos["stop_price"])
+    fill_price = fill_price if fill_price is not None else float(pos["stop_price"])
 
     pnl_pct = (fill_price - entry_price) / entry_price * 100
     pnl_dollar = (fill_price - entry_price) * quantity
@@ -166,7 +171,11 @@ def _check_cancelled_stops(trading_client, r):
             continue  # healthy
 
         if stop_order.status == "filled":
-            stop_filled_syms.append(symbol)
+            try:
+                fp = float(stop_order.filled_avg_price)
+            except (TypeError, ValueError, AttributeError):
+                fp = None
+            stop_filled_syms.append((symbol, fp))
             continue
 
         if stop_order.status == "cancelled":
@@ -206,8 +215,8 @@ def _check_cancelled_stops(trading_client, r):
                 print(f"  [Executor] ✅ {symbol}: new stop {new_stop_id} placed @ ${pos['stop_price']:.2f}")
 
     # Reconcile any Alpaca-triggered stop fills found during check
-    for sym in stop_filled_syms:
-        _reconcile_stop_filled(r, positions[sym], positions, sym)
+    for sym, fp in stop_filled_syms:
+        _reconcile_stop_filled(r, positions[sym], positions, sym, fill_price=fp)
 
 
 # ── Safety Validation ───────────────────────────────────────
@@ -691,7 +700,11 @@ def verify_startup(trading_client, r):
                         print(f"    ✅ {sym}: stop-loss active @ ${pos['stop_price']}")
                     elif stop_order.status == "filled":
                         print(f"    ⚠️  {sym}: stop-loss filled by Alpaca — will reconcile")
-                        stop_filled_syms.append(sym)
+                        try:
+                            fp = float(stop_order.filled_avg_price)
+                        except (TypeError, ValueError, AttributeError):
+                            fp = None
+                        stop_filled_syms.append((sym, fp))
                     else:
                         print(f"    ⚠️  {sym}: stop-loss status={stop_order.status}")
                 except Exception:
@@ -703,8 +716,8 @@ def verify_startup(trading_client, r):
                 pos["stop_order_id"] = new_stop_id
                 r.set(Keys.POSITIONS, json.dumps(positions))
         # Reconcile any positions that Alpaca closed via stop-loss
-        for sym in stop_filled_syms:
-            _reconcile_stop_filled(r, positions[sym], positions, sym)
+        for sym, fp in stop_filled_syms:
+            _reconcile_stop_filled(r, positions[sym], positions, sym, fill_price=fp)
     else:
         print(f"  ✅ No open positions")
 

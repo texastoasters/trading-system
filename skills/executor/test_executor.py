@@ -968,6 +968,7 @@ class TestVerifyStartup:
         tc.get_account.return_value = account or make_account()
         stop_order = MagicMock()
         stop_order.status = stop_status
+        stop_order.filled_avg_price = None  # prevent float(MagicMock()) returning 1.0
         tc.get_order_by_id.return_value = stop_order
         return tc
 
@@ -1344,3 +1345,55 @@ class TestCheckCancelledStops:
         # QQQ was still checked (2 calls attempted)
         assert tc.get_order_by_id.call_count == 2
         mock_alert.assert_not_called()
+
+    def test_filled_stop_passes_actual_fill_price_to_reconcile(self):
+        """fill_price from Alpaca order is forwarded to _reconcile_stop_filled."""
+        pos = make_position(symbol="SPY", stop_order_id="stop-456")
+        r, _ = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        filled_order = self._make_stop_order(status="filled")
+        filled_order.filled_avg_price = "492.50"  # Alpaca returns prices as strings
+        tc.get_order_by_id.return_value = filled_order
+        tc.get_all_positions.return_value = [self._make_alpaca_position("SPY")]
+
+        with patch("executor._reconcile_stop_filled") as mock_reconcile, \
+             patch("executor.critical_alert"):
+            from executor import _check_cancelled_stops
+            _check_cancelled_stops(tc, r)
+
+        mock_reconcile.assert_called_once()
+        _, kwargs = mock_reconcile.call_args
+        assert kwargs.get("fill_price") == pytest.approx(492.50)
+
+
+# ── TestReconcileStopFilledFillPrice ─────────────────────────
+
+class TestReconcileStopFilledFillPrice:
+    """Tests for the optional fill_price parameter on _reconcile_stop_filled."""
+
+    def test_uses_provided_fill_price_when_given(self):
+        """When fill_price kwarg is passed, uses it for P&L (not pos['stop_price'])."""
+        pos = make_position(qty=10, entry=500.0, stop=490.0, stop_order_id="stop-456")
+        r, store = make_redis({"SPY": pos})
+        r.delete = MagicMock()
+
+        with patch("executor.exit_alert"):
+            from executor import _reconcile_stop_filled
+            _reconcile_stop_filled(r, pos, {"SPY": pos}, "SPY", fill_price=495.0)
+
+        # pnl = (495 - 500) * 10 = -50  (not -100 from stop_price=490)
+        assert float(store["trading:simulated_equity"]) == pytest.approx(4950.0)
+
+    def test_falls_back_to_stop_price_when_fill_price_not_provided(self):
+        """When fill_price is omitted, behavior is identical to before (uses stop_price)."""
+        pos = make_position(qty=10, entry=500.0, stop=490.0, stop_order_id="stop-456")
+        r, store = make_redis({"SPY": pos})
+        r.delete = MagicMock()
+
+        with patch("executor.exit_alert"):
+            from executor import _reconcile_stop_filled
+            _reconcile_stop_filled(r, pos, {"SPY": pos}, "SPY")
+
+        # pnl = (490 - 500) * 10 = -100 (original behavior)
+        assert float(store["trading:simulated_equity"]) == pytest.approx(4900.0)
