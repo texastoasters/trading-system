@@ -8,8 +8,7 @@ Retains the most recent 7 daily files; older files are pruned automatically.
 Usage (from repo root, after source ~/.trading_env):
     PYTHONPATH=scripts python3 scripts/backup_redis.py
 
-Suggested cron (add with: crontab -e):
-# 30 16 * * 1-5  cd ~/trading-system && source ~/.trading_env && PYTHONPATH=scripts python3 scripts/backup_redis.py >> ~/trading-system/logs/backup.log 2>&1
+Scheduled via cron/trading-system-cron at 4:35 PM ET Mon–Fri (after EOD review).
 """
 
 import glob
