@@ -56,6 +56,10 @@ ATR_STOP_MULTIPLIER = 2.0
 BTC_FEE_RATE = 0.004            # 0.40% round-trip
 BTC_MIN_EXPECTED_GAIN = 0.006   # 0.60% minimum expected gain
 
+# ── Agent Restart Policy ────────────────────────────────────
+
+MAX_AUTO_RESTARTS = 3  # halt and alert after this many consecutive restart attempts
+
 # ── Earnings Avoidance ──────────────────────────────────────
 
 EARNINGS_DAYS_BEFORE = 2   # block entry N days before earnings
@@ -132,6 +136,8 @@ class Keys:
     SYSTEM_STATUS = "trading:system_status"
     # Note: disabled instruments are stored in universe["disabled"], not a separate key
     # Note: strategy params are not yet implemented
+
+    RESTART_COUNT = "trading:restart_count"
 
     @staticmethod
     def heartbeat(agent: str) -> str:

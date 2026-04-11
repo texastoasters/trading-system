@@ -319,10 +319,75 @@ class TestTierManagement:
         assert saved["disabled"] == []
 
 
+# ── attempt_service_restart ───────────────────────────────────
+
+class TestAttemptServiceRestart:
+    def _make_r(self, restart_count="0", system_status="active"):
+        store = {
+            Keys.SYSTEM_STATUS: system_status,
+            "trading:restart_count": restart_count,
+        }
+        r = MagicMock()
+        r.get = lambda k: store.get(k)
+        r.set = MagicMock()
+        return r
+
+    def test_restarts_service_when_under_limit(self):
+        r = self._make_r(restart_count="0")
+        result = MagicMock(returncode=0)
+        with patch("supervisor.subprocess.run", return_value=result) as mock_run, \
+             patch("supervisor.critical_alert") as mock_alert:
+            from supervisor import attempt_service_restart
+            attempt_service_restart(r)
+        mock_run.assert_called_once_with(
+            ["sudo", "systemctl", "restart", "trading-system"],
+            capture_output=True, timeout=30,
+        )
+        mock_alert.assert_called_once()
+
+    def test_increments_restart_count(self):
+        r = self._make_r(restart_count="1")
+        result = MagicMock(returncode=0)
+        with patch("supervisor.subprocess.run", return_value=result), \
+             patch("supervisor.critical_alert"):
+            from supervisor import attempt_service_restart
+            attempt_service_restart(r)
+        r.set.assert_any_call("trading:restart_count", "2")
+
+    def test_halts_and_alerts_when_max_reached(self):
+        r = self._make_r(restart_count="3")
+        with patch("supervisor.subprocess.run") as mock_run, \
+             patch("supervisor.critical_alert") as mock_alert:
+            from supervisor import attempt_service_restart
+            attempt_service_restart(r)
+        mock_run.assert_not_called()
+        mock_alert.assert_called_once()
+        r.set.assert_any_call(Keys.SYSTEM_STATUS, "halted")
+
+    def test_handles_subprocess_failure_gracefully(self):
+        r = self._make_r(restart_count="0")
+        with patch("supervisor.subprocess.run", side_effect=Exception("systemctl not found")), \
+             patch("supervisor.critical_alert") as mock_alert:
+            from supervisor import attempt_service_restart
+            attempt_service_restart(r)  # must not raise
+        mock_alert.assert_called()
+
+    def test_alerts_on_nonzero_exit_code(self):
+        r = self._make_r(restart_count="0")
+        result = MagicMock(returncode=1, stderr=b"permission denied")
+        with patch("supervisor.subprocess.run", return_value=result), \
+             patch("supervisor.critical_alert") as mock_alert:
+            from supervisor import attempt_service_restart
+            attempt_service_restart(r)
+        # alert should mention failure
+        alert_msg = mock_alert.call_args[0][0]
+        assert "fail" in alert_msg.lower() or "error" in alert_msg.lower() or "permission" in alert_msg.lower()
+
+
 # ── run_health_check ─────────────────────────────────────────
 
 class TestRunHealthCheck:
-    def _make_hb_redis(self, executor_age_min=1, pm_age_min=1):
+    def _make_hb_redis(self, executor_age_min=1, pm_age_min=1, watcher_age_min=1):
         now = datetime.now()
         base = {
             Keys.SIMULATED_EQUITY: "5000.0",
@@ -333,10 +398,12 @@ class TestRunHealthCheck:
             Keys.REGIME: json.dumps({"regime": "RANGING"}),
             Keys.heartbeat("executor"): (now - timedelta(minutes=executor_age_min)).isoformat(),
             Keys.heartbeat("portfolio_manager"): (now - timedelta(minutes=pm_age_min)).isoformat(),
+            Keys.heartbeat("watcher"): (now - timedelta(minutes=watcher_age_min)).isoformat(),
             Keys.RISK_MULTIPLIER: "1.0",
             Keys.PEAK_EQUITY: "5000.0",
             Keys.DAILY_PNL: "0.0",
             Keys.UNIVERSE: json.dumps(_config.DEFAULT_UNIVERSE),
+            "trading:restart_count": "0",
         }
         r = MagicMock()
         r.get = lambda k: base.get(k)
@@ -419,10 +486,50 @@ class TestRunHealthCheck:
         r = self._make_hb_redis(executor_age_min=10)
         with patch("supervisor.notify") as mock_notify, \
              patch("supervisor.run_circuit_breakers"), \
-             patch("supervisor.critical_alert"):
+             patch("supervisor.critical_alert"), \
+             patch("supervisor.attempt_service_restart"):
             from supervisor import run_health_check
             run_health_check(r)
         mock_notify.assert_called_once()
+
+    def test_stale_watcher_triggers_restart_attempt(self):
+        r = self._make_hb_redis(watcher_age_min=10)
+        with patch("supervisor.notify"), \
+             patch("supervisor.run_circuit_breakers"), \
+             patch("supervisor.critical_alert"), \
+             patch("supervisor.attempt_service_restart") as mock_restart:
+            from supervisor import run_health_check
+            issues = run_health_check(r)
+        assert any("watcher" in i for i in issues)
+        mock_restart.assert_called_once_with(r)
+
+    def test_stale_executor_triggers_restart_attempt(self):
+        r = self._make_hb_redis(executor_age_min=10)
+        with patch("supervisor.notify"), \
+             patch("supervisor.run_circuit_breakers"), \
+             patch("supervisor.critical_alert"), \
+             patch("supervisor.attempt_service_restart") as mock_restart:
+            from supervisor import run_health_check
+            run_health_check(r)
+        mock_restart.assert_called_once_with(r)
+
+    def test_healthy_daemons_reset_restart_count(self):
+        r = self._make_hb_redis()  # all fresh (1 min ago)
+        with patch("supervisor.notify"), \
+             patch("supervisor.run_circuit_breakers"):
+            from supervisor import run_health_check
+            run_health_check(r)
+        r.set.assert_any_call("trading:restart_count", "0")
+
+    def test_restart_called_once_even_when_multiple_daemons_stale(self):
+        r = self._make_hb_redis(executor_age_min=10, pm_age_min=10, watcher_age_min=10)
+        with patch("supervisor.notify"), \
+             patch("supervisor.run_circuit_breakers"), \
+             patch("supervisor.critical_alert"), \
+             patch("supervisor.attempt_service_restart") as mock_restart:
+            from supervisor import run_health_check
+            run_health_check(r)
+        mock_restart.assert_called_once_with(r)
 
 # ── reset_daily ───────────────────────────────────────────────
 
