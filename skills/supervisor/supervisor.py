@@ -27,6 +27,7 @@ import os
 import config
 from config import (
     Keys, get_redis, get_simulated_equity, get_drawdown, init_redis_state,
+    get_drawdown_attribution,
 )
 from notify import (
     notify, daily_summary, weekly_summary, critical_alert,
@@ -58,6 +59,15 @@ def run_circuit_breakers(r):
         r.set(Keys.PEAK_EQUITY, str(round(equity, 2)))
         r.set(Keys.PEAK_EQUITY_DATE, date.today().isoformat())
 
+    # Compute attribution for alert enrichment (best-effort)
+    attribution = []
+    try:
+        conn = get_db()
+        attribution = get_drawdown_attribution(r, conn)
+        conn.close()
+    except Exception:
+        pass  # DB unavailable — alert fires without attribution
+
     # Drawdown circuit breakers
     prev_status = r.get(Keys.SYSTEM_STATUS)
 
@@ -77,20 +87,20 @@ def run_circuit_breakers(r):
         disable_tiers(r, [2, 3])
         if dd >= config.DRAWDOWN_CRITICAL and prev_status != "critical":
             r.set(Keys.SYSTEM_STATUS, "critical")
-            drawdown_alert(dd, "25% position size. Only Tier 1 active. BTC disabled.")
+            drawdown_alert(dd, "25% position size. Only Tier 1 active. BTC disabled.", attribution=attribution)
 
     elif dd >= config.DRAWDOWN_DEFENSIVE:
         r.set(Keys.RISK_MULTIPLIER, "0.5")
         disable_tiers(r, [2, 3])
         if prev_status not in ("defensive", "critical"):
             r.set(Keys.SYSTEM_STATUS, "defensive")
-            drawdown_alert(dd, "50% position size. Only Tier 1 active.")
+            drawdown_alert(dd, "50% position size. Only Tier 1 active.", attribution=attribution)
 
     elif dd >= config.DRAWDOWN_CAUTION:
         r.set(Keys.RISK_MULTIPLIER, "0.75")
         if prev_status not in ("caution", "defensive", "critical"):
             r.set(Keys.SYSTEM_STATUS, "caution")
-            drawdown_alert(dd, "Caution: Tier 3 at reduced size.")
+            drawdown_alert(dd, "Caution: Tier 3 at reduced size.", attribution=attribution)
 
     else:
         if prev_status != "active":
