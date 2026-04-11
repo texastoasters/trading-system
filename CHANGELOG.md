@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.11.0] - 2026-04-10
+
+### Changed
+- **Elixir test coverage: 70% → 97%** (PR #77): 182 tests, 0 failures. Added `redis_poller_test.exs`, `market_clock_test.exs`, `core_components_test.exs`; extended 5 existing test files. Fixed `redis_poller.ex` empty-pipeline bug (Redix raises `ArgumentError` on `pipeline(:redix, [])`, silently crashing GenServer when no cooldown keys exist). Added `handle_info({:set_trades, trades})` to `trades_live.ex` for template testing without TimescaleDB.
+
+---
+
 ## [0.10.0] - 2026-04-10
 
 ### Added
