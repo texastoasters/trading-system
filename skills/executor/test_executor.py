@@ -150,6 +150,27 @@ class TestGetSimulatedCash:
         assert get_simulated_cash(r) == 0
 
 
+# ── TestUpdateSimulatedEquity ────────────────────────────────
+
+class TestUpdateSimulatedEquity:
+    def test_sets_peak_equity_date_on_new_high(self):
+        """When new equity exceeds stored peak, PEAK_EQUITY_DATE is set to today."""
+        from datetime import date
+        from executor import update_simulated_equity
+        r, store = make_redis({}, extra={"trading:peak_equity": "4800.0"})
+        # new_equity = 5000 + 500 = 5500 > peak 4800 → new high
+        update_simulated_equity(r, 500.0)
+        assert store.get("trading:peak_equity_date") == date.today().isoformat()
+
+    def test_does_not_set_peak_equity_date_when_not_new_high(self):
+        """When new equity does not exceed peak, PEAK_EQUITY_DATE is unchanged."""
+        from executor import update_simulated_equity
+        r, store = make_redis({}, extra={"trading:peak_equity": "6000.0"})
+        # new_equity = 5000 - 200 = 4800 < peak 6000 → no new high
+        update_simulated_equity(r, -200.0)
+        assert "trading:peak_equity_date" not in store
+
+
 # ── TestValidateOrder ────────────────────────────────────────
 
 class TestValidateOrder:

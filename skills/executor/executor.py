@@ -15,7 +15,7 @@ import json
 import sys
 import time
 import argparse
-from datetime import datetime
+from datetime import datetime, date
 
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import (
@@ -65,6 +65,7 @@ def update_simulated_equity(r, pnl_dollar):
     peak = float(r.get(Keys.PEAK_EQUITY) or config.INITIAL_CAPITAL)
     if new_equity > peak:
         r.set(Keys.PEAK_EQUITY, str(round(new_equity, 2)))
+        r.set(Keys.PEAK_EQUITY_DATE, date.today().isoformat())
 
     # Update drawdown
     peak = float(r.get(Keys.PEAK_EQUITY))
