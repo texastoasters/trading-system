@@ -503,6 +503,26 @@ class TestGenerateEntrySignals:
             signals = generate_entry_signals(r, MagicMock(), MagicMock())
         assert len(signals) == 1
 
+    def test_skips_symbol_on_macro_event_day(self):
+        r = make_redis({Keys.WATCHLIST: json.dumps([make_watchlist_item()])})
+        with patch('watcher.is_market_hours', return_value=True), \
+             patch('watcher.check_whipsaw', return_value=False), \
+             patch('watcher.is_near_earnings', return_value=False), \
+             patch('watcher.is_macro_event_day', return_value=True):
+            from watcher import generate_entry_signals
+            signals = generate_entry_signals(r, MagicMock(), MagicMock())
+        assert signals == []
+
+    def test_entry_proceeds_when_not_macro_event_day(self):
+        r = make_redis({Keys.WATCHLIST: json.dumps([make_watchlist_item("SPY")])})
+        with patch('watcher.is_market_hours', return_value=True), \
+             patch('watcher.check_whipsaw', return_value=False), \
+             patch('watcher.is_near_earnings', return_value=False), \
+             patch('watcher.is_macro_event_day', return_value=False):
+            from watcher import generate_entry_signals
+            signals = generate_entry_signals(r, MagicMock(), MagicMock())
+        assert len(signals) == 1
+
     def test_mid_adx_uses_default_atr_multiplier(self):
         # adx=30 → ATR_STOP_MULTIPLIER=2.0
         r = make_redis({

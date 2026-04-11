@@ -211,6 +211,11 @@ def generate_entry_signals(r, stock_client, crypto_client):
             print(f"  [Watcher] {symbol}: skipped (near earnings window)")
             continue
 
+        # Economic calendar avoidance
+        if is_macro_event_day():
+            print(f"  [Watcher] {symbol}: skipped (macro event day)")
+            continue
+
         # Manual-exit cooldown: block re-entry until price drops sufficiently
         # below the price at which the user manually liquidated the position.
         manual_exit_price_str = r.get(Keys.manual_exit(symbol))
