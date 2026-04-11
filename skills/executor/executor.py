@@ -122,10 +122,10 @@ def _reconcile_stop_filled(r, pos, positions, symbol):
 def validate_order(r, order, account):
     """Validate order against all safety rules. Returns (ok, reason)."""
 
-    # System status
+    # System status — blocks new entries, always allows exits
     status = r.get(Keys.SYSTEM_STATUS)
-    if status == "halted" and order["side"] == "buy":
-        return False, "System is halted — no new entries"
+    if status in ("halted", "daily_halt") and order["side"] == "buy":
+        return False, f"System is {status} — no new entries"
 
     # Rule 1: Never exceed simulated cash
     if order["side"] == "buy":
@@ -134,19 +134,20 @@ def validate_order(r, order, account):
         if order_value > sim_cash:
             return False, f"Rule 1: Order ${order_value:.0f} > simulated cash ${sim_cash:.0f}"
 
+        # Daily loss limit belt-and-suspenders (supervisor sets daily_halt; this catches
+        # the gap between supervisor cron cycles). Skipped for forced orders.
+        if not order.get("force"):
+            daily_pnl = float(r.get(Keys.DAILY_PNL) or 0)
+            equity = get_simulated_equity(r)
+            if daily_pnl <= -(equity * config.DAILY_LOSS_LIMIT_PCT):
+                return False, f"Daily loss limit: ${daily_pnl:.2f}"
+
     # Rule 1: Never short
     if order["side"] == "sell":
         positions = json.loads(r.get(Keys.POSITIONS) or "{}")
         has_pos = any(p["symbol"] == order["symbol"] for p in positions.values())
         if not has_pos:
             return False, "Rule 1: Short selling prohibited"
-
-    # Daily loss limit (skipped for forced orders, e.g. manual dashboard liquidations)
-    if not order.get("force"):
-        daily_pnl = float(r.get(Keys.DAILY_PNL) or 0)
-        equity = get_simulated_equity(r)
-        if daily_pnl <= -(equity * config.DAILY_LOSS_LIMIT_PCT):
-            return False, f"Daily loss limit: ${daily_pnl:.2f}"
 
     # Max concurrent positions (for buys)
     if order["side"] == "buy":

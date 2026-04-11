@@ -188,6 +188,31 @@ class TestValidateOrder:
         ok, _ = validate_order(r, order, make_account())
         assert ok
 
+    def test_daily_halt_blocks_buy(self):
+        from executor import validate_order
+        r = self._r(status="daily_halt")
+        order = {"side": "buy", "quantity": 1, "entry_price": 10.0, "order_value": 10.0}
+        ok, reason = validate_order(r, order, make_account())
+        assert not ok
+        assert "daily_halt" in reason
+
+    def test_daily_halt_allows_sell(self):
+        from executor import validate_order
+        pos = make_position()
+        r = self._r(positions={"SPY": pos}, status="daily_halt")
+        order = {"side": "sell", "symbol": "SPY"}
+        ok, _ = validate_order(r, order, make_account())
+        assert ok
+
+    def test_daily_loss_limit_allows_sell(self):
+        from executor import validate_order
+        # equity=5000, DAILY_LOSS_LIMIT_PCT=0.03 → threshold=-150; pnl=-200 (breached)
+        pos = make_position()
+        r = self._r(positions={"SPY": pos}, daily_pnl="-200.0")
+        order = {"side": "sell", "symbol": "SPY"}
+        ok, _ = validate_order(r, order, make_account())
+        assert ok
+
     def test_max_positions_blocks(self):
         from executor import validate_order
         import config as cfg
