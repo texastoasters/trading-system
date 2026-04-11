@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.13.0] - 2026-04-10
+
+### Added
+- **Economic calendar awareness** (PR #84): watcher skips new entry signals on FOMC decision days, CPI release days, and NFP (jobs report) days. Dates stored in `scripts/economic_calendar.json` (updated annually from official Fed/BLS schedules). Fails safe — missing or corrupt calendar file never halts trading. Crypto not exempt (FOMC/CPI/NFP move BTC/USD). Exits always allowed through.
+
+---
+
 ## [0.12.0] - 2026-04-10
 
 ### Added
