@@ -768,6 +768,32 @@ class TestExecuteSell:
         assert call_kwargs["symbol"] == "SPY"
         assert call_kwargs["exit_price"] == pytest.approx(490.0)
 
+    def test_stop_check_exception_proceeds_with_market_sell(self):
+        """If get_order_by_id raises when checking stop status, proceed with market sell."""
+        pos = make_position(stop_order_id="stop-456")
+        r, store = make_redis({"SPY": pos})
+
+        fill_poll = MagicMock()
+        fill_poll.status = "filled"
+        fill_poll.filled_avg_price = "505.00"
+        fill_poll.filled_qty = "10"
+        submitted = MagicMock()
+        submitted.id = "ord-1"
+
+        tc = MagicMock()
+        tc.get_clock.return_value = make_clock(is_open=True)
+        tc.cancel_order_by_id.side_effect = Exception("already triggered")
+        tc.submit_order.return_value = submitted
+        # get_order_by_id raises on stop check, then returns filled on poll
+        tc.get_order_by_id.side_effect = [Exception("unreachable")] + [fill_poll] * 5
+
+        with patch("time.sleep"), patch("notify.exit_alert"):
+            from executor import execute_sell
+            result = execute_sell(r, tc, make_sell_signal())
+
+        assert result is True
+        tc.submit_order.assert_called_once()  # market sell still attempted
+
     def test_stop_already_filled_clears_exit_signaled_flag(self):
         """Reconciling a stop-filled position clears the exit_signaled Redis key."""
         pos = make_position(stop_order_id="stop-456")
@@ -991,6 +1017,41 @@ class TestVerifyStartup:
         assert float(store["trading:simulated_equity"]) == pytest.approx(4900.0)
         # Notification sent
         mock_alert.assert_called_once()
+
+    def test_crypto_position_with_filled_stop_deducts_fees(self):
+        """_reconcile_stop_filled deducts BTC fees from P&L for crypto positions."""
+        pos = make_position(qty=1, entry=50000.0, stop=49000.0, stop_order_id="stop-btc",
+                            symbol="BTC/USD")
+        r, store = make_redis({"BTC/USD": pos})
+        r.delete = MagicMock()
+
+        tc = self._make_tc(stop_status="filled")
+
+        with patch("executor.exit_alert") as mock_alert:
+            from executor import verify_startup
+            verify_startup(tc, r)
+
+        mock_alert.assert_called_once()
+        # pnl_dollar before fee = (49000 - 50000) * 1 = -1000
+        # fee = (50000 + 49000) * (0.004/2) = 198
+        # pnl_dollar after fee = -1198
+        assert float(store["trading:simulated_equity"]) == pytest.approx(5000.0 - 1198.0)
+
+    def test_position_with_bad_entry_date_defaults_hold_days_to_zero(self):
+        """_reconcile_stop_filled handles unparseable entry_date without crashing."""
+        pos = make_position(qty=10, entry=500.0, stop=490.0, stop_order_id="stop-456")
+        pos["entry_date"] = "not-a-date"
+        r, store = make_redis({"SPY": pos})
+        r.delete = MagicMock()
+
+        tc = self._make_tc(stop_status="filled")
+
+        with patch("executor.exit_alert") as mock_alert:
+            from executor import verify_startup
+            verify_startup(tc, r)
+
+        mock_alert.assert_called_once()
+        assert "SPY" not in json.loads(store["trading:positions"])
 
     def test_checks_failed_exits(self):
         r, _ = make_redis({})

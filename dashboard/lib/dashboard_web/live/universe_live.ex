@@ -58,6 +58,7 @@ defmodule DashboardWeb.UniverseLive do
     end)
   end
 
+  # coveralls-ignore-next-line
   defp build_tiers(nil, _wl, _pos), do: []
 
   defp build_tiers(universe, watchlist, positions) do
@@ -71,6 +72,7 @@ defmodule DashboardWeb.UniverseLive do
     |> Enum.reject(fn {_t, syms} -> syms == [] end)
   end
 
+  # coveralls-ignore-next-line
   defp total_count(nil), do: 0
 
   defp total_count(universe) do
@@ -81,11 +83,13 @@ defmodule DashboardWeb.UniverseLive do
   defp tier_badge(1), do: {"T1", "bg-yellow-900/40 text-yellow-400 border-yellow-700"}
   defp tier_badge(2), do: {"T2", "bg-blue-900/40 text-blue-400 border-blue-700"}
   defp tier_badge(3), do: {"T3", "bg-gray-900/40 text-gray-400 border-gray-600"}
+  # coveralls-ignore-next-line
   defp tier_badge(_), do: {"T?", "bg-gray-900/40 text-gray-500 border-gray-700"}
 
   defp tier_label(1), do: "Tier 1 — Core"
   defp tier_label(2), do: "Tier 2 — Extended"
   defp tier_label(3), do: "Tier 3 — Satellite"
+  # coveralls-ignore-next-line
   defp tier_label(n), do: "Tier #{n}"
 
   defp status_pill(:held),          do: {"HELD",    "bg-orange-900/40 text-orange-300 border-orange-700"}

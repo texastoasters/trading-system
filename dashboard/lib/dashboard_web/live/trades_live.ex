@@ -52,6 +52,12 @@ defmodule DashboardWeb.TradesLive do
     end
   end
 
+  @impl true
+  def handle_info({:set_trades, trades}, socket) do
+    total = length(trades)
+    {:noreply, assign(socket, trades: trades, total_count: total, last_page: last_page(total, @per_page))}
+  end
+
   # ── Helpers ──────────────────────────────────────────────────────────────────
 
   defp last_page(total, per_page) when total > 0, do: ceil(total / per_page)

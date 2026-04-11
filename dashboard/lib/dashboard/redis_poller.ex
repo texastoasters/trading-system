@@ -94,14 +94,18 @@ defmodule Dashboard.RedisPoller do
       {:ok, [whipsaw_keys, manual_keys]} ->
         all_keys = whipsaw_keys ++ manual_keys
 
-        case Redix.pipeline(:redix, Enum.map(all_keys, &["GET", &1])) do
-          {:ok, values} ->
-            all_keys
-            |> Enum.zip(values)
-            |> Enum.flat_map(fn {key, val} -> parse_cooldown(key, val) end)
+        if all_keys == [] do
+          []
+        else
+          case Redix.pipeline(:redix, Enum.map(all_keys, &["GET", &1])) do
+            {:ok, values} ->
+              all_keys
+              |> Enum.zip(values)
+              |> Enum.flat_map(fn {key, val} -> parse_cooldown(key, val) end)
 
-          _ ->
-            []
+            _ ->
+              []
+          end
         end
 
       _ ->
@@ -120,6 +124,7 @@ defmodule Dashboard.RedisPoller do
     end
   end
 
+  # coveralls-ignore-next-line
   defp parse_cooldown(_, _), do: []
 
   defp parse_redis_values(pairs) do

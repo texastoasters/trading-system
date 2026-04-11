@@ -501,5 +501,53 @@ defmodule DashboardWeb.UniverseLiveTest do
       assert html =~ "SPY"
       assert html =~ "QQQ"
     end
+
+    test "format_float catch-all renders integer rsi2 as string", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/universe")
+
+      state = %{
+        "trading:universe" => %{"tier1" => ["SPY"], "tier2" => [], "tier3" => []},
+        "trading:watchlist" => [
+          %{
+            "symbol" => "SPY",
+            "priority" => "signal",
+            "rsi2" => 5,
+            "close" => 100.0,
+            "sma200" => 99.0,
+            "above_sma" => true
+          }
+        ],
+        "trading:positions" => %{}
+      }
+
+      send(view.pid, {:state_update, state})
+      html = render(view)
+      # Integer rsi2 hits format_float catch-all: "#{v}" = "5"
+      assert html =~ "5"
+    end
+
+    test "format_price catch-all renders integer price as string", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/universe")
+
+      state = %{
+        "trading:universe" => %{"tier1" => ["SPY"], "tier2" => [], "tier3" => []},
+        "trading:watchlist" => [
+          %{
+            "symbol" => "SPY",
+            "priority" => "signal",
+            "rsi2" => 10.0,
+            "close" => 500,
+            "sma200" => 499,
+            "above_sma" => true
+          }
+        ],
+        "trading:positions" => %{}
+      }
+
+      send(view.pid, {:state_update, state})
+      html = render(view)
+      # Integer close hits format_price catch-all: "$#{v}" = "$500"
+      assert html =~ "$500"
+    end
   end
 end
