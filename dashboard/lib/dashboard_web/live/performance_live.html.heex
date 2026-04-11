@@ -1,0 +1,148 @@
+<div class="min-h-screen bg-gray-900 text-gray-100 p-4 space-y-4">
+
+  <%# Header %>
+  <div class="flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <a href="/" class="text-gray-500 hover:text-gray-300 transition-colors text-sm">← Dashboard</a>
+      <h1 class="text-lg font-bold text-white tracking-tight">Per-Instrument P&amp;L</h1>
+      <span class="text-xs text-gray-500">Realized trades only</span>
+    </div>
+
+    <%# Range toggle %>
+    <div class="flex rounded border border-gray-700 overflow-hidden text-xs">
+      <%= for r <- ["30d", "90d", "all"] do %>
+        <button
+          phx-click="set_range"
+          phx-value-range={r}
+          class={[
+            "px-3 py-1.5 transition-colors",
+            if(@range == r,
+              do: "bg-blue-900/60 text-blue-300 border-r border-gray-700",
+              else: "bg-transparent text-gray-500 border-r border-gray-700 hover:text-gray-300 last:border-r-0"
+            )
+          ]}
+        >
+          {range_label(r)}
+        </button>
+      <% end %>
+    </div>
+  </div>
+
+  <%# Table %>
+  <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+    <div class="overflow-x-auto">
+      <table class="w-full text-xs">
+        <thead>
+          <tr class="text-gray-500 border-b border-gray-700">
+            <th class="text-left pb-2 pr-3 cursor-pointer hover:text-gray-300 select-none"
+                phx-click="sort" phx-value-col="symbol">
+              Symbol{sort_indicator(:symbol, @sort_col, @sort_dir)}
+            </th>
+            <th class={["text-right pb-2 pr-3 cursor-pointer hover:text-gray-300 select-none",
+                        if(@sort_col == :total_pnl, do: "text-blue-400", else: "")]}
+                phx-click="sort" phx-value-col="total_pnl">
+              Total P&amp;L{sort_indicator(:total_pnl, @sort_col, @sort_dir)}
+            </th>
+            <th class={["text-right pb-2 pr-3 cursor-pointer hover:text-gray-300 select-none",
+                        if(@sort_col == :trade_count, do: "text-blue-400", else: "")]}
+                phx-click="sort" phx-value-col="trade_count">
+              Trades{sort_indicator(:trade_count, @sort_col, @sort_dir)}
+            </th>
+            <th class={["text-right pb-2 pr-3 cursor-pointer hover:text-gray-300 select-none",
+                        if(@sort_col == :win_rate, do: "text-blue-400", else: "")]}
+                phx-click="sort" phx-value-col="win_rate">
+              Win%{sort_indicator(:win_rate, @sort_col, @sort_dir)}
+            </th>
+            <th class={["text-right pb-2 pr-3 cursor-pointer hover:text-gray-300 select-none",
+                        if(@sort_col == :profit_factor, do: "text-blue-400", else: "")]}
+                phx-click="sort" phx-value-col="profit_factor">
+              PF{sort_indicator(:profit_factor, @sort_col, @sort_dir)}
+            </th>
+            <th class={["text-right pb-2 pr-3 cursor-pointer hover:text-gray-300 select-none",
+                        if(@sort_col == :avg_win, do: "text-blue-400", else: "")]}
+                phx-click="sort" phx-value-col="avg_win">
+              Avg Win{sort_indicator(:avg_win, @sort_col, @sort_dir)}
+            </th>
+            <th class={["text-right pb-2 pr-3 cursor-pointer hover:text-gray-300 select-none",
+                        if(@sort_col == :avg_loss, do: "text-blue-400", else: "")]}
+                phx-click="sort" phx-value-col="avg_loss">
+              Avg Loss{sort_indicator(:avg_loss, @sort_col, @sort_dir)}
+            </th>
+            <th class={["text-right pb-2 pr-3 cursor-pointer hover:text-gray-300 select-none",
+                        if(@sort_col == :last_trade, do: "text-blue-400", else: "")]}
+                phx-click="sort" phx-value-col="last_trade">
+              Last Trade{sort_indicator(:last_trade, @sort_col, @sort_dir)}
+            </th>
+            <th class="text-right pb-2 text-gray-600">Class</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-700/30">
+          <%= if @rows == [] do %>
+            <tr>
+              <td colspan="9" class="py-8 text-center text-gray-600 italic">
+                no trades recorded yet
+              </td>
+            </tr>
+          <% else %>
+            <%= for row <- @rows do %>
+              <% tier = tier_for(row.symbol, @universe) %>
+              <% badge = tier_badge(tier) %>
+              <tr class="hover:bg-gray-700/20 transition-colors">
+                <td class="py-1.5 pr-3 font-mono font-semibold text-white">
+                  {row.symbol}
+                  <%= if badge do %>
+                    <% {label, classes} = badge %>
+                    <span class={"ml-1 text-[10px] px-1 py-0.5 rounded border #{classes}"}>
+                      {label}
+                    </span>
+                  <% end %>
+                </td>
+                <td class={"py-1.5 pr-3 text-right font-mono #{pnl_class(row.total_pnl)}"}>
+                  {format_pnl(row.total_pnl)}
+                </td>
+                <td class="py-1.5 pr-3 text-right text-gray-300 font-mono">
+                  {row.trade_count}
+                </td>
+                <td class={"py-1.5 pr-3 text-right font-mono #{win_rate_class(row.win_rate)}"}>
+                  {format_win_rate(row.win_rate)}
+                </td>
+                <td class={"py-1.5 pr-3 text-right font-mono #{pf_class(row.profit_factor)}"}>
+                  {format_pf(row.profit_factor)}
+                </td>
+                <td class="py-1.5 pr-3 text-right font-mono text-green-400">
+                  {format_pnl(row.avg_win)}
+                </td>
+                <td class="py-1.5 pr-3 text-right font-mono text-red-400">
+                  {format_pnl(row.avg_loss)}
+                </td>
+                <td class="py-1.5 pr-3 text-right text-gray-500">
+                  {format_last_trade(row.last_trade)}
+                </td>
+                <td class="py-1.5 text-right text-gray-600">
+                  {row.asset_class || "—"}
+                </td>
+              </tr>
+            <% end %>
+          <% end %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <%# Footer summary %>
+  <%= if @rows != [] do %>
+    <% summary = page_summary(@rows) %>
+    <div class="flex gap-6 text-xs text-gray-500 pt-1">
+      <span>{summary.count} instruments</span>
+      <span>Total realized:
+        <span class={pnl_class(summary.total_pnl)}>{format_pnl(summary.total_pnl)}</span>
+      </span>
+      <span>Overall win rate:
+        <span class={win_rate_class(summary.overall_win_rate)}>
+          {format_win_rate(summary.overall_win_rate)}
+        </span>
+      </span>
+    </div>
+  <% end %>
+
+</div>
