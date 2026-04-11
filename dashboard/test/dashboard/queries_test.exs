@@ -86,4 +86,18 @@ defmodule Dashboard.QueriesTest do
       assert is_nil(Queries.win_loss_stats()) or is_map(Queries.win_loss_stats())
     end
   end
+
+  describe "instrument_performance/1" do
+    test "returns [] when no trades exist (DB error or empty table)" do
+      assert Queries.instrument_performance(30) == []
+    end
+
+    test "returns [] for 90 day window" do
+      assert Queries.instrument_performance(90) == []
+    end
+
+    test "returns [] for all-time window" do
+      assert Queries.instrument_performance(:all) == []
+    end
+  end
 end
