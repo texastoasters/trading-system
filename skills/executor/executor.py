@@ -117,6 +117,88 @@ def _reconcile_stop_filled(r, pos, positions, symbol):
     return True
 
 
+# ── Runtime Stop Monitoring ──────────────────────────────────
+
+def _check_cancelled_stops(trading_client, r):
+    """Check all open positions for unexpectedly cancelled stop orders.
+
+    Called each idle daemon cycle. For each position with a stop_order_id:
+    - 'cancelled': verify position still on Alpaca, resubmit stop, alert
+    - 'filled':    delegate to _reconcile_stop_filled
+    - healthy:     skip
+    """
+    positions = json.loads(r.get(Keys.POSITIONS) or "{}")
+    if not positions:
+        return
+
+    # Fetch Alpaca positions once for the whole check
+    try:
+        alpaca_symbols = {p.symbol for p in trading_client.get_all_positions()}
+    except Exception as exc:
+        print(f"  [Executor] _check_cancelled_stops: could not fetch Alpaca positions: {exc}")
+        return
+
+    stop_filled_syms = []
+
+    for symbol, pos in list(positions.items()):
+        stop_id = pos.get("stop_order_id")
+        if not stop_id:
+            continue
+
+        try:
+            stop_order = trading_client.get_order_by_id(stop_id)
+        except Exception as exc:
+            print(f"  [Executor] _check_cancelled_stops: could not fetch stop {stop_id} for {symbol}: {exc}")
+            continue
+
+        if stop_order.status in ("new", "accepted", "pending_new"):
+            continue  # healthy
+
+        if stop_order.status == "filled":
+            stop_filled_syms.append(symbol)
+            continue
+
+        if stop_order.status == "cancelled":
+            if symbol not in alpaca_symbols:
+                # Position was closed externally — reconcile Redis
+                print(f"  [Executor] ⚠️  {symbol}: stop cancelled + position gone — cleaning Redis")
+                critical_alert(
+                    f"STOP CANCELLED — POSITION CLOSED EXTERNALLY: {symbol}\n"
+                    f"Stop {stop_id} was cancelled and position is gone from Alpaca.\n"
+                    f"Redis cleaned up. Review P&L manually."
+                )
+                positions.pop(symbol, None)
+                r.set(Keys.POSITIONS, json.dumps(positions))
+                continue
+
+            # Position still exists — resubmit stop
+            print(f"  [Executor] ⚠️  {symbol}: stop {stop_id} cancelled — resubmitting")
+            new_stop_id = submit_stop_loss(
+                trading_client, symbol, pos["quantity"], pos["stop_price"]
+            )
+            if new_stop_id is None:
+                # submit_stop_loss already fired a critical_alert; escalate with naked position warning
+                critical_alert(
+                    f"STOP RESUBMIT FAILED — NAKED POSITION: {symbol}\n"
+                    f"Stop {stop_id} cancelled. Resubmit failed (see previous alert).\n"
+                    f"Manual intervention required immediately."
+                )
+                print(f"  [Executor] ❌ {symbol}: stop resubmit FAILED — naked position")
+            else:
+                pos["stop_order_id"] = new_stop_id
+                r.set(Keys.POSITIONS, json.dumps(positions))
+                critical_alert(
+                    f"STOP CANCELLED & RESUBMITTED: {symbol}\n"
+                    f"Old stop {stop_id} was cancelled unexpectedly.\n"
+                    f"New stop {new_stop_id} placed @ ${pos['stop_price']:.2f}."
+                )
+                print(f"  [Executor] ✅ {symbol}: new stop {new_stop_id} placed @ ${pos['stop_price']:.2f}")
+
+    # Reconcile any Alpaca-triggered stop fills found during check
+    for sym in stop_filled_syms:
+        _reconcile_stop_filled(r, positions[sym], positions, sym)
+
+
 # ── Safety Validation ───────────────────────────────────────
 
 def validate_order(r, order, account):

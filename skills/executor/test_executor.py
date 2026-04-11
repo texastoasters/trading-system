@@ -1129,3 +1129,158 @@ class TestProcessOrder:
         from executor import process_order
         result = process_order(r, tc, {"side": "hold", "symbol": "SPY", "quantity": 1, "entry_price": 10.0, "order_value": 10.0})
         assert result is False
+
+
+# ── TestCheckCancelledStops ──────────────────────────────────
+
+class TestCheckCancelledStops:
+    def _make_stop_order(self, status="new", stop_id="stop-456"):
+        o = MagicMock()
+        o.id = stop_id
+        o.status = status
+        return o
+
+    def _make_alpaca_position(self, symbol="SPY"):
+        p = MagicMock()
+        p.symbol = symbol
+        return p
+
+    def test_cancelled_stop_position_exists_resubmits_and_alerts(self):
+        """Cancelled stop + position on Alpaca → resubmit + critical_alert."""
+        pos = make_position(symbol="SPY", qty=10, stop=490.0, stop_order_id="old-stop")
+        r, store = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        tc.get_order_by_id.return_value = self._make_stop_order(status="cancelled")
+        tc.get_all_positions.return_value = [self._make_alpaca_position("SPY")]
+        new_stop = MagicMock()
+        new_stop.id = "new-stop-999"
+        tc.submit_order.return_value = new_stop
+
+        with patch("executor.critical_alert") as mock_alert:
+            from executor import _check_cancelled_stops
+            _check_cancelled_stops(tc, r)
+
+        # Stop resubmitted
+        tc.submit_order.assert_called_once()
+
+        # Redis updated with new stop_order_id
+        saved = json.loads(store["trading:positions"])
+        assert saved["SPY"]["stop_order_id"] == "new-stop-999"
+
+        # Alert fired
+        mock_alert.assert_called_once()
+        assert "SPY" in mock_alert.call_args[0][0]
+        assert "RESUBMIT" in mock_alert.call_args[0][0].upper()
+
+    def test_cancelled_stop_position_gone_cleans_redis_and_alerts(self):
+        """Cancelled stop + position gone from Alpaca → clean Redis + critical_alert."""
+        pos = make_position(symbol="SPY", stop_order_id="old-stop")
+        r, store = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        tc.get_order_by_id.return_value = self._make_stop_order(status="cancelled")
+        tc.get_all_positions.return_value = []  # SPY not on Alpaca
+
+        with patch("executor.critical_alert") as mock_alert, \
+             patch("executor.submit_stop_loss") as mock_submit:
+            from executor import _check_cancelled_stops
+            _check_cancelled_stops(tc, r)
+
+        # No stop resubmitted
+        mock_submit.assert_not_called()
+
+        # Position removed from Redis
+        saved = json.loads(store["trading:positions"])
+        assert "SPY" not in saved
+
+        # Alert fired
+        mock_alert.assert_called_once()
+        assert "SPY" in mock_alert.call_args[0][0]
+
+    def test_cancelled_stop_resubmit_fails_fires_naked_position_alert(self):
+        """Cancelled stop + resubmit returns None → NAKED POSITION alert, no Redis change.
+
+        submit_stop_loss catches exceptions internally and fires its own critical_alert,
+        then returns None. _check_cancelled_stops fires a second critical_alert escalating
+        to NAKED POSITION. Two alerts total; at least one must contain 'NAKED'.
+        """
+        pos = make_position(symbol="SPY", stop_order_id="old-stop")
+        r, store = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        tc.get_order_by_id.return_value = self._make_stop_order(status="cancelled")
+        tc.get_all_positions.return_value = [self._make_alpaca_position("SPY")]
+        tc.submit_order.side_effect = RuntimeError("API timeout")
+
+        with patch("executor.critical_alert") as mock_alert:
+            from executor import _check_cancelled_stops
+            _check_cancelled_stops(tc, r)
+
+        # At least one alert contains "NAKED"
+        assert mock_alert.called
+        assert any("NAKED" in call.args[0] for call in mock_alert.call_args_list)
+
+        # Redis not changed (stop_order_id unchanged)
+        saved = json.loads(store["trading:positions"])
+        assert saved["SPY"]["stop_order_id"] == "old-stop"
+
+    def test_filled_stop_delegates_to_reconcile(self):
+        """Stop already filled by Alpaca → delegates to _reconcile_stop_filled."""
+        pos = make_position(symbol="SPY", stop_order_id="stop-456")
+        r, store = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        tc.get_order_by_id.return_value = self._make_stop_order(status="filled")
+        tc.get_all_positions.return_value = [self._make_alpaca_position("SPY")]
+
+        with patch("executor._reconcile_stop_filled") as mock_reconcile, \
+             patch("executor.critical_alert") as mock_alert:
+            from executor import _check_cancelled_stops
+            _check_cancelled_stops(tc, r)
+
+        mock_reconcile.assert_called_once()
+        mock_alert.assert_not_called()
+
+    def test_healthy_stop_no_action(self):
+        """Stop status 'new' → no resubmit, no alert."""
+        pos = make_position(symbol="SPY", stop_order_id="stop-456")
+        r, _ = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        tc.get_order_by_id.return_value = self._make_stop_order(status="new")
+        tc.get_all_positions.return_value = [self._make_alpaca_position("SPY")]
+
+        with patch("executor.critical_alert") as mock_alert, \
+             patch("executor.submit_stop_loss") as mock_submit:
+            from executor import _check_cancelled_stops
+            _check_cancelled_stops(tc, r)
+
+        mock_submit.assert_not_called()
+        mock_alert.assert_not_called()
+
+    def test_no_positions_returns_early(self):
+        """No open positions → no Alpaca calls at all."""
+        r, _ = make_redis({})
+        tc = MagicMock()
+
+        from executor import _check_cancelled_stops
+        _check_cancelled_stops(tc, r)
+
+        tc.get_all_positions.assert_not_called()
+        tc.get_order_by_id.assert_not_called()
+
+    def test_no_stop_order_id_skipped(self):
+        """Position with no stop_order_id → skipped, no API calls."""
+        pos = make_position(symbol="SPY", stop_order_id=None)
+        r, _ = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        tc.get_all_positions.return_value = [self._make_alpaca_position("SPY")]
+
+        with patch("executor.critical_alert") as mock_alert:
+            from executor import _check_cancelled_stops
+            _check_cancelled_stops(tc, r)
+
+        tc.get_order_by_id.assert_not_called()
+        mock_alert.assert_not_called()
