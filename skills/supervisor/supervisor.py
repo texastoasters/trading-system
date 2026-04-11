@@ -18,6 +18,7 @@ import json
 import sys
 import time
 import argparse
+import subprocess
 from datetime import datetime, timedelta
 
 import psycopg2
@@ -133,6 +134,43 @@ def enable_all_tiers(r):
     r.set(Keys.UNIVERSE, json.dumps(universe))
 
 
+# ── Agent Restart Policy ────────────────────────────────────
+
+def attempt_service_restart(r):
+    """Restart the trading-system service via systemctl. Halts after MAX_AUTO_RESTARTS attempts."""
+    count = int(r.get(Keys.RESTART_COUNT) or 0)
+
+    if count >= config.MAX_AUTO_RESTARTS:
+        r.set(Keys.SYSTEM_STATUS, "halted")
+        critical_alert(
+            f"🚨 Auto-restart limit reached ({config.MAX_AUTO_RESTARTS} attempts). "
+            f"Trading HALTED. Manual intervention required."
+        )
+        return
+
+    new_count = count + 1
+    r.set(Keys.RESTART_COUNT, str(new_count))
+    print(f"  [Supervisor] Restarting trading-system service (attempt {new_count}/{config.MAX_AUTO_RESTARTS})...")
+
+    try:
+        result = subprocess.run(
+            ["sudo", "systemctl", "restart", "trading-system"],
+            capture_output=True, timeout=30,
+        )
+        if result.returncode == 0:
+            critical_alert(
+                f"⚠️ Auto-restart #{new_count}: trading-system service restarted. "
+                f"Monitoring for recovery..."
+            )
+        else:
+            stderr = result.stderr.decode(errors="replace").strip()
+            critical_alert(
+                f"🚨 Auto-restart #{new_count} failed (exit {result.returncode}): {stderr}"
+            )
+    except Exception as e:
+        critical_alert(f"🚨 Auto-restart #{new_count} error: {e}")
+
+
 # ── Health Check ────────────────────────────────────────────
 
 def run_health_check(r):
@@ -141,9 +179,11 @@ def run_health_check(r):
     r.set(Keys.heartbeat("supervisor"), datetime.now().isoformat())
 
     issues = []
+    daemon_stale = False
 
     # Daemon agent heartbeats — should always be running, flag if stale > 5 min
-    for agent in ["executor", "portfolio_manager"]:
+    # executor, portfolio_manager, watcher are all started by the systemd service
+    for agent in ["executor", "portfolio_manager", "watcher"]:
         hb = r.get(Keys.heartbeat(agent))
         if hb:
             last = datetime.fromisoformat(hb)
@@ -152,17 +192,24 @@ def run_health_check(r):
                 issues.append(f"{agent}: heartbeat {age_min:.0f}min old (daemon may have crashed)")
                 print(f"  ⚠️  {agent}: last heartbeat {age_min:.0f} min ago — daemon may have crashed")
                 critical_alert(f"🚨 {agent} heartbeat {age_min:.0f}min old — daemon may have crashed")
+                daemon_stale = True
             else:
                 print(f"  ✅ {agent}: alive ({age_min:.0f}min ago)")
         else:
             issues.append(f"{agent}: no heartbeat — daemon not running")
             print(f"  ⚠️  {agent}: no heartbeat — daemon not running")
             critical_alert(f"🚨 {agent} has no heartbeat — daemon not running")
+            daemon_stale = True
+
+    if daemon_stale:
+        attempt_service_restart(r)
+    else:
+        # All daemons healthy — reset restart counter
+        r.set(Keys.RESTART_COUNT, "0")
 
     # Cron-triggered agent heartbeats — gaps between runs are expected
     # screener: runs once daily at 4:15 PM ET, flag if stale > 25 hours
-    # watcher:  runs every 4 hours, flag if stale > 5 hours
-    cron_thresholds = {"screener": 25 * 60, "watcher": 5 * 60}  # in minutes
+    cron_thresholds = {"screener": 25 * 60}  # in minutes
     for agent, threshold_min in cron_thresholds.items():
         hb = r.get(Keys.heartbeat(agent))
         if hb:
@@ -206,7 +253,7 @@ def run_health_check(r):
 
     agent_lines = []
     for agent, threshold_min in [("executor", 5), ("portfolio_manager", 5),
-                                  ("screener", 25 * 60), ("watcher", 5 * 60)]:
+                                  ("watcher", 5), ("screener", 25 * 60)]:
         hb = r.get(Keys.heartbeat(agent))
         if hb:
             age_min = (datetime.now() - datetime.fromisoformat(hb)).total_seconds() / 60
