@@ -106,6 +106,27 @@ def make_account(blocked=False, pdt=False, acct_blocked=False, equity="5000.0", 
     return a
 
 
+# ── Graceful Shutdown ────────────────────────────────────────
+
+class TestGracefulShutdown:
+    def setup_method(self):
+        import executor
+        executor._shutdown = False
+
+    def teardown_method(self):
+        import executor
+        executor._shutdown = False
+
+    def test_shutdown_flag_starts_false(self):
+        import executor
+        assert executor._shutdown is False
+
+    def test_handle_sigterm_sets_shutdown(self):
+        import executor
+        executor._handle_sigterm(None, None)
+        assert executor._shutdown is True
+
+
 # ── TestGetSimulatedCash ─────────────────────────────────────
 
 class TestGetSimulatedCash:
