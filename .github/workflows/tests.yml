@@ -21,17 +21,21 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          pytest --cov=skills --cov=scripts --cov-report=term-missing > /tmp/python-coverage.txt 2>&1
+          pytest --cov=skills --cov=scripts \
+            --cov-report=term-missing \
+            --cov-report=lcov:coverage.lcov \
+            > /tmp/python-coverage.txt 2>&1
           cat /tmp/python-coverage.txt
         env:
           PYTHONPATH: scripts
 
       - name: Upload to Coveralls
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          COVERALLS_FLAG_NAME: python
-          COVERALLS_PARALLEL: "true"
-        run: coveralls --service=github
+        uses: coverallsapp/github-action@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          flag-name: python
+          parallel: true
+          file: coverage.lcov
 
       - name: Upload coverage output
         if: always()
@@ -106,13 +110,17 @@ jobs:
           mix coveralls > /tmp/elixir-coverage.txt 2>&1
           cat /tmp/elixir-coverage.txt
 
-      - name: Upload to Coveralls
+      - name: Generate lcov for Coveralls upload
         working-directory: dashboard
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          COVERALLS_FLAG_NAME: elixir
-          COVERALLS_PARALLEL: "true"
-        run: mix coveralls.github
+        run: mix coveralls.lcov
+
+      - name: Upload to Coveralls
+        uses: coverallsapp/github-action@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          flag-name: elixir
+          parallel: true
+          file: dashboard/cover/lcov.info
 
       - name: Upload coverage output
         if: always()
@@ -132,7 +140,6 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           parallel-finished: true
-          carryforward: "python,elixir"
 
   comment:
     name: Post coverage comment
