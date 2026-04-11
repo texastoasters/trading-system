@@ -16,12 +16,22 @@ import time
 import argparse
 from datetime import datetime
 
+import signal
+
 import config
 from config import (
     Keys, get_redis, get_simulated_equity, get_drawdown,
     get_tier, get_sector, is_crypto, init_redis_state,
 )
 from notify import notify
+
+_shutdown = False
+
+
+def _handle_sigterm(signum, frame):
+    global _shutdown
+    _shutdown = True
+    print("[PM] SIGTERM received — finishing current cycle then exiting")
 
 
 def get_open_positions(r):
@@ -343,6 +353,10 @@ def process_pending_signals(r):
 
 def daemon_loop():  # pragma: no cover
     """Listen for signals continuously."""
+    global _shutdown
+    signal.signal(signal.SIGTERM, _handle_sigterm)
+    signal.signal(signal.SIGINT, _handle_sigterm)
+
     print("[PM] Starting daemon mode — listening for signals...")
 
     r = get_redis()
@@ -352,7 +366,7 @@ def daemon_loop():  # pragma: no cover
     pubsub = r.pubsub()
     pubsub.subscribe(Keys.SIGNALS)
 
-    while True:
+    while not _shutdown:
         # Update heartbeat on every iteration (fires every ~60s when idle)
         r.set(Keys.heartbeat("portfolio_manager"), datetime.now().isoformat())
         msg = pubsub.get_message(timeout=60)
@@ -360,13 +374,15 @@ def daemon_loop():  # pragma: no cover
             continue
 
         try:
-            signal = json.loads(msg['data'])
-            print(f"\n[PM] Received {signal.get('signal_type', '?')} signal for {signal.get('symbol', '?')}")
-            process_signal(r, signal)
+            sig = json.loads(msg['data'])
+            print(f"\n[PM] Received {sig.get('signal_type', '?')} signal for {sig.get('symbol', '?')}")
+            process_signal(r, sig)
         except Exception as e:
             print(f"[PM] Error processing signal: {e}")
             from notify import critical_alert
             critical_alert(f"Portfolio Manager error: {e}")
+
+    print("[PM] Shutdown complete.")
 
 
 def main():  # pragma: no cover
