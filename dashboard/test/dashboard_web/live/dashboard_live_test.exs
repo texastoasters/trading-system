@@ -1062,6 +1062,65 @@ defmodule DashboardWeb.DashboardLiveTest do
     end
   end
 
+  describe "drawdown_attribution template rendering" do
+    defp attribution_state(pos_map) do
+      %{
+        "trading:positions" => %{"SPY" => pos_map},
+        "trading:peak_equity_date" => "2026-01-01",
+        "trading:heartbeat:screener" => nil, "trading:heartbeat:watcher" => nil,
+        "trading:heartbeat:portfolio_manager" => nil, "trading:heartbeat:executor" => nil,
+        "trading:heartbeat:supervisor" => nil
+      }
+    end
+
+    test "attribution panel hidden when no attribution data", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      html = render(view)
+      refute html =~ "Drawdown Attribution"
+    end
+
+    test "attribution panel shown when positions have losses", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+
+      send(view.pid, {:state_update, attribution_state(%{
+        "symbol" => "SPY", "tier" => 1, "quantity" => 10.0,
+        "entry_price" => 500.0, "stop_price" => 490.0, "current_price" => 490.0,
+        "entry_date" => nil, "unrealized_pnl_pct" => -2.0
+      })})
+
+      html = render(view)
+      assert html =~ "Drawdown Attribution"
+      assert html =~ "SPY"
+    end
+
+    test "attribution panel shows total P&L for each instrument", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+
+      # unrealized = 500 × 10 × -2% / 100 = -100.0
+      send(view.pid, {:state_update, attribution_state(%{
+        "symbol" => "SPY", "tier" => 1, "quantity" => 10.0,
+        "entry_price" => 500.0, "stop_price" => 490.0, "current_price" => 490.0,
+        "entry_date" => nil, "unrealized_pnl_pct" => -2.0
+      })})
+
+      html = render(view)
+      assert html =~ "-100"
+    end
+
+    test "attribution panel hidden after positions clear to zero", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+
+      send(view.pid, {:state_update, attribution_state(%{
+        "symbol" => "SPY", "tier" => 1, "quantity" => 10.0,
+        "entry_price" => 500.0, "stop_price" => 490.0, "current_price" => 500.0,
+        "entry_date" => nil, "unrealized_pnl_pct" => 0.0
+      })})
+
+      html = render(view)
+      refute html =~ "Drawdown Attribution"
+    end
+  end
+
   describe "format helpers with non-float inputs" do
     test "entry signal with integer rsi2 renders without crash", %{conn: conn} do
       {:ok, view, _} = live(conn, "/")

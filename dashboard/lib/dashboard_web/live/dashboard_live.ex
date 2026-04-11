@@ -289,6 +289,9 @@ defmodule DashboardWeb.DashboardLive do
   defp format_signed_pct(v) when v > 0, do: "+#{:erlang.float_to_binary(v + 0.0, decimals: 2)}%"
   defp format_signed_pct(v), do: "#{:erlang.float_to_binary(v + 0.0, decimals: 2)}%"
 
+  defp format_signed_dollar(v) when v > 0, do: "+$#{:erlang.float_to_binary(v + 0.0, decimals: 2)}"
+  defp format_signed_dollar(v), do: "-$#{:erlang.float_to_binary(abs(v + 0.0), decimals: 2)}"
+
   defp signal_time(%{"time" => t}) when is_binary(t) do
     case DateTime.from_iso8601(t) do
       {:ok, dt, _} ->
