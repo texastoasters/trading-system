@@ -191,13 +191,20 @@ def _check_cancelled_stops(trading_client, r):
                 r.set(Keys.POSITIONS, json.dumps(positions))
                 continue
 
-            # Position still exists — resubmit stop
+            # Position still exists — resubmit stop (trailing or fixed GTC)
             print(f"  [Executor] ⚠️  {symbol}: stop {stop_id} cancelled — resubmitting")
-            new_stop_id = submit_stop_loss(
-                trading_client, symbol, pos["quantity"], pos["stop_price"]
-            )
+            if pos.get("trailing"):
+                new_stop_id = submit_trailing_stop(
+                    trading_client, symbol, pos["quantity"], pos["trail_percent"]
+                )
+                stop_desc = f"trailing stop, trail={pos['trail_percent']}%"
+            else:
+                new_stop_id = submit_stop_loss(
+                    trading_client, symbol, pos["quantity"], pos["stop_price"]
+                )
+                stop_desc = f"fixed stop @ ${pos['stop_price']:.2f}"
+
             if new_stop_id is None:
-                # submit_stop_loss already fired a critical_alert; escalate with naked position warning
                 critical_alert(
                     f"STOP RESUBMIT FAILED — NAKED POSITION: {symbol}\n"
                     f"Stop {stop_id} cancelled. Resubmit failed (see previous alert).\n"
@@ -210,9 +217,9 @@ def _check_cancelled_stops(trading_client, r):
                 critical_alert(
                     f"STOP CANCELLED & RESUBMITTED: {symbol}\n"
                     f"Old stop {stop_id} was cancelled unexpectedly.\n"
-                    f"New stop {new_stop_id} placed @ ${pos['stop_price']:.2f}."
+                    f"New {stop_desc} placed. Order: {new_stop_id}"
                 )
-                print(f"  [Executor] ✅ {symbol}: new stop {new_stop_id} placed @ ${pos['stop_price']:.2f}")
+                print(f"  [Executor] ✅ {symbol}: new {stop_desc}")
 
     # Reconcile any Alpaca-triggered stop fills found during check
     for sym, fp in stop_filled_syms:

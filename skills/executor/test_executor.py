@@ -1386,6 +1386,51 @@ class TestCheckCancelledStops:
         _, kwargs = mock_reconcile.call_args
         assert kwargs.get("fill_price") is None
 
+    def test_cancelled_trailing_stop_resubmits_as_trailing(self):
+        """Cancelled stop on a trailing position → resubmit as trailing stop, not fixed GTC."""
+        pos = make_position(symbol="SPY", qty=10, stop=490.0, stop_order_id="old-trail-stop")
+        pos["trailing"] = True
+        pos["trail_percent"] = 2.0
+        r, store = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        tc.get_order_by_id.return_value = self._make_stop_order(status="cancelled")
+        tc.get_all_positions.return_value = [self._make_alpaca_position("SPY")]
+
+        with patch("executor.submit_trailing_stop", return_value="new-trail-001") as mock_trail, \
+             patch("executor.submit_stop_loss") as mock_fixed, \
+             patch("executor.critical_alert"):
+            from executor import _check_cancelled_stops
+            _check_cancelled_stops(tc, r)
+
+        mock_trail.assert_called_once_with(tc, "SPY", pos["quantity"], 2.0)
+        mock_fixed.assert_not_called()
+        saved = json.loads(store["trading:positions"])
+        assert saved["SPY"]["stop_order_id"] == "new-trail-001"
+        assert saved["SPY"]["trailing"] is True
+
+    def test_cancelled_non_trailing_stop_resubmits_as_fixed_gtc(self):
+        """Cancelled stop on a non-trailing position → still resubmits as fixed GTC (existing behavior)."""
+        pos = make_position(symbol="SPY", qty=10, stop=490.0, stop_order_id="old-stop")
+        # trailing not set / False
+        r, store = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        tc.get_order_by_id.return_value = self._make_stop_order(status="cancelled")
+        tc.get_all_positions.return_value = [self._make_alpaca_position("SPY")]
+        new_stop = MagicMock()
+        new_stop.id = "new-fixed-001"
+        tc.submit_order.return_value = new_stop
+
+        with patch("executor.submit_trailing_stop") as mock_trail, \
+             patch("executor.critical_alert"):
+            from executor import _check_cancelled_stops
+            _check_cancelled_stops(tc, r)
+
+        mock_trail.assert_not_called()
+        saved = json.loads(store["trading:positions"])
+        assert saved["SPY"]["stop_order_id"] == "new-fixed-001"
+
 
 # ── TestReconcileStopFilledFillPrice ─────────────────────────
 
