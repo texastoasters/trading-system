@@ -122,8 +122,8 @@ defmodule Dashboard.Queries do
             last_trade: max(t.time),
             trade_count: count(t.id),
             total_pnl: sum(t.realized_pnl),
-            wins: fragment("COUNT(*) FILTER (WHERE ? > 0)", t.realized_pnl),
-            losses: fragment("COUNT(*) FILTER (WHERE ? < 0)", t.realized_pnl),
+            wins: type(fragment("COUNT(*) FILTER (WHERE ? > 0)", t.realized_pnl), :integer),
+            losses: type(fragment("COUNT(*) FILTER (WHERE ? < 0)", t.realized_pnl), :integer),
             avg_win: fragment("AVG(?) FILTER (WHERE ? > 0)", t.realized_pnl, t.realized_pnl),
             avg_loss: fragment("AVG(?) FILTER (WHERE ? < 0)", t.realized_pnl, t.realized_pnl),
             gross_wins:
@@ -154,7 +154,7 @@ defmodule Dashboard.Queries do
   defp compute_derived(row) do
     win_rate =
       if row.trade_count > 0,
-        do: Float.round(row.wins / row.trade_count * 100, 1),
+        do: Float.round(row.wins * 1.0 / row.trade_count * 100, 1),
         else: 0.0
 
     profit_factor =
