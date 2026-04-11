@@ -672,6 +672,27 @@ class TestGenerateExitSignals:
             signals = generate_exit_signals(r, MagicMock(), MagicMock())
         assert signals == []
 
+    def test_stop_check_skipped_for_trailing_positions(self):
+        """Trailing positions skip manual stop-loss detection — Alpaca handles the fill.
+
+        Even when intraday_low < stop_price, a trailing position should NOT generate
+        a stop_loss signal. Alpaca will trigger the trailing stop server-side.
+        """
+        pos = make_position(entry_price=490.0, stop_price=480.0,
+                            entry_date=datetime.now().strftime("%Y-%m-%d"))
+        pos["trailing"] = True  # position upgraded to trailing stop
+        r = make_redis({Keys.POSITIONS: json.dumps({"SPY": pos})})
+        # intraday_low=479 < stop_price=480 — would normally fire stop_loss
+        intraday = make_intraday(close=490.0, low=479.0)
+        with patch('watcher.fetch_intraday_bars', return_value=intraday), \
+             patch('watcher.fetch_recent_bars', return_value=make_daily(close=490.0)), \
+             patch('watcher.rsi', return_value=np.array([50.0])), \
+             patch('watcher.is_market_hours', return_value=True):
+            from watcher import generate_exit_signals
+            signals = generate_exit_signals(r, MagicMock(), MagicMock())
+        # No stop signal — Alpaca owns this stop
+        assert signals == []
+
 
 # ── publish_signals ───────────────────────────────────────────
 

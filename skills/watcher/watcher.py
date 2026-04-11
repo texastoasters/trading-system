@@ -351,7 +351,8 @@ def generate_exit_signals(r, stock_client, crypto_client):
         exit_signal = None
 
         # Stop-loss hit (check intraday low for responsive detection)
-        if intraday_low <= stop_price:
+        # Skip if position is trailing — Alpaca manages the fill server-side.
+        if not pos.get("trailing") and intraday_low <= stop_price:
             exit_signal = {
                 "signal_type": "stop_loss",
                 "exit_price": stop_price,
