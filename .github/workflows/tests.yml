@@ -26,6 +26,13 @@ jobs:
         env:
           PYTHONPATH: scripts
 
+      - name: Upload to Coveralls
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COVERALLS_FLAG_NAME: python
+          COVERALLS_PARALLEL: "true"
+        run: coveralls --service=github
+
       - name: Upload coverage output
         if: always()
         uses: actions/upload-artifact@v4
@@ -93,8 +100,12 @@ jobs:
 
       - name: Run tests with coverage
         working-directory: dashboard
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COVERALLS_FLAG_NAME: elixir
+          COVERALLS_PARALLEL: "true"
         run: |
-          mix coveralls > /tmp/elixir-coverage.txt 2>&1
+          mix coveralls.github > /tmp/elixir-coverage.txt 2>&1
           cat /tmp/elixir-coverage.txt
 
       - name: Upload coverage output
@@ -103,6 +114,19 @@ jobs:
         with:
           name: elixir-coverage
           path: /tmp/elixir-coverage.txt
+
+  coveralls-finish:
+    name: Coveralls parallel finish
+    runs-on: ubuntu-latest
+    needs: [python, elixir]
+    if: always()
+
+    steps:
+      - uses: coverallsapp/github-action@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          parallel-finished: true
+          carryforward: "python,elixir"
 
   comment:
     name: Post coverage comment
