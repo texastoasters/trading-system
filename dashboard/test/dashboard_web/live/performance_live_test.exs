@@ -195,5 +195,57 @@ defmodule DashboardWeb.PerformanceLiveTest do
       assert html =~ "instruments"
       assert html =~ "+$150.00"
     end
+
+    test "last_trade formats single-digit day without leading hyphen", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/performance")
+      row = %{make_row("SPY", "10.00", 1, 1, "10.00", nil) | last_trade: ~U[2026-04-01 12:00:00Z]}
+      send(view.pid, {:set_rows, [row]})
+      html = render(view)
+      # Must render "Apr 1" (no leading space artifact, no Linux-only %-d)
+      assert html =~ "Apr"
+      refute html =~ "Apr  "
+    end
+  end
+
+  describe "summary assign" do
+    test "mount assigns summary with zero count", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/performance")
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert Map.has_key?(assigns, :summary)
+      assert assigns.summary.count == 0
+    end
+
+    test "set_rows updates summary assign", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/performance")
+
+      send(view.pid, {:set_rows, [
+        make_row("SPY", "100.00", 8, 10, "20.00", "-10.00")
+      ]})
+
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.summary.count == 1
+      assert Decimal.equal?(assigns.summary.total_pnl, Decimal.new("100.00"))
+    end
+
+    test "set_range updates summary assign", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/performance")
+      render_click(view, "set_range", %{"range" => "90d"})
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert Map.has_key?(assigns, :summary)
+    end
+
+    test "sort event preserves summary assign unchanged", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/performance")
+
+      send(view.pid, {:set_rows, [
+        make_row("SPY", "100.00", 8, 10, "20.00", "-10.00"),
+        make_row("QQQ", "50.00", 6, 8, "15.00", "-8.00")
+      ]})
+
+      render_click(view, "sort", %{"col" => "symbol"})
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.summary.count == 2
+      assert Decimal.equal?(assigns.summary.total_pnl, Decimal.new("150.00"))
+    end
   end
 end

@@ -34,6 +34,7 @@ defmodule DashboardWeb.PerformanceLive do
       |> assign(:sort_dir, :desc)
       |> assign(:range, "30d")
       |> assign(:universe, nil)
+      |> assign(:summary, compute_summary(rows))
 
     {:ok, socket}
   end
@@ -59,7 +60,8 @@ defmodule DashboardWeb.PerformanceLive do
        rows: rows,
        range: range,
        sort_col: :total_pnl,
-       sort_dir: :desc
+       sort_dir: :desc,
+       summary: compute_summary(rows)
      )}
   end
 
@@ -110,12 +112,12 @@ defmodule DashboardWeb.PerformanceLive do
       Queries.instrument_performance(days_back)
       |> sort_rows(socket.assigns.sort_col, socket.assigns.sort_dir)
 
-    {:noreply, assign(socket, :rows, rows)}
+    {:noreply, socket |> assign(:rows, rows) |> assign(:summary, compute_summary(rows))}
   end
 
   # Test injection handler
   def handle_info({:set_rows, rows}, socket) do
-    {:noreply, assign(socket, :rows, rows)}
+    {:noreply, socket |> assign(:rows, rows) |> assign(:summary, compute_summary(rows))}
   end
 
   def handle_info(_, socket), do: {:noreply, socket}
@@ -165,7 +167,7 @@ defmodule DashboardWeb.PerformanceLive do
   defp format_win_rate(_), do: "—"
 
   defp format_last_trade(nil), do: "—"
-  defp format_last_trade(%DateTime{} = dt), do: Calendar.strftime(dt, "%b %-d")
+  defp format_last_trade(%DateTime{} = dt), do: "#{Calendar.strftime(dt, "%b")} #{dt.day}"
 
   defp pnl_class(nil), do: "text-gray-400"
 
@@ -214,7 +216,7 @@ defmodule DashboardWeb.PerformanceLive do
   defp range_label("90d"), do: "90D"
   defp range_label("all"), do: "All"
 
-  defp page_summary(rows) do
+  defp compute_summary(rows) do
     count = length(rows)
 
     total_pnl =
