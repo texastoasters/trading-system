@@ -238,6 +238,7 @@ class TestTrailingStopConfig:
     def test_trigger_pct_has_all_tiers(self):
         assert set(config.TRAILING_TRIGGER_PCT.keys()) == {1, 2, 3}
 
+    # Needed: invariant (trigger > trail) doesn't prevent negative trigger values
     def test_trigger_pct_all_positive(self):
         for tier, pct in config.TRAILING_TRIGGER_PCT.items():
             assert pct > 0, f"tier {tier} trigger must be positive"
@@ -245,6 +246,7 @@ class TestTrailingStopConfig:
     def test_trail_pct_has_all_tiers(self):
         assert set(config.TRAILING_TRAIL_PCT.keys()) == {1, 2, 3}
 
+    # Needed: invariant (trigger > trail) doesn't prevent negative trail values
     def test_trail_pct_all_positive(self):
         for tier, pct in config.TRAILING_TRAIL_PCT.items():
             assert pct > 0, f"tier {tier} trail must be positive"

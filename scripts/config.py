@@ -95,7 +95,7 @@ DRAWDOWN_HALT = 20.0
 # gains are still locked in (lower-conviction names need faster protection).
 TRAILING_TRIGGER_PCT = {
     1: 5.0,   # T1: premium names — give room before locking in
-    2: 5.0,   # T2: same as T1
+    2: 5.0,   # T2: same threshold — volatility profile doesn't justify a tighter trigger
     3: 4.0,   # T3: lower conviction — activate earlier
 }
 
@@ -107,6 +107,9 @@ TRAILING_TRAIL_PCT = {
     2: 2.5,   # T2: medium
     3: 3.0,   # T3: wider
 }
+
+# NOTE: both dicts only contain tiers 1, 2, 3. Callers must guard against
+# unknown tier values (e.g. use pos.get("tier", 3)) before indexing.
 
 # ── Default Universe (before Supervisor populates Redis) ────
 
