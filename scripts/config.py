@@ -8,6 +8,7 @@ strategy parameters, and system constants.
 import os
 import json
 import redis
+from datetime import date, timedelta
 
 
 def _load_trading_env():
@@ -212,6 +213,7 @@ class Keys:
     POSITIONS = "trading:positions"
     SIMULATED_EQUITY = "trading:simulated_equity"
     PEAK_EQUITY = "trading:peak_equity"
+    PEAK_EQUITY_DATE = "trading:peak_equity_date"
     DAILY_PNL = "trading:daily_pnl"
     DRAWDOWN = "trading:drawdown"
     PDT_COUNT = "trading:pdt:count"
@@ -262,6 +264,8 @@ def init_redis_state(r: redis.Redis):
         r.set(Keys.SIMULATED_EQUITY, str(INITIAL_CAPITAL))
     if not r.exists(Keys.PEAK_EQUITY):
         r.set(Keys.PEAK_EQUITY, str(INITIAL_CAPITAL))
+    if not r.exists(Keys.PEAK_EQUITY_DATE):
+        r.set(Keys.PEAK_EQUITY_DATE, date.today().isoformat())
     if not r.exists(Keys.DAILY_PNL):
         r.set(Keys.DAILY_PNL, "0.0")
     if not r.exists(Keys.DRAWDOWN):

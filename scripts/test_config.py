@@ -93,6 +93,9 @@ class TestKeys:
     def test_manual_exit(self):
         assert Keys.manual_exit("NVDA") == "trading:manual_exit:NVDA"
 
+    def test_peak_equity_date_key(self):
+        assert Keys.PEAK_EQUITY_DATE == "trading:peak_equity_date"
+
 
 # ── get_redis ─────────────────────────────────────────────────
 
@@ -112,8 +115,8 @@ class TestInitRedisState:
     def test_sets_all_defaults_when_keys_missing(self):
         r = make_r(exists=False)
         init_redis_state(r)
-        # All 10 keys should have been set
-        assert r.set.call_count == 10
+        # All 11 keys should have been set (includes PEAK_EQUITY_DATE)
+        assert r.set.call_count == 11
 
     def test_skips_existing_keys(self):
         r = make_r(exists=True)
