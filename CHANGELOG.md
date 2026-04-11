@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.10.2] - 2026-04-10
+
+### Changed
+- **Coveralls.io integration** (PR #79): both Python and Elixir jobs now post parallel coverage reports to coveralls.io via `GITHUB_TOKEN`. Added `coveralls-finish` job to signal parallel completion. ExCoveralls uses `mix coveralls.github`; Python uses `coveralls --service=github`.
+
+---
+
 ## [0.10.1] - 2026-04-10
 
 ### Changed
