@@ -15,6 +15,7 @@ import sys
 import time
 import argparse
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import numpy as np
 import requests
@@ -138,6 +139,23 @@ def is_near_earnings(symbol):
     before = timedelta(days=config.EARNINGS_DAYS_BEFORE)
     after = timedelta(days=config.EARNINGS_DAYS_AFTER)
     return any(now - after <= d <= now + before for d in dates)
+
+
+_DEFAULT_CALENDAR_PATH = Path(__file__).parent.parent / "scripts" / "economic_calendar.json"
+
+
+def is_macro_event_day(calendar_path=None):
+    """Return True if today is a scheduled macro event day (FOMC, CPI, NFP).
+    Fails safe — returns False on missing file, malformed JSON, or any error.
+    """
+    if calendar_path is None:
+        calendar_path = _DEFAULT_CALENDAR_PATH
+    try:
+        events = json.loads(Path(calendar_path).read_text())
+        today = datetime.now().strftime("%Y-%m-%d")
+        return any(e["date"] == today for e in events)
+    except Exception:
+        return False
 
 
 def check_whipsaw(r, symbol):

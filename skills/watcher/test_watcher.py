@@ -331,6 +331,35 @@ class TestIsNearEarnings:
         mock_fetch.assert_not_called()
 
 
+# ── is_macro_event_day ────────────────────────────────────────
+
+class TestIsMacroEventDay:
+    def test_returns_true_when_today_in_calendar(self, tmp_path):
+        from watcher import is_macro_event_day
+        today = datetime.now().strftime("%Y-%m-%d")
+        cal = [{"date": today, "event": "FOMC"}]
+        cal_path = tmp_path / "calendar.json"
+        cal_path.write_text(json.dumps(cal))
+        assert is_macro_event_day(calendar_path=cal_path) is True
+
+    def test_returns_false_when_today_not_in_calendar(self, tmp_path):
+        from watcher import is_macro_event_day
+        cal = [{"date": "2000-01-01", "event": "FOMC"}]
+        cal_path = tmp_path / "calendar.json"
+        cal_path.write_text(json.dumps(cal))
+        assert is_macro_event_day(calendar_path=cal_path) is False
+
+    def test_returns_false_when_file_missing(self, tmp_path):
+        from watcher import is_macro_event_day
+        assert is_macro_event_day(calendar_path=tmp_path / "nonexistent.json") is False
+
+    def test_returns_false_when_json_malformed(self, tmp_path):
+        from watcher import is_macro_event_day
+        cal_path = tmp_path / "calendar.json"
+        cal_path.write_text("not valid json {{")
+        assert is_macro_event_day(calendar_path=cal_path) is False
+
+
 # ── generate_entry_signals ────────────────────────────────────
 
 class TestGenerateEntrySignals:
