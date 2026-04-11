@@ -1389,6 +1389,154 @@ class TestCheckCancelledStops:
 
 # ── TestReconcileStopFilledFillPrice ─────────────────────────
 
+class TestCheckTrailingUpgrades:
+    def _make_alpaca_pos(self, symbol="SPY", current_price="526.0"):
+        p = MagicMock()
+        p.symbol = symbol
+        p.current_price = current_price
+        return p
+
+    def test_activates_trailing_stop_when_gain_meets_t1_threshold(self):
+        """T1 threshold=5.0%; entry=500, current=526 → gain=5.2% ≥ 5.0% → upgrade."""
+        pos = make_position(symbol="SPY", qty=10, entry=500.0, stop=490.0,
+                            stop_order_id="old-stop")
+        pos["tier"] = 1
+        r, store = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        tc.get_all_positions.return_value = [self._make_alpaca_pos("SPY", "526.0")]
+        new_stop = MagicMock()
+        new_stop.id = "trail-001"
+        tc.submit_order.return_value = new_stop
+
+        with patch("executor.critical_alert"):
+            from executor import _check_trailing_upgrades
+            _check_trailing_upgrades(tc, r)
+
+        # Old stop cancelled
+        tc.cancel_order_by_id.assert_called_once_with("old-stop")
+        # New trailing stop submitted
+        tc.submit_order.assert_called_once()
+        # Redis updated: trailing=True, trail_percent set, stop_order_id updated
+        import config as cfg
+        saved = json.loads(store["trading:positions"])
+        assert saved["SPY"]["trailing"] is True
+        assert saved["SPY"]["trail_percent"] == cfg.TRAILING_TRAIL_PCT[1]
+        assert saved["SPY"]["stop_order_id"] == "trail-001"
+
+    def test_skips_when_gain_below_threshold(self):
+        """T1 threshold=5.0%; gain=2.0% → no upgrade."""
+        pos = make_position(symbol="SPY", entry=500.0, stop_order_id="old-stop")
+        pos["tier"] = 1
+        r, _ = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        tc.get_all_positions.return_value = [self._make_alpaca_pos("SPY", "510.0")]
+
+        from executor import _check_trailing_upgrades
+        _check_trailing_upgrades(tc, r)
+
+        tc.cancel_order_by_id.assert_not_called()
+        tc.submit_order.assert_not_called()
+
+    def test_skips_already_trailing_positions(self):
+        """Position already upgraded → no action even on massive gain."""
+        pos = make_position(symbol="SPY", entry=500.0)
+        pos["tier"] = 1
+        pos["trailing"] = True
+        pos["trail_percent"] = 2.0
+        r, _ = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        tc.get_all_positions.return_value = [self._make_alpaca_pos("SPY", "700.0")]
+
+        from executor import _check_trailing_upgrades
+        _check_trailing_upgrades(tc, r)
+
+        tc.cancel_order_by_id.assert_not_called()
+        tc.submit_order.assert_not_called()
+
+    def test_cancel_failure_skips_symbol_safely(self):
+        """Cancel API error → bail out for that symbol, no submit, Redis unchanged."""
+        pos = make_position(symbol="SPY", entry=500.0, stop_order_id="old-stop")
+        pos["tier"] = 1
+        r, store = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        tc.get_all_positions.return_value = [self._make_alpaca_pos("SPY", "526.0")]
+        tc.cancel_order_by_id.side_effect = RuntimeError("cancel failed")
+
+        from executor import _check_trailing_upgrades
+        _check_trailing_upgrades(tc, r)
+
+        tc.submit_order.assert_not_called()
+        saved = json.loads(store["trading:positions"])
+        assert not saved["SPY"].get("trailing")
+
+    def test_submit_failure_reverts_to_fixed_stop(self):
+        """Trailing stop submit fails → fallback to fixed GTC stop, critical alert."""
+        pos = make_position(symbol="SPY", entry=500.0, stop=490.0, stop_order_id="old-stop")
+        pos["tier"] = 1
+        r, store = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        tc.get_all_positions.return_value = [self._make_alpaca_pos("SPY", "526.0")]
+        fallback = MagicMock()
+        fallback.id = "fallback-stop-001"
+        # First call (trailing stop): fail. Second call (fixed stop fallback): succeed.
+        tc.submit_order.side_effect = [RuntimeError("API timeout"), fallback]
+
+        with patch("executor.critical_alert"):
+            from executor import _check_trailing_upgrades
+            _check_trailing_upgrades(tc, r)
+
+        # Two submit_order attempts: trailing failed, fixed stop succeeded
+        assert tc.submit_order.call_count == 2
+        saved = json.loads(store["trading:positions"])
+        # Not marked trailing
+        assert not saved["SPY"].get("trailing")
+        # Fallback stop_order_id recorded
+        assert saved["SPY"]["stop_order_id"] == "fallback-stop-001"
+
+    def test_no_positions_skips_alpaca_call(self):
+        """Empty Redis positions → get_all_positions is never called."""
+        r, _ = make_redis({})
+        tc = MagicMock()
+
+        from executor import _check_trailing_upgrades
+        _check_trailing_upgrades(tc, r)
+
+        tc.get_all_positions.assert_not_called()
+
+    def test_alpaca_api_error_returns_early(self):
+        """get_all_positions raises → function returns without crashing."""
+        pos = make_position(symbol="SPY", entry=500.0)
+        pos["tier"] = 1
+        r, _ = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        tc.get_all_positions.side_effect = RuntimeError("API down")
+
+        from executor import _check_trailing_upgrades
+        _check_trailing_upgrades(tc, r)  # should not raise
+
+        tc.cancel_order_by_id.assert_not_called()
+
+    def test_symbol_not_on_alpaca_is_skipped(self):
+        """Position in Redis but not in Alpaca positions → skip gracefully."""
+        pos = make_position(symbol="SPY", entry=500.0)
+        pos["tier"] = 1
+        r, _ = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        tc.get_all_positions.return_value = []  # SPY not on Alpaca
+
+        from executor import _check_trailing_upgrades
+        _check_trailing_upgrades(tc, r)
+
+        tc.cancel_order_by_id.assert_not_called()
+
+
 class TestReconcileStopFilledFillPrice:
     """Tests for the optional fill_price parameter on _reconcile_stop_filled."""
 

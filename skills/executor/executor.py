@@ -20,7 +20,7 @@ from datetime import datetime
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import (
     MarketOrderRequest, LimitOrderRequest, StopOrderRequest,
-    GetOrdersRequest,
+    TrailingStopOrderRequest, GetOrdersRequest,
 )
 from alpaca.trading.enums import OrderSide, TimeInForce, QueryOrderStatus
 
@@ -217,6 +217,98 @@ def _check_cancelled_stops(trading_client, r):
     # Reconcile any Alpaca-triggered stop fills found during check
     for sym, fp in stop_filled_syms:
         _reconcile_stop_filled(r, positions[sym], positions, sym, fill_price=fp)
+
+
+def _check_trailing_upgrades(trading_client, r):
+    """Upgrade fixed GTC stops to Alpaca trailing stops when gain threshold is met.
+
+    Called each idle daemon cycle alongside _check_cancelled_stops. For each open
+    position not already trailing:
+    - Fetches current price from Alpaca
+    - Computes unrealized gain vs entry_price
+    - If gain >= TRAILING_TRIGGER_PCT[tier], cancels fixed stop and submits trailing stop
+    - Updates Redis: trailing=True, trail_percent, stop_order_id
+    - On any error: bails safely (no naked position window)
+    """
+    positions = json.loads(r.get(Keys.POSITIONS) or "{}")
+    if not positions:
+        return
+
+    try:
+        alpaca_positions = {p.symbol: p for p in trading_client.get_all_positions()}
+    except Exception as exc:
+        print(f"  [Executor] _check_trailing_upgrades: could not fetch Alpaca positions: {exc}")
+        return
+
+    changed = False
+
+    for symbol, pos in list(positions.items()):
+        if pos.get("trailing"):
+            continue  # already upgraded — Alpaca owns this stop
+
+        alpaca_pos = alpaca_positions.get(symbol)
+        if alpaca_pos is None:
+            continue  # not on Alpaca (edge case)
+
+        current_price = float(alpaca_pos.current_price)
+        entry_price = float(pos["entry_price"])
+        gain_pct = (current_price - entry_price) / entry_price * 100
+
+        tier = int(pos.get("tier", 3))
+        trigger = config.TRAILING_TRIGGER_PCT.get(tier, config.TRAILING_TRIGGER_PCT[3])
+
+        if gain_pct < trigger:
+            continue
+
+        trail_pct = config.TRAILING_TRAIL_PCT.get(tier, config.TRAILING_TRAIL_PCT[3])
+
+        print(f"  [Executor] 🎯 {symbol}: gain {gain_pct:.1f}% >= {trigger}% — upgrading to "
+              f"trailing stop ({trail_pct}%)")
+
+        # Cancel existing fixed stop
+        old_stop_id = pos.get("stop_order_id")
+        if old_stop_id:
+            try:
+                trading_client.cancel_order_by_id(old_stop_id)
+            except Exception as exc:
+                print(f"  [Executor] ⚠️ {symbol}: could not cancel old stop {old_stop_id}: {exc}")
+                continue  # bail — don't risk a double-stop situation
+
+        # Submit trailing stop
+        new_stop_id = submit_trailing_stop(trading_client, symbol, pos["quantity"], trail_pct)
+        if new_stop_id is None:
+            # submit_trailing_stop already fired critical_alert; try to restore fixed stop
+            resubmit_id = submit_stop_loss(trading_client, symbol, pos["quantity"],
+                                           pos["stop_price"])
+            if resubmit_id:
+                pos["stop_order_id"] = resubmit_id
+                changed = True
+                critical_alert(
+                    f"TRAILING STOP FAILED — REVERTED TO FIXED STOP: {symbol}\n"
+                    f"Could not submit trailing stop. Re-placed fixed stop @ "
+                    f"${pos['stop_price']:.2f}."
+                )
+            else:
+                critical_alert(
+                    f"TRAILING STOP FAILED + FIXED STOP RESUBMIT FAILED — NAKED POSITION: "
+                    f"{symbol}\nManual intervention required immediately."
+                )
+            continue
+
+        pos["trailing"] = True
+        pos["trail_percent"] = trail_pct
+        pos["stop_order_id"] = new_stop_id
+        changed = True
+
+        critical_alert(
+            f"✅ TRAILING STOP ACTIVATED: {symbol}\n"
+            f"Gain: {gain_pct:.1f}% (>= {trigger}% trigger)\n"
+            f"Trailing {trail_pct}% below price. Stop order: {new_stop_id}"
+        )
+        print(f"  [Executor] ✅ {symbol}: trailing stop activated, trailing {trail_pct}%")
+
+    if changed:
+        r.set(Keys.POSITIONS, json.dumps(positions))
 
 
 # ── Safety Validation ───────────────────────────────────────
@@ -657,6 +749,34 @@ def submit_stop_loss(trading_client, symbol, quantity, stop_price):
             return None
 
 
+def submit_trailing_stop(trading_client, symbol, quantity, trail_percent):
+    """Submit a server-side GTC trailing stop order. Retries once after cancelling conflicting orders.
+
+    trail_percent: Alpaca trail_percent value — price trails this % below the high-water mark.
+    Returns the order ID string on success, None on failure (also fires critical_alert).
+    """
+    for attempt in range(2):
+        try:
+            req = TrailingStopOrderRequest(
+                symbol=symbol,
+                qty=int(quantity) if not is_crypto(symbol) else quantity,
+                side=OrderSide.SELL,
+                time_in_force=TimeInForce.GTC,
+                trail_percent=trail_percent,
+            )
+            order = trading_client.submit_order(req)
+            print(f"  [Executor] Trailing stop placed: {order.id}, trail={trail_percent}%")
+            return str(order.id)
+        except Exception as e:
+            if attempt == 0 and "wash trade" in str(e).lower():
+                print(f"  [Executor] ⚠️ Wash trade conflict — cancelling existing orders and retrying")
+                cancel_existing_orders(trading_client, symbol)
+                continue
+            print(f"  [Executor] ⚠️ Failed to place trailing stop: {e}")
+            critical_alert(f"Trailing stop failed for {symbol}: {e}")
+            return None
+
+
 # ── Startup Verification ────────────────────────────────────
 
 def verify_startup(trading_client, r):
@@ -786,6 +906,7 @@ def daemon_loop():  # pragma: no cover
         msg = pubsub.get_message(timeout=60)
         if msg is None or msg['type'] != 'message':
             _check_cancelled_stops(trading_client, r)
+            _check_trailing_upgrades(trading_client, r)
             continue
 
         try:
