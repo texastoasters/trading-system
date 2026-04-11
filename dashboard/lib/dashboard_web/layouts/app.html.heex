@@ -1,3 +1,19 @@
-<main class="min-h-screen">
-  {@inner_content}
-</main>
+<div class="min-h-screen bg-gray-900">
+  <nav class="border-b border-gray-800 px-4 py-2 flex gap-1">
+    <a href="/" class="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200 rounded hover:bg-gray-800 transition-colors">
+      Dashboard
+    </a>
+    <a href="/universe" class="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200 rounded hover:bg-gray-800 transition-colors">
+      Universe
+    </a>
+    <a href="/trades" class="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200 rounded hover:bg-gray-800 transition-colors">
+      Trades
+    </a>
+    <a href="/performance" class="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200 rounded hover:bg-gray-800 transition-colors">
+      Performance
+    </a>
+  </nav>
+  <main>
+    {@inner_content}
+  </main>
+</div>

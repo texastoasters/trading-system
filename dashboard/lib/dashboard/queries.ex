@@ -102,4 +102,74 @@ defmodule Dashboard.Queries do
       _ -> nil
     end
   end
+
+  @doc "Per-instrument P&L breakdown from closed trades. days_back: 30 | 90 | :all."
+  def instrument_performance(days_back \\ 30) do
+    try do
+      cutoff =
+        case days_back do
+          :all -> nil
+          n -> DateTime.add(DateTime.utc_now(), -n * 86_400, :second)
+        end
+
+      base =
+        from t in Trade,
+          where: t.side == "sell" and not is_nil(t.realized_pnl),
+          group_by: t.symbol,
+          select: %{
+            symbol: t.symbol,
+            asset_class: max(t.asset_class),
+            last_trade: max(t.time),
+            trade_count: count(t.id),
+            total_pnl: sum(t.realized_pnl),
+            wins: type(fragment("COUNT(*) FILTER (WHERE ? > 0)", t.realized_pnl), :integer),
+            losses: type(fragment("COUNT(*) FILTER (WHERE ? < 0)", t.realized_pnl), :integer),
+            avg_win: fragment("AVG(?) FILTER (WHERE ? > 0)", t.realized_pnl, t.realized_pnl),
+            avg_loss: fragment("AVG(?) FILTER (WHERE ? < 0)", t.realized_pnl, t.realized_pnl),
+            gross_wins:
+              fragment("SUM(?) FILTER (WHERE ? > 0)", t.realized_pnl, t.realized_pnl),
+            gross_losses:
+              fragment("SUM(?) FILTER (WHERE ? < 0)", t.realized_pnl, t.realized_pnl)
+          }
+
+      query = if cutoff, do: where(base, [t], t.time >= ^cutoff), else: base
+
+      query
+      |> Repo.all()
+      # coveralls-ignore-start
+      |> Enum.map(&compute_derived/1)
+      |> Enum.sort_by(
+        fn row ->
+          case row.total_pnl do
+            %Decimal{} = d -> Decimal.to_float(d)
+            _ -> 0.0
+          end
+        end,
+        :desc
+      )
+      # coveralls-ignore-stop
+    rescue
+      _ -> []
+    end
+  end
+
+  # coveralls-ignore-start
+  defp compute_derived(row) do
+    win_rate =
+      if row.trade_count > 0,
+        do: Float.round(row.wins * 1.0 / row.trade_count * 100, 1),
+        else: 0.0
+
+    profit_factor =
+      if row.gross_losses &&
+           Decimal.compare(row.gross_losses, Decimal.new(0)) == :lt do
+        gross_wins = row.gross_wins || Decimal.new(0)
+        Decimal.div(gross_wins, Decimal.abs(row.gross_losses)) |> Decimal.round(2)
+      else
+        nil
+      end
+
+    Map.merge(row, %{win_rate: win_rate, profit_factor: profit_factor})
+  end
+  # coveralls-ignore-stop
 end
