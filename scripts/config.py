@@ -56,6 +56,11 @@ ATR_STOP_MULTIPLIER = 2.0
 BTC_FEE_RATE = 0.004            # 0.40% round-trip
 BTC_MIN_EXPECTED_GAIN = 0.006   # 0.60% minimum expected gain
 
+# ── Earnings Avoidance ──────────────────────────────────────
+
+EARNINGS_DAYS_BEFORE = 2   # block entry N days before earnings
+EARNINGS_DAYS_AFTER = 1    # block entry N days after earnings
+
 # ── RSI-2 Strategy Parameters ──────────────────────────────
 
 RSI2_ENTRY_CONSERVATIVE = 10.0

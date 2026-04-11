@@ -17,6 +17,7 @@ import argparse
 from datetime import datetime, timedelta
 
 import numpy as np
+import requests
 
 from alpaca.data.historical import StockHistoricalDataClient, CryptoHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest, CryptoBarsRequest
@@ -103,6 +104,42 @@ def fetch_intraday_bars(symbol, stock_client, crypto_client, hours=24):
         return None
 
 
+def fetch_earnings_dates(symbol):
+    """Fetch upcoming earnings dates for symbol from Yahoo Finance. Returns [] on any failure."""
+    url = (
+        f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{symbol}"
+        f"?modules=calendarEvents"
+    )
+    try:
+        resp = requests.get(url, timeout=5, headers={"User-Agent": "Mozilla/5.0"})
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
+        result = data.get("quoteSummary", {}).get("result") or []
+        if not result:
+            return []
+        raw_dates = (
+            result[0]
+            .get("calendarEvents", {})
+            .get("earnings", {})
+            .get("earningsDate", [])
+        )
+        return [datetime.fromtimestamp(d["raw"]) for d in raw_dates if "raw" in d]
+    except Exception:
+        return []
+
+
+def is_near_earnings(symbol):
+    """Return True if symbol has earnings within the configured avoidance window."""
+    if is_crypto(symbol):
+        return False
+    dates = fetch_earnings_dates(symbol)
+    now = datetime.now()
+    before = timedelta(days=config.EARNINGS_DAYS_BEFORE)
+    after = timedelta(days=config.EARNINGS_DAYS_AFTER)
+    return any(now - after <= d <= now + before for d in dates)
+
+
 def check_whipsaw(r, symbol):
     """Check if symbol is in whipsaw cooldown (entry + stop within 24h)."""
     whipsaw_time = r.get(Keys.whipsaw(symbol))
@@ -149,6 +186,11 @@ def generate_entry_signals(r, stock_client, crypto_client):
         # Whipsaw check
         if check_whipsaw(r, symbol):
             print(f"  [Watcher] {symbol}: skipped (whipsaw cooldown)")
+            continue
+
+        # Earnings avoidance
+        if is_near_earnings(symbol):
+            print(f"  [Watcher] {symbol}: skipped (near earnings window)")
             continue
 
         # Manual-exit cooldown: block re-entry until price drops sufficiently
