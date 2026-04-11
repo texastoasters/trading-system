@@ -8,6 +8,17 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.11.0] - 2026-04-10
+
+### Added
+- **Cancelled stop auto-resubmit** (PR #81): executor checks all open position stop orders each idle daemon cycle (~60s). If a GTC stop is unexpectedly `cancelled` (corporate action, API glitch), resubmits at original stop price, updates Redis with new stop order ID, and fires `critical_alert`. If the position is also gone from Alpaca, cleans Redis and alerts. If resubmit fails, escalates with a NAKED POSITION critical alert.
+
+### Fixed
+- **Daily loss limit fires `critical_alert`** (PR #81): supervisor's daily loss CB was using `drawdown_alert` (soft, low-visibility). Changed to `critical_alert` for parity with the drawdown halt alert.
+- **Sell-through on daily halt** (PR #81): `validate_order` was blocking both buys AND sells when daily P&L was breached or `trading:system_status == daily_halt`. Daily loss check moved inside buy-only branch; exits always pass through regardless of daily halt status.
+
+---
+
 ## [0.10.2] - 2026-04-10
 
 ### Changed
