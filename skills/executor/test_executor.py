@@ -1284,3 +1284,42 @@ class TestCheckCancelledStops:
 
         tc.get_order_by_id.assert_not_called()
         mock_alert.assert_not_called()
+
+    def test_get_all_positions_api_error_returns_early(self):
+        """API error fetching Alpaca positions → returns early, no per-stop checks."""
+        pos = make_position(symbol="SPY", stop_order_id="stop-456")
+        r, _ = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        tc.get_all_positions.side_effect = RuntimeError("network error")
+
+        from executor import _check_cancelled_stops
+        _check_cancelled_stops(tc, r)
+
+        tc.get_order_by_id.assert_not_called()
+
+    def test_get_order_by_id_api_error_skips_symbol(self):
+        """API error fetching a specific stop order → skips that symbol, continues loop."""
+        pos_spy = make_position(symbol="SPY", stop_order_id="stop-spy")
+        pos_qqq = make_position(symbol="QQQ", stop_order_id="stop-qqq")
+        r, store = make_redis({"SPY": pos_spy, "QQQ": pos_qqq})
+
+        tc = MagicMock()
+        tc.get_all_positions.return_value = [
+            self._make_alpaca_position("SPY"),
+            self._make_alpaca_position("QQQ"),
+        ]
+        # SPY stop fetch fails, QQQ is healthy
+        def _stop_side_effect(stop_id):
+            if stop_id == "stop-spy":
+                raise RuntimeError("order not found")
+            return self._make_stop_order(status="new", stop_id=stop_id)
+        tc.get_order_by_id.side_effect = _stop_side_effect
+
+        with patch("executor.critical_alert") as mock_alert:
+            from executor import _check_cancelled_stops
+            _check_cancelled_stops(tc, r)
+
+        # QQQ was still checked (2 calls attempted)
+        assert tc.get_order_by_id.call_count == 2
+        mock_alert.assert_not_called()

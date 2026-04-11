@@ -757,6 +757,7 @@ def daemon_loop():  # pragma: no cover
         r.set(Keys.heartbeat("executor"), datetime.now().isoformat())
         msg = pubsub.get_message(timeout=60)
         if msg is None or msg['type'] != 'message':
+            _check_cancelled_stops(trading_client, r)
             continue
 
         try:
