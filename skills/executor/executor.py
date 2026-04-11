@@ -28,7 +28,7 @@ import signal
 
 import config
 from config import Keys, get_redis, get_simulated_equity, is_crypto, init_redis_state
-from notify import trade_alert, exit_alert, critical_alert
+from notify import notify, trade_alert, exit_alert, critical_alert
 
 _shutdown = False
 
@@ -273,11 +273,13 @@ def _check_trailing_upgrades(trading_client, r):
             except Exception as exc:
                 print(f"  [Executor] ⚠️ {symbol}: could not cancel old stop {old_stop_id}: {exc}")
                 continue  # bail — don't risk a double-stop situation
+        else:
+            print(f"  [Executor] {symbol}: no fixed stop on record — submitting trailing stop directly")
 
         # Submit trailing stop
         new_stop_id = submit_trailing_stop(trading_client, symbol, pos["quantity"], trail_pct)
         if new_stop_id is None:
-            # submit_trailing_stop already fired critical_alert; try to restore fixed stop
+            # submit_trailing_stop failed; try to restore fixed stop
             resubmit_id = submit_stop_loss(trading_client, symbol, pos["quantity"],
                                            pos["stop_price"])
             if resubmit_id:
@@ -300,10 +302,19 @@ def _check_trailing_upgrades(trading_client, r):
         pos["stop_order_id"] = new_stop_id
         changed = True
 
-        critical_alert(
-            f"✅ TRAILING STOP ACTIVATED: {symbol}\n"
-            f"Gain: {gain_pct:.1f}% (>= {trigger}% trigger)\n"
-            f"Trailing {trail_pct}% below price. Stop order: {new_stop_id}"
+        trade_alert(
+            side="trail_activated",
+            symbol=symbol,
+            quantity=pos["quantity"],
+            price=current_price,
+            stop_price=0.0,
+            strategy="RSI2-trailing",
+            tier=tier,
+            risk_pct=0.0,
+            reasoning=(
+                f"Gain: {gain_pct:.1f}% (>= {trigger}% trigger). "
+                f"Trailing {trail_pct}% below price. Stop order: {new_stop_id}"
+            ),
         )
         print(f"  [Executor] ✅ {symbol}: trailing stop activated, trailing {trail_pct}%")
 
@@ -753,7 +764,7 @@ def submit_trailing_stop(trading_client, symbol, quantity, trail_percent):
     """Submit a server-side GTC trailing stop order. Retries once after cancelling conflicting orders.
 
     trail_percent: Alpaca trail_percent value — price trails this % below the high-water mark.
-    Returns the order ID string on success, None on failure (also fires critical_alert).
+    Returns the order ID string on success, None on failure.
     """
     for attempt in range(2):
         try:
@@ -773,7 +784,6 @@ def submit_trailing_stop(trading_client, symbol, quantity, trail_percent):
                 cancel_existing_orders(trading_client, symbol)
                 continue
             print(f"  [Executor] ⚠️ Failed to place trailing stop: {e}")
-            critical_alert(f"Trailing stop failed for {symbol}: {e}")
             return None
 
 

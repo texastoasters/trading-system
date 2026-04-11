@@ -1486,7 +1486,7 @@ class TestCheckTrailingUpgrades:
         # First call (trailing stop): fail. Second call (fixed stop fallback): succeed.
         tc.submit_order.side_effect = [RuntimeError("API timeout"), fallback]
 
-        with patch("executor.critical_alert"):
+        with patch("executor.critical_alert") as mock_alert:
             from executor import _check_trailing_upgrades
             _check_trailing_upgrades(tc, r)
 
@@ -1497,6 +1497,7 @@ class TestCheckTrailingUpgrades:
         assert not saved["SPY"].get("trailing")
         # Fallback stop_order_id recorded
         assert saved["SPY"]["stop_order_id"] == "fallback-stop-001"
+        mock_alert.assert_called_once()  # caller fires one alert, not two (Fix 1 removed duplicate)
 
     def test_no_positions_skips_alpaca_call(self):
         """Empty Redis positions → get_all_positions is never called."""
@@ -1535,6 +1536,36 @@ class TestCheckTrailingUpgrades:
         _check_trailing_upgrades(tc, r)
 
         tc.cancel_order_by_id.assert_not_called()
+
+    def test_multi_position_persists_all_positions(self):
+        """With two positions, only the one above threshold upgrades; both saved to Redis."""
+        pos_spy = make_position(symbol="SPY", qty=10, entry=500.0, stop=490.0,
+                                stop_order_id="old-spy")
+        pos_spy["tier"] = 1  # threshold=5.0%; will gain 5.2% → upgrade
+
+        pos_qqq = make_position(symbol="QQQ", qty=5, entry=400.0, stop=390.0,
+                                stop_order_id="old-qqq")
+        pos_qqq["tier"] = 1  # threshold=5.0%; will gain 2.0% → no upgrade
+
+        r, store = make_redis({"SPY": pos_spy, "QQQ": pos_qqq})
+
+        tc = MagicMock()
+        tc.get_all_positions.return_value = [
+            self._make_alpaca_pos("SPY", "526.0"),  # 5.2% gain
+            self._make_alpaca_pos("QQQ", "408.0"),  # 2.0% gain
+        ]
+        new_stop = MagicMock()
+        new_stop.id = "trail-spy-001"
+        tc.submit_order.return_value = new_stop
+
+        with patch("executor.critical_alert"):
+            from executor import _check_trailing_upgrades
+            _check_trailing_upgrades(tc, r)
+
+        saved = json.loads(store["trading:positions"])
+        assert saved["SPY"]["trailing"] is True
+        assert saved["SPY"]["stop_order_id"] == "trail-spy-001"
+        assert not saved["QQQ"].get("trailing")  # QQQ unchanged
 
 
 class TestReconcileStopFilledFillPrice:
