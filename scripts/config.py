@@ -8,6 +8,7 @@ strategy parameters, and system constants.
 import os
 import json
 import redis
+from datetime import date, timedelta
 
 
 def _load_trading_env():
@@ -212,6 +213,7 @@ class Keys:
     POSITIONS = "trading:positions"
     SIMULATED_EQUITY = "trading:simulated_equity"
     PEAK_EQUITY = "trading:peak_equity"
+    PEAK_EQUITY_DATE = "trading:peak_equity_date"
     DAILY_PNL = "trading:daily_pnl"
     DRAWDOWN = "trading:drawdown"
     PDT_COUNT = "trading:pdt:count"
@@ -262,6 +264,8 @@ def init_redis_state(r: redis.Redis):
         r.set(Keys.SIMULATED_EQUITY, str(INITIAL_CAPITAL))
     if not r.exists(Keys.PEAK_EQUITY):
         r.set(Keys.PEAK_EQUITY, str(INITIAL_CAPITAL))
+    if not r.exists(Keys.PEAK_EQUITY_DATE):
+        r.set(Keys.PEAK_EQUITY_DATE, date.today().isoformat())
     if not r.exists(Keys.DAILY_PNL):
         r.set(Keys.DAILY_PNL, "0.0")
     if not r.exists(Keys.DRAWDOWN):
@@ -298,6 +302,65 @@ def get_drawdown(r: redis.Redis) -> float:
     if peak <= 0:
         return 0.0
     return max(0.0, (peak - equity) / peak * 100)
+
+
+def get_drawdown_attribution(r: redis.Redis, conn) -> list:
+    """
+    Returns per-instrument drawdown contribution since peak date.
+    List of dicts: {symbol, realized_pnl, unrealized_pnl, total_pnl}
+    Sorted by total_pnl ascending (worst first). Only non-zero totals included.
+    Degrades gracefully: DB failure → unrealized only.
+    """
+    peak_date_str = r.get(Keys.PEAK_EQUITY_DATE)
+    if peak_date_str:
+        peak_date = date.fromisoformat(peak_date_str)
+    else:
+        peak_date = date.today() - timedelta(days=30)
+
+    # Realized: query trades closed since peak date
+    realized: dict = {}
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT symbol, SUM(realized_pnl) FROM trades "
+            "WHERE side = 'sell' AND realized_pnl IS NOT NULL AND time >= %s "
+            "GROUP BY symbol",
+            (peak_date,),
+        )
+        for symbol, pnl in cur.fetchall():
+            realized[symbol] = float(pnl or 0)
+    except Exception:
+        pass  # degrade to unrealized-only
+
+    # Unrealized: open positions from Redis
+    unrealized: dict = {}
+    try:
+        positions = json.loads(r.get(Keys.POSITIONS) or "{}")
+        for symbol, pos in positions.items():
+            entry = float(pos["entry_price"])
+            qty = float(pos["quantity"])
+            pct = float(pos["unrealized_pnl_pct"])
+            unrealized[symbol] = entry * qty * pct / 100
+    except Exception:
+        pass
+
+    # Merge by symbol
+    all_symbols = set(realized) | set(unrealized)
+    rows = []
+    for symbol in all_symbols:
+        r_pnl = realized.get(symbol, 0.0)
+        u_pnl = unrealized.get(symbol, 0.0)
+        total = r_pnl + u_pnl
+        if total != 0.0:
+            rows.append({
+                "symbol": symbol,
+                "realized_pnl": r_pnl,
+                "unrealized_pnl": u_pnl,
+                "total_pnl": total,
+            })
+
+    rows.sort(key=lambda x: x["total_pnl"])
+    return rows
 
 
 def is_crypto(symbol: str) -> bool:

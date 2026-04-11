@@ -51,5 +51,5 @@ defmodule Dashboard.Application do
     DashboardWeb.Endpoint.config_change(changed, removed)
     :ok
   end
-  # coveralls-ignore-end
+  # coveralls-ignore-stop
 end

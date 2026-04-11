@@ -996,6 +996,146 @@ defmodule DashboardWeb.DashboardLiveTest do
     end
   end
 
+  describe "drawdown_attribution assign" do
+    test "defaults to empty list on mount", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.drawdown_attribution == []
+    end
+
+    test "populated from positions after state_update", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+
+      state = %{
+        "trading:positions" => %{
+          "SPY" => %{
+            "symbol" => "SPY", "tier" => 1, "quantity" => 10.0,
+            "entry_price" => 500.0, "stop_price" => 490.0, "current_price" => 490.0,
+            "entry_date" => nil, "unrealized_pnl_pct" => -2.0
+          }
+        },
+        "trading:peak_equity_date" => "2026-01-01",
+        "trading:heartbeat:screener" => nil, "trading:heartbeat:watcher" => nil,
+        "trading:heartbeat:portfolio_manager" => nil, "trading:heartbeat:executor" => nil,
+        "trading:heartbeat:supervisor" => nil
+      }
+
+      send(view.pid, {:state_update, state})
+      assigns = :sys.get_state(view.pid).socket.assigns
+
+      # DB fails in test env (no TimescaleDB), so realized = {}
+      # unrealized = 500.0 × 10.0 × -2.0 / 100 = -100.0
+      assert length(assigns.drawdown_attribution) == 1
+      [row] = assigns.drawdown_attribution
+      assert row.symbol == "SPY"
+      assert_in_delta row.unrealized_pnl, -100.0, 0.001
+    end
+
+    test "remains empty when positions is nil or absent", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:state_update, %{"trading:peak_equity_date" => "2026-01-01"}})
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.drawdown_attribution == []
+    end
+
+    test "handles nil peak_equity_date (30-day fallback)", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+
+      state = %{
+        "trading:positions" => %{
+          "QQQ" => %{
+            "symbol" => "QQQ", "tier" => 1, "quantity" => 5.0,
+            "entry_price" => 400.0, "stop_price" => 390.0, "current_price" => 396.0,
+            "entry_date" => nil, "unrealized_pnl_pct" => -1.0
+          }
+        },
+        "trading:peak_equity_date" => nil,
+        "trading:heartbeat:screener" => nil, "trading:heartbeat:watcher" => nil,
+        "trading:heartbeat:portfolio_manager" => nil, "trading:heartbeat:executor" => nil,
+        "trading:heartbeat:supervisor" => nil
+      }
+
+      send(view.pid, {:state_update, state})
+      assigns = :sys.get_state(view.pid).socket.assigns
+      # Should not crash; unrealized = 400 × 5 × -1% / 100 = -20.0
+      assert length(assigns.drawdown_attribution) == 1
+    end
+  end
+
+  describe "drawdown_attribution template rendering" do
+    defp attribution_state(pos_map) do
+      %{
+        "trading:positions" => %{"SPY" => pos_map},
+        "trading:peak_equity_date" => "2026-01-01",
+        "trading:heartbeat:screener" => nil, "trading:heartbeat:watcher" => nil,
+        "trading:heartbeat:portfolio_manager" => nil, "trading:heartbeat:executor" => nil,
+        "trading:heartbeat:supervisor" => nil
+      }
+    end
+
+    test "attribution panel hidden when no attribution data", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      html = render(view)
+      refute html =~ "Drawdown Attribution"
+    end
+
+    test "attribution panel shown when positions have losses", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+
+      send(view.pid, {:state_update, attribution_state(%{
+        "symbol" => "SPY", "tier" => 1, "quantity" => 10.0,
+        "entry_price" => 500.0, "stop_price" => 490.0, "current_price" => 490.0,
+        "entry_date" => nil, "unrealized_pnl_pct" => -2.0
+      })})
+
+      html = render(view)
+      assert html =~ "Drawdown Attribution"
+      assert html =~ "SPY"
+    end
+
+    test "attribution panel shows total P&L for each instrument", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+
+      # unrealized = 500 × 10 × -2% / 100 = -100.0
+      send(view.pid, {:state_update, attribution_state(%{
+        "symbol" => "SPY", "tier" => 1, "quantity" => 10.0,
+        "entry_price" => 500.0, "stop_price" => 490.0, "current_price" => 490.0,
+        "entry_date" => nil, "unrealized_pnl_pct" => -2.0
+      })})
+
+      html = render(view)
+      assert html =~ "-100"
+    end
+
+    test "attribution panel hidden after positions clear to zero", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+
+      send(view.pid, {:state_update, attribution_state(%{
+        "symbol" => "SPY", "tier" => 1, "quantity" => 10.0,
+        "entry_price" => 500.0, "stop_price" => 490.0, "current_price" => 500.0,
+        "entry_date" => nil, "unrealized_pnl_pct" => 0.0
+      })})
+
+      html = render(view)
+      refute html =~ "Drawdown Attribution"
+    end
+
+    test "attribution panel shows positive P&L with plus sign", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+
+      # unrealized = 500 × 10 × 2% / 100 = +100.0 — exercises format_signed_dollar positive clause
+      send(view.pid, {:state_update, attribution_state(%{
+        "symbol" => "SPY", "tier" => 1, "quantity" => 10.0,
+        "entry_price" => 500.0, "stop_price" => 490.0, "current_price" => 510.0,
+        "entry_date" => nil, "unrealized_pnl_pct" => 2.0
+      })})
+
+      html = render(view)
+      assert html =~ "Drawdown Attribution"
+      assert html =~ "+$"
+    end
+  end
+
   describe "format helpers with non-float inputs" do
     test "entry signal with integer rsi2 renders without crash", %{conn: conn} do
       {:ok, view, _} = live(conn, "/")

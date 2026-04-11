@@ -220,6 +220,60 @@ class TestDrawdownAlert:
         assert "15.5" in out
         assert "Disabled Tier 2+" in out
 
+    def test_without_attribution_no_breakdown(self, capsys):
+        notify.drawdown_alert(12.5, "50% position size.")
+        out = capsys.readouterr().out
+        assert "DRAWDOWN ALERT: 12.5%" in out
+        assert "realized" not in out.lower()
+        assert "unrealized" not in out.lower()
+
+    def test_with_attribution_shows_symbols(self, capsys):
+        attribution = [
+            {"symbol": "SPY",  "realized_pnl": -42.10, "unrealized_pnl":  0.00, "total_pnl": -42.10},
+            {"symbol": "NVDA", "realized_pnl":   0.00, "unrealized_pnl": -28.30, "total_pnl": -28.30},
+        ]
+        notify.drawdown_alert(12.5, "50% position size.", attribution=attribution)
+        out = capsys.readouterr().out
+        assert "SPY" in out
+        assert "NVDA" in out
+        assert "-42.10" in out
+        assert "-28.30" in out
+
+    def test_with_empty_attribution_no_breakdown(self, capsys):
+        notify.drawdown_alert(5.0, "Caution.", attribution=[])
+        out = capsys.readouterr().out
+        assert "DRAWDOWN ALERT" in out
+        assert "Attribution" not in out
+
+    def test_attribution_realized_only_line(self, capsys):
+        attribution = [
+            {"symbol": "SPY", "realized_pnl": -50.0, "unrealized_pnl": 0.0, "total_pnl": -50.0},
+        ]
+        notify.drawdown_alert(5.0, "Caution.", attribution=attribution)
+        out = capsys.readouterr().out
+        assert "realized" in out.lower()
+        assert "unrealized" not in out.lower()
+
+    def test_attribution_unrealized_only_line(self, capsys):
+        attribution = [
+            {"symbol": "NVDA", "realized_pnl": 0.0, "unrealized_pnl": -30.0, "total_pnl": -30.0},
+        ]
+        notify.drawdown_alert(5.0, "Caution.", attribution=attribution)
+        out = capsys.readouterr().out
+        assert "unrealized" in out.lower()
+        # "unrealized" contains the substring "realized" — check the word "realized"
+        # does NOT appear standalone (i.e. not preceded by "un")
+        assert " realized" not in out.lower()  # no bare "realized" token
+
+    def test_attribution_both_lines(self, capsys):
+        attribution = [
+            {"symbol": "QQQ", "realized_pnl": -20.0, "unrealized_pnl": -10.0, "total_pnl": -30.0},
+        ]
+        notify.drawdown_alert(5.0, "Caution.", attribution=attribution)
+        out = capsys.readouterr().out
+        assert "realized" in out.lower()
+        assert "unrealized" in out.lower()
+
 
 # ── universe_update ──────────────────────────────────────────
 

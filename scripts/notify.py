@@ -329,15 +329,30 @@ def critical_alert(message: str):
     notify(msg, silent=False)
 
 
-def drawdown_alert(drawdown_pct: float, action: str):
+def drawdown_alert(drawdown_pct: float, action: str, attribution: list | None = None):
     """Alert when drawdown thresholds are breached."""
     msg = (
         f"⚠️ <b>DRAWDOWN ALERT: {drawdown_pct:.1f}%</b>\n"
         f"\n"
         f"Action taken: {action}\n"
-        f"\n"
-        f"<i>{_now_et().strftime('%Y-%m-%d %H:%M:%S ET')}</i>"
     )
+
+    if attribution:
+        msg += "\n<b>Attribution since peak:</b>\n"
+        for row in attribution:
+            sym = row["symbol"]
+            total = row["total_pnl"]
+            realized = row["realized_pnl"]
+            unrealized = row["unrealized_pnl"]
+            if unrealized != 0.0 and realized != 0.0:
+                detail = f"${realized:+.2f} realized, ${unrealized:+.2f} unrealized"
+            elif unrealized != 0.0:
+                detail = f"${unrealized:+.2f} unrealized"
+            else:
+                detail = f"${realized:+.2f} realized"
+            msg += f"  {sym}: <b>${total:+.2f}</b> ({detail})\n"
+
+    msg += f"\n<i>{_now_et().strftime('%Y-%m-%d %H:%M:%S ET')}</i>"
     notify(msg, silent=False)
 
 

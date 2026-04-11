@@ -240,6 +240,13 @@ class TestRunCircuitBreakers:
         run_circuit_breakers(r)
         r.set.assert_any_call(Keys.PEAK_EQUITY, "5100.0")
 
+    def test_sets_peak_equity_date_on_new_high(self):
+        from datetime import date
+        r = _make_cb(equity=5100.0, peak=5000.0)
+        from supervisor import run_circuit_breakers
+        run_circuit_breakers(r)
+        r.set.assert_any_call(Keys.PEAK_EQUITY_DATE, date.today().isoformat())
+
     def test_halt_threshold_returns_false_and_alerts(self):
         # 20% drawdown: equity=4000, peak=5000
         r = _make_cb(equity=4000.0, peak=5000.0, status="active")
@@ -318,6 +325,30 @@ class TestRunCircuitBreakers:
             from supervisor import run_circuit_breakers
             run_circuit_breakers(r)
         mock_alert.assert_not_called()
+
+    def test_drawdown_alert_receives_attribution(self):
+        """drawdown_alert is called with attribution kwarg when DB succeeds."""
+        attribution_rows = [{"symbol": "SPY", "realized_pnl": -200.0, "unrealized_pnl": 0.0, "total_pnl": -200.0}]
+        r = _make_cb(equity=4500.0, peak=5000.0, status="active")  # 10% → defensive
+        with patch("supervisor.drawdown_alert") as mock_alert, \
+             patch("supervisor.disable_tiers"), \
+             patch("supervisor.get_drawdown_attribution", return_value=attribution_rows), \
+             patch("supervisor.get_db"):
+            from supervisor import run_circuit_breakers
+            run_circuit_breakers(r)
+        mock_alert.assert_called_once()
+        kwargs = mock_alert.call_args.kwargs
+        assert kwargs.get("attribution") == attribution_rows
+
+    def test_drawdown_alert_fires_even_if_db_fails(self):
+        """Alert still fires if DB connection fails — no attribution, no exception."""
+        r = _make_cb(equity=4500.0, peak=5000.0, status="active")
+        with patch("supervisor.drawdown_alert") as mock_alert, \
+             patch("supervisor.disable_tiers"), \
+             patch("supervisor.get_db", side_effect=Exception("DB down")):
+            from supervisor import run_circuit_breakers
+            run_circuit_breakers(r)  # must not raise
+        mock_alert.assert_called_once()
 
 
 # ── disable_tiers / enable_all_tiers ─────────────────────────
@@ -575,6 +606,14 @@ class TestResetDaily:
             from supervisor import reset_daily
             reset_daily(r)
         r.set.assert_any_call(Keys.PEAK_EQUITY, "4900.0")
+
+    def test_sets_peak_equity_date_on_reset(self):
+        from datetime import date
+        r = self._make(**{Keys.SIMULATED_EQUITY: "4900.0"})
+        with patch("supervisor.notify"):
+            from supervisor import reset_daily
+            reset_daily(r)
+        r.set.assert_any_call(Keys.PEAK_EQUITY_DATE, date.today().isoformat())
 
     def test_re_enables_after_daily_halt(self):
         r = self._make(**{Keys.SYSTEM_STATUS: "daily_halt"})

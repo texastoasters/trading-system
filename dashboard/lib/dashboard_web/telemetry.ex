@@ -36,7 +36,7 @@ defmodule DashboardWeb.Telemetry do
       summary("vm.total_run_queue_lengths.cpu")
     ]
   end
-  # coveralls-ignore-end
+  # coveralls-ignore-stop
 
   defp periodic_measurements do
     []

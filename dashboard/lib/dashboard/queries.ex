@@ -153,6 +153,82 @@ defmodule Dashboard.Queries do
     end
   end
 
+  @doc """
+  Per-instrument drawdown attribution since peak.
+
+  Queries realized P&L from closed trades since `peak_date` (TimescaleDB),
+  merges with unrealized P&L from open `positions` (Redis map, string keys).
+  Returns list of `%{symbol, realized_pnl, unrealized_pnl, total_pnl}` sorted
+  by `total_pnl` ascending (worst first). Zero-contribution entries excluded.
+  DB failure degrades gracefully to unrealized-only.
+
+  `peak_date` — `Date.t()` or nil (nil → 30-day fallback).
+  """
+  def drawdown_attribution(positions, peak_date \\ nil) do
+    cutoff = peak_date || Date.add(Date.utc_today(), -30)
+    cutoff_dt = DateTime.new!(cutoff, ~T[00:00:00], "Etc/UTC")
+
+    realized =
+      try do
+        from(t in Trade,
+          where: t.side == "sell" and not is_nil(t.realized_pnl) and t.time >= ^cutoff_dt,
+          group_by: t.symbol,
+          select: {t.symbol, sum(t.realized_pnl)}
+        )
+        |> Repo.all()
+        |> Map.new(fn {sym, pnl} -> {sym, Decimal.to_float(pnl)} end)
+      rescue
+        _ -> %{}
+      end
+
+    unrealized =
+      try do
+        for {symbol, pos} <- positions,
+            entry = parse_float(pos["entry_price"]),
+            qty = parse_float(pos["quantity"]),
+            pct = parse_float(pos["unrealized_pnl_pct"]),
+            not is_nil(entry) and not is_nil(qty) and not is_nil(pct),
+            into: %{} do
+          {symbol, entry * qty * pct / 100.0}
+        end
+      # coveralls-ignore-start
+      rescue
+        _ -> %{}
+      # coveralls-ignore-stop
+      end
+
+    all_symbols =
+      (Map.keys(realized) ++ Map.keys(unrealized)) |> MapSet.new()
+
+    all_symbols
+    |> Enum.reduce([], fn symbol, acc ->
+      r_pnl = Map.get(realized, symbol, 0.0)
+      u_pnl = Map.get(unrealized, symbol, 0.0)
+      total = r_pnl + u_pnl
+
+      if total != 0.0 do
+        [%{symbol: symbol, realized_pnl: r_pnl, unrealized_pnl: u_pnl, total_pnl: total} | acc]
+      else
+        acc
+      end
+    end)
+    |> Enum.sort_by(& &1.total_pnl)
+  end
+
+  # coveralls-ignore-start
+  defp parse_float(nil), do: nil
+  defp parse_float(v) when is_float(v), do: v
+  defp parse_float(v) when is_integer(v), do: v * 1.0
+
+  defp parse_float(v) when is_binary(v) do
+    case Float.parse(v) do
+      {f, _} -> f
+      :error -> nil
+    end
+  end
+
+  # coveralls-ignore-stop
+
   # coveralls-ignore-start
   defp compute_derived(row) do
     win_rate =

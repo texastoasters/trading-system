@@ -93,6 +93,9 @@ class TestKeys:
     def test_manual_exit(self):
         assert Keys.manual_exit("NVDA") == "trading:manual_exit:NVDA"
 
+    def test_peak_equity_date_key(self):
+        assert Keys.PEAK_EQUITY_DATE == "trading:peak_equity_date"
+
 
 # ── get_redis ─────────────────────────────────────────────────
 
@@ -112,8 +115,8 @@ class TestInitRedisState:
     def test_sets_all_defaults_when_keys_missing(self):
         r = make_r(exists=False)
         init_redis_state(r)
-        # All 10 keys should have been set
-        assert r.set.call_count == 10
+        # All 11 keys should have been set (includes PEAK_EQUITY_DATE)
+        assert r.set.call_count == 11
 
     def test_skips_existing_keys(self):
         r = make_r(exists=True)
@@ -259,3 +262,135 @@ class TestTrailingStopConfig:
                 f"tier {tier}: trigger ({config.TRAILING_TRIGGER_PCT[tier]}) "
                 f"must exceed trail ({config.TRAILING_TRAIL_PCT[tier]})"
             )
+
+
+# ── get_drawdown_attribution ──────────────────────────────────
+
+def _make_conn(rows):
+    """Helper: mock psycopg2 connection returning given rows from cursor.fetchall()."""
+    cur = MagicMock()
+    cur.fetchall.return_value = rows
+    conn = MagicMock()
+    conn.cursor.return_value = cur
+    return conn, cur
+
+
+class TestGetDrawdownAttribution:
+    def setup_method(self):
+        # Import here so it picks up the updated config module
+        from config import get_drawdown_attribution
+        self.fn = get_drawdown_attribution
+
+    def _r(self, peak_date="2026-03-01", positions="{}"):
+        return make_r(store={
+            Keys.PEAK_EQUITY_DATE: peak_date,
+            "trading:positions": positions,
+        })
+
+    def test_realized_only(self):
+        """Realized losses from DB, no open positions."""
+        r = self._r()
+        conn, _ = _make_conn([("SPY", -42.10), ("NVDA", -28.30)])
+        result = self.fn(r, conn)
+        assert len(result) == 2
+        symbols = [row["symbol"] for row in result]
+        assert "SPY" in symbols
+        assert "NVDA" in symbols
+        spy = next(row for row in result if row["symbol"] == "SPY")
+        assert spy["realized_pnl"] == pytest.approx(-42.10)
+        assert spy["unrealized_pnl"] == pytest.approx(0.0)
+        assert spy["total_pnl"] == pytest.approx(-42.10)
+        # sorted worst first
+        assert result[0]["total_pnl"] <= result[1]["total_pnl"]
+
+    def test_unrealized_only(self):
+        """No closed trades, but open position is underwater."""
+        import json
+        positions = {"NVDA": {"entry_price": 800.0, "quantity": 10, "unrealized_pnl_pct": -3.5}}
+        r = self._r(positions=json.dumps(positions))
+        conn, _ = _make_conn([])
+        result = self.fn(r, conn)
+        assert len(result) == 1
+        row = result[0]
+        assert row["symbol"] == "NVDA"
+        assert row["realized_pnl"] == pytest.approx(0.0)
+        # 800 * 10 * (-3.5 / 100) = -280.0
+        assert row["unrealized_pnl"] == pytest.approx(-280.0)
+        assert row["total_pnl"] == pytest.approx(-280.0)
+
+    def test_mixed_realized_and_unrealized(self):
+        """Realized for SPY + unrealized for NVDA."""
+        import json
+        positions = {"NVDA": {"entry_price": 800.0, "quantity": 5, "unrealized_pnl_pct": -2.0}}
+        r = self._r(positions=json.dumps(positions))
+        conn, _ = _make_conn([("SPY", -42.10)])
+        result = self.fn(r, conn)
+        symbols = [row["symbol"] for row in result]
+        assert "SPY" in symbols
+        assert "NVDA" in symbols
+        nvda = next(row for row in result if row["symbol"] == "NVDA")
+        # 800 * 5 * (-2 / 100) = -80.0
+        assert nvda["unrealized_pnl"] == pytest.approx(-80.0)
+
+    def test_empty_no_losses(self):
+        """No losses at all → empty list."""
+        r = self._r()
+        conn, _ = _make_conn([])
+        result = self.fn(r, conn)
+        assert result == []
+
+    def test_db_failure_returns_unrealized_only(self):
+        """DB failure degrades gracefully — returns unrealized only, no exception."""
+        import json
+        positions = {"SPY": {"entry_price": 500.0, "quantity": 2, "unrealized_pnl_pct": -1.0}}
+        r = self._r(positions=json.dumps(positions))
+        conn = MagicMock()
+        conn.cursor.side_effect = Exception("DB down")
+        result = self.fn(r, conn)
+        # Should return unrealized contribution without raising
+        assert len(result) == 1
+        assert result[0]["symbol"] == "SPY"
+        assert result[0]["realized_pnl"] == pytest.approx(0.0)
+        # 500 * 2 * (-1/100) = -10.0
+        assert result[0]["unrealized_pnl"] == pytest.approx(-10.0)
+
+    def test_missing_peak_date_uses_fallback(self):
+        """Missing PEAK_EQUITY_DATE key → uses 30-day fallback (no crash)."""
+        r = self._r(peak_date=None)
+        conn, cur = _make_conn([("QQQ", -15.0)])
+        result = self.fn(r, conn)
+        assert cur.execute.called
+        assert len(result) == 1
+
+    def test_skips_position_with_missing_fields(self):
+        """Position entry missing required fields is silently skipped."""
+        import json
+        positions = {
+            "SPY": {"entry_price": 500.0, "quantity": 2, "unrealized_pnl_pct": -1.0},
+            "BAD": {},
+        }
+        r = self._r(positions=json.dumps(positions))
+        conn, _ = _make_conn([])
+        result = self.fn(r, conn)
+        symbols = [row["symbol"] for row in result]
+        assert "SPY" in symbols
+        assert "BAD" not in symbols
+
+    def test_winning_positions_included_in_result(self):
+        """Winning positions (positive total) are included when non-zero."""
+        import json
+        positions = {"SPY": {"entry_price": 500.0, "quantity": 2, "unrealized_pnl_pct": 2.0}}
+        r = self._r(positions=json.dumps(positions))
+        conn, _ = _make_conn([])
+        result = self.fn(r, conn)
+        # 500 * 2 * (2/100) = +20.0 — non-zero, included
+        assert len(result) == 1
+        assert result[0]["total_pnl"] == pytest.approx(20.0)
+
+    def test_sorted_worst_first(self):
+        """Results sorted ascending by total_pnl (worst first)."""
+        r = self._r()
+        conn, _ = _make_conn([("SPY", -50.0), ("NVDA", -20.0), ("QQQ", -80.0)])
+        result = self.fn(r, conn)
+        totals = [row["total_pnl"] for row in result]
+        assert totals == sorted(totals)
