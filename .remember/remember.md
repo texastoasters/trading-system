@@ -1,11 +1,12 @@
 # Handoff
 
 ## State
-PR #83 open: `safety/graceful-shutdown-redis-backup` → main. v0.12.0. Adds graceful shutdown (executor + PM) and `scripts/backup_redis.py`. 382 tests, 100% coverage on all three modules. Waiting for merge + tag.
+Two PRs open: #83 (`safety/graceful-shutdown-redis-backup`, v0.12.0) and #84 (`feat/economic-calendar-awareness`, v0.13.0). Both need merge + tag. #84 depends on #83 merging first (version chain).
 
 ## Next
-1. Merge PR #83, tag v0.12.0 (`git tag v0.12.0 <sha> && git push origin v0.12.0`)
-2. Next wishlist items: per-instrument P&L breakdown (#7), economic calendar awareness (#8), trailing stop-loss (#9)
+1. Merge PR #83 → tag v0.12.0, merge PR #84 → tag v0.13.0
+2. Next wishlist: per-instrument P&L breakdown (#7) — data in TimescaleDB, needs query + dashboard table
+3. After that: trailing stop-loss (#9)
 
 ## Context
-`_prune` bug caught in TDD: `files[:negative]` slices incorrectly — fixed with `max(0, excess)`. `daemon_loop` local var `signal` shadows `import signal` in PM — renamed to `sig`.
+Economic calendar dates in `scripts/economic_calendar.json` are estimates — verify against official Fed/BLS schedules before relying on them in production.

@@ -15,6 +15,7 @@ import sys
 import time
 import argparse
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import numpy as np
 import requests
@@ -140,6 +141,23 @@ def is_near_earnings(symbol):
     return any(now - after <= d <= now + before for d in dates)
 
 
+_DEFAULT_CALENDAR_PATH = Path(__file__).parent.parent / "scripts" / "economic_calendar.json"
+
+
+def is_macro_event_day(calendar_path=None):
+    """Return True if today is a scheduled macro event day (FOMC, CPI, NFP).
+    Fails safe — returns False on missing file, malformed JSON, or any error.
+    """
+    if calendar_path is None:
+        calendar_path = _DEFAULT_CALENDAR_PATH
+    try:
+        events = json.loads(Path(calendar_path).read_text())
+        today = datetime.now().strftime("%Y-%m-%d")
+        return any(e["date"] == today for e in events)
+    except Exception:
+        return False
+
+
 def check_whipsaw(r, symbol):
     """Check if symbol is in whipsaw cooldown (entry + stop within 24h)."""
     whipsaw_time = r.get(Keys.whipsaw(symbol))
@@ -191,6 +209,11 @@ def generate_entry_signals(r, stock_client, crypto_client):
         # Earnings avoidance
         if is_near_earnings(symbol):
             print(f"  [Watcher] {symbol}: skipped (near earnings window)")
+            continue
+
+        # Economic calendar avoidance
+        if is_macro_event_day():
+            print(f"  [Watcher] {symbol}: skipped (macro event day)")
             continue
 
         # Manual-exit cooldown: block re-entry until price drops sufficiently

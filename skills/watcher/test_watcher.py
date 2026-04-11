@@ -331,6 +331,35 @@ class TestIsNearEarnings:
         mock_fetch.assert_not_called()
 
 
+# ── is_macro_event_day ────────────────────────────────────────
+
+class TestIsMacroEventDay:
+    def test_returns_true_when_today_in_calendar(self, tmp_path):
+        from watcher import is_macro_event_day
+        today = datetime.now().strftime("%Y-%m-%d")
+        cal = [{"date": today, "event": "FOMC"}]
+        cal_path = tmp_path / "calendar.json"
+        cal_path.write_text(json.dumps(cal))
+        assert is_macro_event_day(calendar_path=cal_path) is True
+
+    def test_returns_false_when_today_not_in_calendar(self, tmp_path):
+        from watcher import is_macro_event_day
+        cal = [{"date": "2000-01-01", "event": "FOMC"}]
+        cal_path = tmp_path / "calendar.json"
+        cal_path.write_text(json.dumps(cal))
+        assert is_macro_event_day(calendar_path=cal_path) is False
+
+    def test_returns_false_when_file_missing(self, tmp_path):
+        from watcher import is_macro_event_day
+        assert is_macro_event_day(calendar_path=tmp_path / "nonexistent.json") is False
+
+    def test_returns_false_when_json_malformed(self, tmp_path):
+        from watcher import is_macro_event_day
+        cal_path = tmp_path / "calendar.json"
+        cal_path.write_text("not valid json {{")
+        assert is_macro_event_day(calendar_path=cal_path) is False
+
+
 # ── generate_entry_signals ────────────────────────────────────
 
 class TestGenerateEntrySignals:
@@ -470,6 +499,26 @@ class TestGenerateEntrySignals:
         with patch('watcher.is_market_hours', return_value=True), \
              patch('watcher.check_whipsaw', return_value=False), \
              patch('watcher.is_near_earnings', return_value=False):
+            from watcher import generate_entry_signals
+            signals = generate_entry_signals(r, MagicMock(), MagicMock())
+        assert len(signals) == 1
+
+    def test_skips_symbol_on_macro_event_day(self):
+        r = make_redis({Keys.WATCHLIST: json.dumps([make_watchlist_item()])})
+        with patch('watcher.is_market_hours', return_value=True), \
+             patch('watcher.check_whipsaw', return_value=False), \
+             patch('watcher.is_near_earnings', return_value=False), \
+             patch('watcher.is_macro_event_day', return_value=True):
+            from watcher import generate_entry_signals
+            signals = generate_entry_signals(r, MagicMock(), MagicMock())
+        assert signals == []
+
+    def test_entry_proceeds_when_not_macro_event_day(self):
+        r = make_redis({Keys.WATCHLIST: json.dumps([make_watchlist_item("SPY")])})
+        with patch('watcher.is_market_hours', return_value=True), \
+             patch('watcher.check_whipsaw', return_value=False), \
+             patch('watcher.is_near_earnings', return_value=False), \
+             patch('watcher.is_macro_event_day', return_value=False):
             from watcher import generate_entry_signals
             signals = generate_entry_signals(r, MagicMock(), MagicMock())
         assert len(signals) == 1
