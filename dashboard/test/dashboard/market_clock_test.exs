@@ -50,4 +50,52 @@ defmodule Dashboard.MarketClockTest do
       Application.delete_env(:dashboard, :alpaca_secret_key)
     end
   end
+
+  describe "fetch_clock HTTP paths via Req.Test stub" do
+    setup do
+      Application.put_env(:dashboard, :alpaca_api_key, "test_key")
+      Application.put_env(:dashboard, :alpaca_secret_key, "test_secret")
+      Application.put_env(:dashboard, :req_options, plug: {Req.Test, __MODULE__}, retry: false)
+
+      on_exit(fn ->
+        Application.delete_env(:dashboard, :alpaca_api_key)
+        Application.delete_env(:dashboard, :alpaca_secret_key)
+        Application.delete_env(:dashboard, :req_options)
+      end)
+
+      :ok
+    end
+
+    test "broadcasts clock_update when HTTP returns 200 success", %{pid: pid} do
+      Phoenix.PubSub.subscribe(Dashboard.PubSub, "dashboard:clock")
+
+      Req.Test.stub(__MODULE__, fn conn ->
+        Req.Test.json(conn, %{
+          "is_open" => true,
+          "next_open" => nil,
+          "next_close" => nil,
+          "timestamp" => "2026-04-10T14:00:00Z"
+        })
+      end)
+
+      # Allow the MarketClock GenServer process to consume this test's stub
+      Req.Test.allow(__MODULE__, self(), pid)
+
+      send(pid, :fetch)
+      assert_receive {:clock_update, clock}, 3_000
+      assert clock["is_open"] == true
+    end
+
+    test "logs warning and stays alive on transport error", %{pid: pid} do
+      Req.Test.stub(__MODULE__, fn conn ->
+        Req.Test.transport_error(conn, :econnrefused)
+      end)
+
+      Req.Test.allow(__MODULE__, self(), pid)
+
+      send(pid, :fetch)
+      _state = :sys.get_state(pid)
+      assert Process.alive?(pid)
+    end
+  end
 end

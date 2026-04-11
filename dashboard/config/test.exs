@@ -17,3 +17,5 @@ config :dashboard, Dashboard.Repo,
 config :dashboard, redis_url: "redis://localhost:6379"
 
 config :logger, level: :warning
+
+config :elixir, :time_zone_database, Tzdata.TimeZoneDatabase

@@ -110,7 +110,6 @@ defmodule DashboardWeb.DashboardLive do
       {:ok, _} ->
         {:noreply, put_flash(socket, :info, "Liquidation order sent for #{symbol}")}
 
-      # coveralls-ignore-next-line
       {:error, reason} ->
         {:noreply, put_flash(socket, :error, "Failed to send liquidation order: #{inspect(reason)}")}
     end
@@ -275,19 +274,15 @@ defmodule DashboardWeb.DashboardLive do
   defp format_float(v) when is_float(v), do: :erlang.float_to_binary(v, decimals: 1)
   defp format_float(v), do: "#{v}"
 
-  # coveralls-ignore-next-line
-  defp format_signed_pct(nil), do: "—"
   defp format_signed_pct(v) when v > 0, do: "+#{:erlang.float_to_binary(v + 0.0, decimals: 2)}%"
   defp format_signed_pct(v), do: "#{:erlang.float_to_binary(v + 0.0, decimals: 2)}%"
 
   defp signal_time(%{"time" => t}) when is_binary(t) do
     case DateTime.from_iso8601(t) do
       {:ok, dt, _} ->
-        # coveralls-ignore-start
-      dt
+        dt
         |> DateTime.shift_zone!("America/New_York")
         |> Calendar.strftime("%-I:%M %p")
-      # coveralls-ignore-stop
 
       _ ->
         t
