@@ -64,6 +64,9 @@ defmodule Dashboard.MixProject do
       {:tailwind, "~> 0.2", runtime: Mix.env() == :dev},
       {:esbuild, "~> 0.8", runtime: Mix.env() == :dev},
 
+      # Timezone database (required for DateTime.shift_zone! in signal_time)
+      {:tzdata, "~> 1.1"},
+
       # Code quality (dev/test only)
       {:floki, ">= 0.30.0", only: :test},
       {:lazy_html, ">= 0.1.0", only: :test},
