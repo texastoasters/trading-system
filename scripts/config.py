@@ -87,6 +87,27 @@ DRAWDOWN_DEFENSIVE = 10.0
 DRAWDOWN_CRITICAL = 15.0
 DRAWDOWN_HALT = 20.0
 
+# ── Trailing Stop-Loss ──────────────────────────────────────
+
+# Minimum unrealized gain (% from entry price) to activate a trailing stop.
+# When gain >= this threshold, the executor cancels the fixed GTC stop and submits
+# an Alpaca native trailing stop. Lower tiers get a tighter trigger so smaller
+# gains are still locked in (lower-conviction names need faster protection).
+TRAILING_TRIGGER_PCT = {
+    1: 5.0,   # T1: premium names — give room before locking in
+    2: 5.0,   # T2: same as T1
+    3: 4.0,   # T3: lower conviction — activate earlier
+}
+
+# Trail distance as % below current price (Alpaca trail_percent parameter).
+# Wider trails avoid noise-driven shakeouts on more volatile or lower-tier names.
+# Must be smaller than the corresponding TRAILING_TRIGGER_PCT entry.
+TRAILING_TRAIL_PCT = {
+    1: 2.0,   # T1: tight trail — high-conviction names
+    2: 2.5,   # T2: medium
+    3: 3.0,   # T3: wider
+}
+
 # ── Default Universe (before Supervisor populates Redis) ────
 
 DEFAULT_UNIVERSE = {
