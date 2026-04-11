@@ -144,7 +144,7 @@ Remaining top-10 by impact:
 4. ~~Max daily loss limit~~ ✅ Done (PR #81): daily loss CB now fires `critical_alert` + sets `daily_halt`; sells allowed through.
 5. ~~Automated daily Redis state backup~~ ✅ Done (PR #83): `scripts/backup_redis.py` snapshots 8 keys, 7-day rotation, suggested cron 4:30 PM ET.
 6. ~~Graceful shutdown~~ ✅ Done (PR #83): executor + PM install SIGTERM/SIGINT handlers; loop exits cleanly after current cycle.
-7. **Per-instrument P&L breakdown** — data is in TimescaleDB; foundation for data-driven tier rebalancing decisions.
+7. ~~Per-instrument P&L breakdown~~ ✅ Done (PR #85): `/performance` page — sortable table with Win%, PF, Avg Win/Loss, tier badges, 30d/90d/all toggle.
 8. ~~Economic calendar awareness~~ ✅ Done (PR #84): blocks entries on FOMC/CPI/NFP days via `scripts/economic_calendar.json`.
 9. **Trailing stop-loss** — after N% gain, follow price up with a trailing stop. Locks in profits while letting winners run.
 10. **Drawdown attribution** — when CB fires, identify which position(s) caused it. Currently only total drawdown is visible.
