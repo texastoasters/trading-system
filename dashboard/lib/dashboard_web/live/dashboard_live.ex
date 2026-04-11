@@ -54,6 +54,7 @@ defmodule DashboardWeb.DashboardLive do
       # DB-backed (loaded async after connection)
       |> assign(:recent_trades, [])
       |> assign(:daily_summaries, [])
+      |> assign(:drawdown_attribution, [])
 
     # Load DB data if connected (will be async after LV socket upgrade)
     socket =
@@ -76,6 +77,16 @@ defmodule DashboardWeb.DashboardLive do
       "supervisor" => state["trading:heartbeat:supervisor"]
     }
 
+    positions = state["trading:positions"] || %{}
+
+    peak_date =
+      case state["trading:peak_equity_date"] do
+        nil -> nil
+        s -> Date.from_iso8601(s) |> then(fn {:ok, d} -> d end)
+      end
+
+    attribution = Queries.drawdown_attribution(positions, peak_date)
+
     socket =
       socket
       |> assign(:equity, state["trading:simulated_equity"])
@@ -86,11 +97,12 @@ defmodule DashboardWeb.DashboardLive do
       |> assign(:risk_multiplier, state["trading:risk_multiplier"])
       |> assign(:system_status, state["trading:system_status"] || "unknown")
       |> assign(:regime, state["trading:regime"])
-      |> assign(:redis_positions, state["trading:positions"] || %{})
+      |> assign(:redis_positions, positions)
       |> assign(:watchlist, state["trading:watchlist"] || [])
       |> assign(:universe, state["trading:universe"])
       |> assign(:heartbeats, heartbeats)
       |> assign(:cooldowns, state["trading:cooldowns"] || [])
+      |> assign(:drawdown_attribution, attribution)
 
     {:noreply, socket}
   end

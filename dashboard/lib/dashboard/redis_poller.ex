@@ -29,7 +29,8 @@ defmodule Dashboard.RedisPoller do
     "trading:heartbeat:watcher",
     "trading:heartbeat:portfolio_manager",
     "trading:heartbeat:executor",
-    "trading:heartbeat:supervisor"
+    "trading:heartbeat:supervisor",
+    "trading:peak_equity_date"
   ]
 
   def start_link(_opts) do
