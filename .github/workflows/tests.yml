@@ -102,13 +102,17 @@ jobs:
 
       - name: Run tests with coverage
         working-directory: dashboard
+        run: |
+          mix coveralls > /tmp/elixir-coverage.txt 2>&1
+          cat /tmp/elixir-coverage.txt
+
+      - name: Upload to Coveralls
+        working-directory: dashboard
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           COVERALLS_FLAG_NAME: elixir
           COVERALLS_PARALLEL: "true"
-        run: |
-          mix coveralls.github > /tmp/elixir-coverage.txt 2>&1
-          cat /tmp/elixir-coverage.txt
+        run: mix coveralls.github
 
       - name: Upload coverage output
         if: always()
