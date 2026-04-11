@@ -124,3 +124,15 @@ class TestBackupEdgeCases:
         data = json.loads(files[0].read_text())
         # Only timestamp present; no data keys
         assert list(data.keys()) == ["timestamp"]
+
+    def test_invalid_json_for_json_key_stored_as_raw(self, tmp_path):
+        from backup_redis import backup
+
+        r = MagicMock()
+        r.get.side_effect = lambda k: b"not-valid-json" if k == Keys.POSITIONS else None
+
+        backup(r, backup_dir=tmp_path)
+
+        data = json.loads(list(tmp_path.glob("*.json"))[0].read_text())
+        # Stored raw (bytes decoded to string) rather than crashing
+        assert Keys.POSITIONS in data

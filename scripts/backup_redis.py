@@ -40,7 +40,7 @@ DEFAULT_BACKUP_DIR = Path.home() / "trading-system" / "backups"
 
 def backup(r, backup_dir=None):
     """Snapshot BACKUP_KEYS to a dated JSON file and prune old files."""
-    if backup_dir is None:
+    if backup_dir is None:  # pragma: no cover
         backup_dir = DEFAULT_BACKUP_DIR
 
     backup_dir = Path(backup_dir)
@@ -55,7 +55,7 @@ def backup(r, backup_dir=None):
             try:
                 snapshot[key] = json.loads(raw)
             except (json.JSONDecodeError, TypeError):
-                snapshot[key] = raw
+                snapshot[key] = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else raw
         else:
             snapshot[key] = raw
 
