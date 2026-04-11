@@ -68,7 +68,7 @@ Insert after the `DRAWDOWN_HALT = 20.0` line and before the `# ── Default Un
 TRAILING_TRIGGER_PCT = {
     1: 5.0,   # T1: premium names — give room before locking in
     2: 5.0,   # T2: same as T1
-    3: 3.0,   # T3: lower conviction — activate earlier
+    3: 4.0,   # T3: lower conviction — activate earlier (must exceed T3 trail of 3.0%)
 }
 
 # Trail distance as % below current price (Alpaca trail_percent parameter).

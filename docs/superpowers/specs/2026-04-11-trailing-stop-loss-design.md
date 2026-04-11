@@ -25,7 +25,7 @@ Add comprehensive docstrings to all existing constants. Add two new dicts:
 TRAILING_TRIGGER_PCT = {
     1: 5.0,   # T1: premium names — give room before locking in
     2: 5.0,   # T2: same
-    3: 3.0,   # T3: lower conviction — activate earlier
+    3: 4.0,   # T3: lower conviction — activate earlier (must exceed T3 trail of 3.0%)
 }
 
 # Trailing stop: trail distance as % below current price (Alpaca trail_percent).
