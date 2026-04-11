@@ -8,6 +8,27 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.16.0] - 2026-04-11
+
+### Added
+- **Drawdown attribution** (PR #87): when a drawdown circuit breaker fires, the Telegram alert now includes a per-instrument breakdown of realized + unrealized P&L since the equity peak. New `trading:peak_equity_date` Redis key tracks when peak was last set (written by executor on new highs and supervisor on daily reset). New `get_drawdown_attribution(r, conn)` helper in `config.py` queries TimescaleDB for realized losses and merges with unrealized from Redis positions; degrades gracefully to unrealized-only on DB failure. Dashboard main page gains a conditional "Drawdown Attribution (since peak)" panel — sorted worst-first, hidden when attribution is empty.
+
+---
+
+## [0.15.0] - 2026-04-11
+
+### Added
+- **Trailing stop-loss** (PR #86): after a position gains N% from entry (configurable per tier: T1/T2 at 5%, T3 at 4%), executor cancels the fixed GTC stop and submits an Alpaca native trailing stop. Trail distance also per tier (T1 2%, T2 2.5%, T3 3%). Executor checks each idle cycle; once activated, trailing stop is never reverted to fixed.
+
+---
+
+## [0.14.0] - 2026-04-10
+
+### Added
+- **Per-instrument P&L breakdown** (PR #85): new `/performance` page — sortable table with Win%, Profit Factor, Avg Win/Loss, tier badges, 30d/90d/all time window toggle. Queries TimescaleDB `trades` hypertable grouped by symbol.
+
+---
+
 ## [0.13.0] - 2026-04-10
 
 ### Added
