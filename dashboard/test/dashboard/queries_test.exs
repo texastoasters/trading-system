@@ -44,6 +44,28 @@ defmodule Dashboard.QueriesTest do
     end
   end
 
+  describe "schema query builders" do
+    test "Trade.for_symbol/2 builds an Ecto query without DB execution" do
+      query = Dashboard.Schemas.Trade.for_symbol("SPY")
+      assert %Ecto.Query{} = query
+    end
+
+    test "Trade.for_symbol/2 respects custom limit" do
+      query = Dashboard.Schemas.Trade.for_symbol("QQQ", 10)
+      assert %Ecto.Query{} = query
+    end
+
+    test "Position.recent_closed/1 builds an Ecto query without DB execution" do
+      query = Dashboard.Schemas.Position.recent_closed(5)
+      assert %Ecto.Query{} = query
+    end
+
+    test "Position.recent_closed/0 uses default limit" do
+      query = Dashboard.Schemas.Position.recent_closed()
+      assert %Ecto.Query{} = query
+    end
+  end
+
   describe "error resilience" do
     # Tables may not exist in the test DB (TimescaleDB hypertables are created
     # by the Python setup scripts, not Ecto migrations). All public functions

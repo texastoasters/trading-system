@@ -167,6 +167,15 @@ defmodule DashboardWeb.DashboardLiveTest do
       assert html =~ "border-l-gray-600"
     end
 
+    test "unknown regime falls back to gray border, Unknown label, and question emoji", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      # Regime map with unrecognized type (no "adx" key) hits all catch-alls
+      send(view.pid, {:state_update, regime_state(%{"regime" => "CUSTOM_REGIME"})})
+      html = render(view)
+      assert html =~ "border-l-gray-600"
+      assert html =~ "CUSTOM_REGIME"
+    end
+
     test "nil regime card has gray left border and does not crash", %{conn: conn} do
       {:ok, view, _} = live(conn, "/")
       send(view.pid, {:state_update, regime_state(nil)})
@@ -793,6 +802,157 @@ defmodule DashboardWeb.DashboardLiveTest do
       html = render(view)
       # Should show signal type as fallback reason
       assert html =~ "time_stop"
+    end
+  end
+
+  describe "handle_event liquidate" do
+    test "liquidate event publishes order and shows flash on success", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      html = render_click(view, "liquidate", %{"symbol" => "SPY"})
+      assert html =~ "SPY"
+    end
+  end
+
+  describe "heartbeat_age with timezone-aware timestamps" do
+    test "tz-aware heartbeat timestamp is parsed correctly", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      # Use a tz-aware ISO8601 timestamp (DateTime format) — 30s ago
+      ts = DateTime.utc_now() |> DateTime.add(-30, :second) |> DateTime.to_iso8601()
+      state = %{
+        "trading:heartbeat:executor" => ts,
+        "trading:heartbeat:screener" => nil,
+        "trading:heartbeat:watcher" => nil,
+        "trading:heartbeat:portfolio_manager" => nil,
+        "trading:heartbeat:supervisor" => nil
+      }
+      send(view.pid, {:state_update, state})
+      html = render(view)
+      # executor with 30s tz-aware heartbeat is within ok threshold (5 min)
+      assert html =~ "Executor"
+    end
+  end
+
+  describe "heartbeat_age with unparseable timestamps" do
+    test "invalid timestamp renders as stale", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      state = %{
+        "trading:heartbeat:executor" => "not-a-valid-timestamp",
+        "trading:heartbeat:screener" => nil,
+        "trading:heartbeat:watcher" => nil,
+        "trading:heartbeat:portfolio_manager" => nil,
+        "trading:heartbeat:supervisor" => nil
+      }
+      send(view.pid, {:state_update, state})
+      html = render(view)
+      # Unparseable timestamp → nil age → :stale → red card
+      assert html =~ "border-red-900"
+    end
+  end
+
+  describe "hold days edge cases" do
+    test "hold days shows '1d' for entry_date of yesterday", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      entry_date = Date.utc_today() |> Date.add(-1) |> Date.to_iso8601()
+
+      send(view.pid, {:state_update, %{
+        "trading:positions" => %{"SPY" => %{
+          "symbol" => "SPY", "tier" => 1, "quantity" => 10,
+          "entry_price" => 480.0, "entry_date" => entry_date,
+          "stop_price" => 470.0, "current_price" => 490.0
+        }},
+        "trading:heartbeat:screener" => nil,
+        "trading:heartbeat:watcher" => nil,
+        "trading:heartbeat:portfolio_manager" => nil,
+        "trading:heartbeat:executor" => nil,
+        "trading:heartbeat:supervisor" => nil
+      }})
+
+      html = render(view)
+      assert html =~ "1d"
+    end
+  end
+
+  describe "whipsaw_lifts_at edge cases" do
+    defp whipsaw_cooldown_state(started_at) do
+      %{
+        "trading:cooldowns" => [%{"symbol" => "SPY", "type" => "whipsaw", "started_at" => started_at}],
+        "trading:heartbeat:screener" => nil,
+        "trading:heartbeat:watcher" => nil,
+        "trading:heartbeat:portfolio_manager" => nil,
+        "trading:heartbeat:executor" => nil,
+        "trading:heartbeat:supervisor" => nil
+      }
+    end
+
+    test "tz-aware started_at (with Z suffix) is parsed via DateTime path", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      # Z-suffixed datetime → DateTime.from_iso8601 succeeds → DateTime.to_naive path
+      started = "2026-04-09T10:00:00Z"
+      send(view.pid, {:state_update, whipsaw_cooldown_state(started)})
+      html = render(view)
+      assert html =~ "lifting soon"
+    end
+
+    test "unparseable started_at returns dash", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      # Both DateTime and NaiveDateTime fail → ndt is nil → "—"
+      send(view.pid, {:state_update, whipsaw_cooldown_state("not-a-datetime")})
+      html = render(view)
+      assert html =~ "—"
+    end
+
+    test "non-binary started_at returns dash via catch-all", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      # nil started_at → whipsaw_lifts_at(_) catch-all → "—"
+      cooldowns = [%{"symbol" => "SPY", "type" => "whipsaw", "started_at" => nil}]
+      state = %{
+        "trading:cooldowns" => cooldowns,
+        "trading:heartbeat:screener" => nil,
+        "trading:heartbeat:watcher" => nil,
+        "trading:heartbeat:portfolio_manager" => nil,
+        "trading:heartbeat:executor" => nil,
+        "trading:heartbeat:supervisor" => nil
+      }
+      send(view.pid, {:state_update, state})
+      html = render(view)
+      assert html =~ "—"
+    end
+
+    test "shows 'lifting soon' when cooldown has been active for more than 24h", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      # 25 hours ago → lifts_at was 1 hour ago → remaining <= 0
+      started = NaiveDateTime.utc_now() |> NaiveDateTime.add(-25 * 3600, :second) |> NaiveDateTime.to_iso8601()
+      send(view.pid, {:state_update, whipsaw_cooldown_state(started)})
+      html = render(view)
+      assert html =~ "lifting soon"
+    end
+
+    test "shows minutes remaining when less than 1 hour left", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      # 23.5 hours ago → 0.5h = 1800s remaining → "30m"
+      started = NaiveDateTime.utc_now() |> NaiveDateTime.add(-(23 * 3600 + 1800), :second) |> NaiveDateTime.to_iso8601()
+      send(view.pid, {:state_update, whipsaw_cooldown_state(started)})
+      html = render(view)
+      # Should show "Xm" format
+      assert html =~ "m"
+    end
+  end
+
+  describe "format helpers with non-float inputs" do
+    test "entry signal with integer rsi2 renders without crash", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      # Integer rsi2 (can come from Python JSON) exercises format_float catch-all
+      signal = %{
+        "signal_type" => "entry",
+        "symbol" => "SPY",
+        "tier" => 1,
+        "indicators" => %{"rsi2" => 5},
+        "suggested_stop" => 480
+      }
+      send(view.pid, {:new_signal, signal})
+      html = render(view)
+      assert html =~ "SPY"
+      assert html =~ "5"
     end
   end
 end

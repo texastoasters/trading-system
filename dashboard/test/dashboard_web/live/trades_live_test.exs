@@ -91,4 +91,59 @@ defmodule DashboardWeb.TradesLiveTest do
       assert html =~ "Page 1"
     end
   end
+
+  describe "format_signed and pnl_class with injected Decimal trade data" do
+    defp make_trade(id, symbol, pnl) do
+      %Dashboard.Schemas.Trade{
+        id: id,
+        time: DateTime.utc_now(),
+        symbol: symbol,
+        side: "sell",
+        quantity: Decimal.new("10"),
+        price: Decimal.new("490.00"),
+        total_value: Decimal.new("4900.00"),
+        fees: Decimal.new("0.50"),
+        order_id: "test-#{id}",
+        strategy: "rsi2_mean_reversion",
+        asset_class: "us_equity",
+        realized_pnl: pnl,
+        notes: nil
+      }
+    end
+
+    test "positive Decimal P&L renders green with plus-dollar prefix", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/trades")
+      send(view.pid, {:set_trades, [make_trade(1, "SPY", Decimal.new("50.00"))]})
+      html = render(view)
+      assert html =~ "SPY"
+      assert html =~ "+$50.00"
+      assert html =~ "text-green-400"
+    end
+
+    test "negative Decimal P&L renders red with minus-dollar prefix", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/trades")
+      send(view.pid, {:set_trades, [make_trade(2, "QQQ", Decimal.new("-25.00"))]})
+      html = render(view)
+      assert html =~ "QQQ"
+      assert html =~ "-$25.00"
+      assert html =~ "text-red-400"
+    end
+
+    test "nil P&L renders dash with gray text", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/trades")
+      send(view.pid, {:set_trades, [make_trade(3, "NVDA", nil)]})
+      html = render(view)
+      assert html =~ "NVDA"
+      assert html =~ "—"
+      assert html =~ "text-gray-400"
+    end
+
+    test "zero Decimal P&L renders as positive (catch-all) with gray text", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/trades")
+      send(view.pid, {:set_trades, [make_trade(4, "META", Decimal.new("0"))]})
+      html = render(view)
+      assert html =~ "META"
+      assert html =~ "text-gray-400"
+    end
+  end
 end

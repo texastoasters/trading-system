@@ -1,15 +1,14 @@
 # Handoff
 
 ## State
-PR #75 (agent restart policy) and PR #76 (CHANGELOG + VERSION + git tags v0.1.0–v0.10.0) both open, awaiting merge. Current version: 0.10.0. All tags pushed to remote.
+Elixir coverage improved from 70.8% → 96.7% (182 tests, 0 failures). Branch `test/elixir-coverage-to-97` created, changes staged but NOT yet committed/pushed/PR'd.
 
 ## Next
-1. Merge PRs #75 and #76.
-2. Pick up wishlist item #3: **alert on stop-loss cancelled without fill** — PR #72 covers filled stops; a stop silently `cancelled` without a fill leaves a naked position with no alert.
-3. Then: **max daily loss limit** (#4) and **automated daily Redis backup** (#5).
+1. `cpr` — commit, push, open PR for branch `test/elixir-coverage-to-97`
+2. After merge: update CHANGELOG.md + VERSION for this PR
+3. Then pick up wishlist item #3: alert on stop-loss cancelled without fill
 
 ## Context
-- On every PR: bump `VERSION`, add `CHANGELOG.md` entry, tag after merge (`git tag -a vX.Y.Z && git push origin --tags`).
-- Update `docs/FEATURE_WISHLIST.md` + `remember.md` as part of every PR — commit both to the branch.
-- Versioning: 0.x.0 = new capability, 0.x.y = fix/minor. v1.0.0 when wishlist complete.
-- `remember.md` must always be committed and pushed on every PR, not just saved locally.
+- `redis_poller.ex`: empty-pipeline bug fixed (`if all_keys == []` guard) — Redix raises on empty list
+- `trades_live.ex`: added `handle_info({:set_trades, trades}, socket)` — needed because `:sys.replace_state` bypasses LiveView change tracking
+- Remaining 3.3% gap: Redis/MarketClock error branches (need Redis to fail), signal_time tzdata path (no tzdata dep)

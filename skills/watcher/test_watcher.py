@@ -269,6 +269,15 @@ class TestFetchEarningsDates:
             from watcher import fetch_earnings_dates
             assert fetch_earnings_dates("NVDA") == []
 
+    def test_returns_empty_list_when_result_is_empty(self):
+        payload = {"quoteSummary": {"result": [], "error": None}}
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = payload
+        with patch('watcher.requests.get', return_value=mock_resp):
+            from watcher import fetch_earnings_dates
+            assert fetch_earnings_dates("NVDA") == []
+
     def test_returns_empty_list_when_no_calendar_events(self):
         payload = {
             "quoteSummary": {
