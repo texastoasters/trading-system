@@ -22,7 +22,7 @@ for _mod in [
     "alpaca", "alpaca.data", "alpaca.data.historical",
     "alpaca.data.requests", "alpaca.data.timeframe",
     "alpaca.trading", "alpaca.trading.client",
-    "pytz",
+    "pytz", "requests",
 ]:
     if _mod not in sys.modules:
         sys.modules[_mod] = MagicMock()
@@ -235,6 +235,93 @@ class TestFetchIntradayBars:
         assert fetch_intraday_bars("SPY", stock_client, MagicMock()) is None
 
 
+# ── fetch_earnings_dates ──────────────────────────────────────
+
+class TestFetchEarningsDates:
+    def test_returns_list_of_dates_from_yahoo(self):
+        payload = {
+            "quoteSummary": {
+                "result": [{"calendarEvents": {"earnings": {"earningsDate": [
+                    {"raw": 1746057600},  # some future timestamp
+                ]}}}],
+                "error": None,
+            }
+        }
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = payload
+        with patch('watcher.requests.get', return_value=mock_resp):
+            from watcher import fetch_earnings_dates
+            dates = fetch_earnings_dates("NVDA")
+        assert isinstance(dates, list)
+        assert len(dates) == 1
+        assert isinstance(dates[0], datetime)
+
+    def test_returns_empty_list_on_http_error(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 403
+        with patch('watcher.requests.get', return_value=mock_resp):
+            from watcher import fetch_earnings_dates
+            assert fetch_earnings_dates("NVDA") == []
+
+    def test_returns_empty_list_on_exception(self):
+        with patch('watcher.requests.get', side_effect=Exception("timeout")):
+            from watcher import fetch_earnings_dates
+            assert fetch_earnings_dates("NVDA") == []
+
+    def test_returns_empty_list_when_no_calendar_events(self):
+        payload = {
+            "quoteSummary": {
+                "result": [{"calendarEvents": {"earnings": {"earningsDate": []}}}],
+                "error": None,
+            }
+        }
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = payload
+        with patch('watcher.requests.get', return_value=mock_resp):
+            from watcher import fetch_earnings_dates
+            assert fetch_earnings_dates("NVDA") == []
+
+
+# ── is_near_earnings ──────────────────────────────────────────
+
+class TestIsNearEarnings:
+    def _patch_dates(self, dates):
+        return patch('watcher.fetch_earnings_dates', return_value=dates)
+
+    def test_returns_true_when_earnings_within_days_before_window(self):
+        future = datetime.now() + timedelta(days=1)  # 1 day away, within EARNINGS_DAYS_BEFORE=2
+        with self._patch_dates([future]):
+            from watcher import is_near_earnings
+            assert is_near_earnings("NVDA") is True
+
+    def test_returns_true_when_earnings_within_days_after_window(self):
+        past = datetime.now() - timedelta(hours=12)  # 0.5 days ago, within EARNINGS_DAYS_AFTER=1
+        with self._patch_dates([past]):
+            from watcher import is_near_earnings
+            assert is_near_earnings("NVDA") is True
+
+    def test_returns_false_when_earnings_outside_window(self):
+        far_future = datetime.now() + timedelta(days=30)
+        with self._patch_dates([far_future]):
+            from watcher import is_near_earnings
+            assert is_near_earnings("NVDA") is False
+
+    def test_returns_false_when_no_earnings_dates(self):
+        with self._patch_dates([]):
+            from watcher import is_near_earnings
+            assert is_near_earnings("NVDA") is False
+
+    def test_returns_false_for_crypto_without_checking(self):
+        # Crypto doesn't have earnings — should never call fetch
+        with patch('watcher.fetch_earnings_dates') as mock_fetch:
+            from watcher import is_near_earnings
+            result = is_near_earnings("BTC/USD")
+        assert result is False
+        mock_fetch.assert_not_called()
+
+
 # ── generate_entry_signals ────────────────────────────────────
 
 class TestGenerateEntrySignals:
@@ -359,6 +446,24 @@ class TestGenerateEntrySignals:
             from watcher import generate_entry_signals
             signals = generate_entry_signals(r, MagicMock(), MagicMock())
         assert signals[0]["atr_multiplier"] == 2.5
+
+    def test_skips_symbol_near_earnings(self):
+        r = make_redis({Keys.WATCHLIST: json.dumps([make_watchlist_item("NVDA")])})
+        with patch('watcher.is_market_hours', return_value=True), \
+             patch('watcher.check_whipsaw', return_value=False), \
+             patch('watcher.is_near_earnings', return_value=True):
+            from watcher import generate_entry_signals
+            signals = generate_entry_signals(r, MagicMock(), MagicMock())
+        assert signals == []
+
+    def test_allows_entry_when_not_near_earnings(self):
+        r = make_redis({Keys.WATCHLIST: json.dumps([make_watchlist_item("NVDA")])})
+        with patch('watcher.is_market_hours', return_value=True), \
+             patch('watcher.check_whipsaw', return_value=False), \
+             patch('watcher.is_near_earnings', return_value=False):
+            from watcher import generate_entry_signals
+            signals = generate_entry_signals(r, MagicMock(), MagicMock())
+        assert len(signals) == 1
 
     def test_mid_adx_uses_default_atr_multiplier(self):
         # adx=30 → ATR_STOP_MULTIPLIER=2.0

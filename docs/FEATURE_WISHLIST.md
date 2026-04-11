@@ -24,7 +24,7 @@ These are known issues documented in HANDOFF.md that can cause real harm.
 - [x] **Agent heartbeat dashboard panel** — Show last-seen time for each agent (screener, watcher, PM, executor, supervisor). Green/yellow/red status based on staleness. Supervisor already writes heartbeats to Redis; dashboard just needs to read them.
 - [x] **Stale heartbeat alert** — Per-agent thresholds: executor/PM 5min, supervisor 20min, watcher 5h, screener 25h (48h to survive weekends). Supervisor sends `critical_alert()` when daemon agents stale. Dashboard uses same per-agent thresholds. PR #60.
 - [x] **Dashboard: current regime prominently displayed** — Show RANGING/UPTREND/DOWNTREND with ADX, +DI, -DI values and a colored badge. Currently data is in Redis but not prominently surfaced.
-- [ ] **Dashboard: whipsaw/cooldown indicator** — Show which symbols are in 24h whipsaw cooldown or manual-exit cooldown, and when each lifts. Prevents user confusion about why signals are being skipped.
+- [x] **Dashboard: whipsaw/cooldown indicator** — Show which symbols are in 24h whipsaw cooldown or manual-exit cooldown, and when each lifts. Prevents user confusion about why signals are being skipped.
 - [ ] **Dashboard: per-agent log tail** — Live-scrolling last N lines of each agent's log file. Removes need to SSH in and `tail -f`.
 - [ ] **Dashboard: simulated equity history chart** — Plot `trading:simulated_equity` over time. Even a sparkline showing today's trend would be useful.
 
@@ -36,8 +36,8 @@ These are known issues documented in HANDOFF.md that can cause real harm.
 - [ ] **Alert on manual stop-loss cancellation** — If a stop-loss order status becomes "cancelled" unexpectedly (not by executor), fire a critical alert immediately.
 
 ### Dashboard UX
-- [ ] **Dashboard: trade history table** — Paginated table of all past trades with symbol, side, entry/exit price, P&L, exit reason, hold duration. Currently stored in TimescaleDB but not shown.
-- [ ] **Dashboard: open position cards** — Each open position shows: current price, entry price, unrealized P&L, stop price, distance to stop, hold days, tier. Currently positions are listed but detail is sparse.
+- [x] **Dashboard: trade history table** — Paginated table of all past trades with symbol, side, entry/exit price, P&L, exit reason, hold duration. Currently stored in TimescaleDB but not shown.
+- [x] **Dashboard: open position cards** — Each open position shows: current price, entry price, unrealized P&L, stop price, distance to stop, hold days, tier. Currently positions are listed but detail is sparse.
 - [ ] **Dashboard: one-click "pause new entries"** — Write `trading:system_status = paused` to Redis without stopping daemons. Resume with one click. Good for going into meetings/travel.
 - [ ] **Mobile-responsive dashboard** — Current layout is desktop-optimized. Basic mobile responsiveness (stacked panels, larger touch targets) would allow monitoring on the go.
 
@@ -124,11 +124,32 @@ If picking 5 things to do next, in order:
 5. ~~Weekly summary wiring~~ ✅ Done (PR #62)
 6. ~~Agent heartbeat dashboard panel~~ ✅ Done
 7. ~~Dashboard: current regime display~~ ✅ Done
-8. Dashboard: open position cards — entry price, unrealized P&L, stop distance, tier
-9. Dashboard: trade history table — paginated, from TimescaleDB
-10. Dashboard: whipsaw/cooldown indicator — show symbols in cooldown + when it lifts
+8. ~~Dashboard: open position cards — entry price, unrealized P&L, stop distance, tier~~ ✅ Done (PR #73)
+9. ~~Dashboard: trade history table — paginated, from TimescaleDB~~ ✅ Done
+10. ~~Dashboard: whipsaw/cooldown indicator — show symbols in cooldown + when it lifts~~ ✅ Done
+
+---
+
+## 📋 Next Priority Wave (as of 2026-04-10)
+
+Notes on resolved safety gaps:
+- **Intraday stop monitoring** — already implemented in PR #50. Watcher checks `intraday_low` against `stop_price` on every cycle using 15-min bars.
+- **Alpaca auto-triggered stop-loss** — PR #72 adds `_reconcile_stop_filled`: detects when Alpaca fills a stop server-side, reconciles Redis, sends exit alert. Also runs at daemon startup.
+
+Remaining top-10 by impact:
+
+1. **Earnings avoidance** — biggest known loss source; NVDA/META/GOOGL/TSLA all in universe. Block entries within 2 days of earnings.
+2. **Agent restart policy** — supervisor detects heartbeat death but cannot self-heal. Defeats the autonomous premise.
+3. **Alert on stop-loss cancelled without fill** — PR #72 covers the `filled` case. A stop silently `cancelled` (corporate action, API glitch) leaves a naked position with no alert.
+4. **Max daily loss limit** — cumulative drawdown CB exists; same-day loss stacking (multiple stops in one session) is not caught until next CB threshold.
+5. **Automated daily Redis state backup** — crash recovery requires a snapshot to diff against. reconcile.py exists but needs a baseline.
+6. **Graceful shutdown** — prerequisite for clean agent restarts; prevents mid-cycle state corruption on SIGTERM.
+7. **Per-instrument P&L breakdown** — data is in TimescaleDB; foundation for data-driven tier rebalancing decisions.
+8. **Economic calendar awareness** — FOMC/CPI days kill mean reversion; same avoidance logic as earnings, fewer events.
+9. **Trailing stop-loss** — after N% gain, follow price up with a trailing stop. Locks in profits while letting winners run.
+10. **Drawdown attribution** — when CB fires, identify which position(s) caused it. Currently only total drawdown is visible.
 
 ---
 
 *Generated by examining all agent code, dashboard, config, notification module, and git history.*
-*Last updated: 2026-04-08. All critical bugs resolved. reconcile.py shipped. Coverage: config.py, indicators.py, notify.py, executor.py, reconcile.py all at 100% (168 tests).*
+*Last updated: 2026-04-10. Safety gaps re-evaluated after PRs #50/#72. Intraday stop monitoring confirmed done. Next wave focuses on signal quality, reliability, and risk management.*
