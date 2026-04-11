@@ -103,9 +103,11 @@ def run_circuit_breakers(r):
     if daily_pnl <= -(equity * config.DAILY_LOSS_LIMIT_PCT):
         if prev_status != "daily_halt":
             r.set(Keys.SYSTEM_STATUS, "daily_halt")
-            drawdown_alert(
-                abs(daily_pnl / equity * 100),
-                f"Daily loss limit hit: ${daily_pnl:.2f}. Halted until next session."
+            critical_alert(
+                f"DAILY LOSS LIMIT HIT\n"
+                f"Today's P&L: ${daily_pnl:,.2f} "
+                f"(limit: {config.DAILY_LOSS_LIMIT_PCT * 100:.0f}% of equity)\n"
+                f"New entries halted until market open. Exits allowed."
             )
         return False
 

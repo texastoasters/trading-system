@@ -293,10 +293,31 @@ class TestRunCircuitBreakers:
         equity = 5000.0
         daily_pnl = -(equity * _config.DAILY_LOSS_LIMIT_PCT) - 1
         r = _make_cb(equity=equity, daily_pnl=daily_pnl, status="active")
-        with patch("supervisor.drawdown_alert"):
+        with patch("supervisor.critical_alert"):
             from supervisor import run_circuit_breakers
             result = run_circuit_breakers(r)
         assert result is False
+        r.set.assert_any_call(Keys.SYSTEM_STATUS, "daily_halt")
+
+    def test_daily_loss_limit_fires_critical_alert(self):
+        equity = 5000.0
+        daily_pnl = -(equity * _config.DAILY_LOSS_LIMIT_PCT) - 1
+        r = _make_cb(equity=equity, daily_pnl=daily_pnl, status="active")
+        with patch("supervisor.critical_alert") as mock_alert:
+            from supervisor import run_circuit_breakers
+            run_circuit_breakers(r)
+        mock_alert.assert_called_once()
+        msg = mock_alert.call_args[0][0]
+        assert "DAILY LOSS" in msg
+
+    def test_daily_loss_limit_no_repeat_alert(self):
+        equity = 5000.0
+        daily_pnl = -(equity * _config.DAILY_LOSS_LIMIT_PCT) - 1
+        r = _make_cb(equity=equity, daily_pnl=daily_pnl, status="daily_halt")
+        with patch("supervisor.critical_alert") as mock_alert:
+            from supervisor import run_circuit_breakers
+            run_circuit_breakers(r)
+        mock_alert.assert_not_called()
 
 
 # ── disable_tiers / enable_all_tiers ─────────────────────────

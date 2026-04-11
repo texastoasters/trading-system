@@ -117,15 +117,97 @@ def _reconcile_stop_filled(r, pos, positions, symbol):
     return True
 
 
+# ── Runtime Stop Monitoring ──────────────────────────────────
+
+def _check_cancelled_stops(trading_client, r):
+    """Check all open positions for unexpectedly cancelled stop orders.
+
+    Called each idle daemon cycle. For each position with a stop_order_id:
+    - 'cancelled': verify position still on Alpaca, resubmit stop, alert
+    - 'filled':    delegate to _reconcile_stop_filled
+    - healthy:     skip
+    """
+    positions = json.loads(r.get(Keys.POSITIONS) or "{}")
+    if not positions:
+        return
+
+    # Fetch Alpaca positions once for the whole check
+    try:
+        alpaca_symbols = {p.symbol for p in trading_client.get_all_positions()}
+    except Exception as exc:
+        print(f"  [Executor] _check_cancelled_stops: could not fetch Alpaca positions: {exc}")
+        return
+
+    stop_filled_syms = []
+
+    for symbol, pos in list(positions.items()):
+        stop_id = pos.get("stop_order_id")
+        if not stop_id:
+            continue
+
+        try:
+            stop_order = trading_client.get_order_by_id(stop_id)
+        except Exception as exc:
+            print(f"  [Executor] _check_cancelled_stops: could not fetch stop {stop_id} for {symbol}: {exc}")
+            continue
+
+        if stop_order.status in ("new", "accepted", "pending_new"):
+            continue  # healthy
+
+        if stop_order.status == "filled":
+            stop_filled_syms.append(symbol)
+            continue
+
+        if stop_order.status == "cancelled":
+            if symbol not in alpaca_symbols:
+                # Position was closed externally — reconcile Redis
+                print(f"  [Executor] ⚠️  {symbol}: stop cancelled + position gone — cleaning Redis")
+                critical_alert(
+                    f"STOP CANCELLED — POSITION CLOSED EXTERNALLY: {symbol}\n"
+                    f"Stop {stop_id} was cancelled and position is gone from Alpaca.\n"
+                    f"Redis cleaned up. Review P&L manually."
+                )
+                positions.pop(symbol, None)
+                r.set(Keys.POSITIONS, json.dumps(positions))
+                continue
+
+            # Position still exists — resubmit stop
+            print(f"  [Executor] ⚠️  {symbol}: stop {stop_id} cancelled — resubmitting")
+            new_stop_id = submit_stop_loss(
+                trading_client, symbol, pos["quantity"], pos["stop_price"]
+            )
+            if new_stop_id is None:
+                # submit_stop_loss already fired a critical_alert; escalate with naked position warning
+                critical_alert(
+                    f"STOP RESUBMIT FAILED — NAKED POSITION: {symbol}\n"
+                    f"Stop {stop_id} cancelled. Resubmit failed (see previous alert).\n"
+                    f"Manual intervention required immediately."
+                )
+                print(f"  [Executor] ❌ {symbol}: stop resubmit FAILED — naked position")
+            else:
+                pos["stop_order_id"] = new_stop_id
+                r.set(Keys.POSITIONS, json.dumps(positions))
+                critical_alert(
+                    f"STOP CANCELLED & RESUBMITTED: {symbol}\n"
+                    f"Old stop {stop_id} was cancelled unexpectedly.\n"
+                    f"New stop {new_stop_id} placed @ ${pos['stop_price']:.2f}."
+                )
+                print(f"  [Executor] ✅ {symbol}: new stop {new_stop_id} placed @ ${pos['stop_price']:.2f}")
+
+    # Reconcile any Alpaca-triggered stop fills found during check
+    for sym in stop_filled_syms:
+        _reconcile_stop_filled(r, positions[sym], positions, sym)
+
+
 # ── Safety Validation ───────────────────────────────────────
 
 def validate_order(r, order, account):
     """Validate order against all safety rules. Returns (ok, reason)."""
 
-    # System status
+    # System status — blocks new entries, always allows exits
     status = r.get(Keys.SYSTEM_STATUS)
-    if status == "halted" and order["side"] == "buy":
-        return False, "System is halted — no new entries"
+    if status in ("halted", "daily_halt") and order["side"] == "buy":
+        return False, f"System is {status} — no new entries"
 
     # Rule 1: Never exceed simulated cash
     if order["side"] == "buy":
@@ -134,19 +216,20 @@ def validate_order(r, order, account):
         if order_value > sim_cash:
             return False, f"Rule 1: Order ${order_value:.0f} > simulated cash ${sim_cash:.0f}"
 
+        # Daily loss limit belt-and-suspenders (supervisor sets daily_halt; this catches
+        # the gap between supervisor cron cycles). Skipped for forced orders.
+        if not order.get("force"):
+            daily_pnl = float(r.get(Keys.DAILY_PNL) or 0)
+            equity = get_simulated_equity(r)
+            if daily_pnl <= -(equity * config.DAILY_LOSS_LIMIT_PCT):
+                return False, f"Daily loss limit: ${daily_pnl:.2f}"
+
     # Rule 1: Never short
     if order["side"] == "sell":
         positions = json.loads(r.get(Keys.POSITIONS) or "{}")
         has_pos = any(p["symbol"] == order["symbol"] for p in positions.values())
         if not has_pos:
             return False, "Rule 1: Short selling prohibited"
-
-    # Daily loss limit (skipped for forced orders, e.g. manual dashboard liquidations)
-    if not order.get("force"):
-        daily_pnl = float(r.get(Keys.DAILY_PNL) or 0)
-        equity = get_simulated_equity(r)
-        if daily_pnl <= -(equity * config.DAILY_LOSS_LIMIT_PCT):
-            return False, f"Daily loss limit: ${daily_pnl:.2f}"
 
     # Max concurrent positions (for buys)
     if order["side"] == "buy":
@@ -674,6 +757,7 @@ def daemon_loop():  # pragma: no cover
         r.set(Keys.heartbeat("executor"), datetime.now().isoformat())
         msg = pubsub.get_message(timeout=60)
         if msg is None or msg['type'] != 'message':
+            _check_cancelled_stops(trading_client, r)
             continue
 
         try:
