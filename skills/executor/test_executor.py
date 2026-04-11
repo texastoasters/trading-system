@@ -1634,6 +1634,67 @@ class TestCheckTrailingUpgrades:
         assert not saved["QQQ"].get("trailing")  # QQQ unchanged
 
 
+    def test_no_stop_on_record_submits_trailing_directly(self):
+        """Position has no stop_order_id — skip cancel step and submit trailing directly."""
+        pos = make_position(symbol="SPY", qty=10, entry=500.0, stop=490.0)
+        pos.pop("stop_order_id", None)  # ensure absent
+        pos["tier"] = 1  # T1 threshold=5.0%
+        r, store = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        tc.get_all_positions.return_value = [self._make_alpaca_pos("SPY", "526.0")]  # 5.2% gain
+        new_stop = MagicMock()
+        new_stop.id = "trail-001"
+        tc.submit_order.return_value = new_stop
+
+        with patch("executor.critical_alert"):
+            from executor import _check_trailing_upgrades
+            _check_trailing_upgrades(tc, r)
+
+        # cancel_order_by_id never called — no old stop to cancel
+        tc.cancel_order_by_id.assert_not_called()
+        saved = json.loads(store["trading:positions"])
+        assert saved["SPY"]["trailing"] is True
+
+    def test_both_trailing_and_fixed_stop_fail_fires_naked_alert(self):
+        """Trailing stop submit fails AND fixed stop fallback also fails → naked position alert."""
+        pos = make_position(symbol="SPY", qty=10, entry=500.0, stop=490.0,
+                            stop_order_id="old-stop")
+        pos["tier"] = 1
+        r, store = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        tc.get_all_positions.return_value = [self._make_alpaca_pos("SPY", "526.0")]
+        # Both submit_order calls fail (trailing + fixed fallback)
+        tc.submit_order.side_effect = [RuntimeError("API down"), RuntimeError("also down")]
+
+        with patch("executor.critical_alert") as mock_alert:
+            from executor import _check_trailing_upgrades
+            _check_trailing_upgrades(tc, r)
+
+        # submit_stop_loss fires one alert on failure; _check_trailing_upgrades fires the naked alert
+        assert mock_alert.call_count == 2
+        all_msgs = " ".join(str(c) for c in mock_alert.call_args_list)
+        assert "NAKED POSITION" in all_msgs
+
+
+class TestSubmitTrailingStop:
+    def test_wash_trade_cancels_and_retries(self):
+        """Attempt 0 raises wash trade → cancel existing orders and retry succeeds."""
+        tc = MagicMock()
+        success = MagicMock()
+        success.id = "trail-retry"
+        tc.submit_order.side_effect = [Exception("wash trade conflict"), success]
+        tc.get_orders.return_value = []
+
+        with patch("executor.cancel_existing_orders") as mock_cancel:
+            from executor import submit_trailing_stop
+            result = submit_trailing_stop(tc, "SPY", 10, 2.0)
+
+        assert result == "trail-retry"
+        mock_cancel.assert_called_once_with(tc, "SPY")
+
+
 class TestReconcileStopFilledFillPrice:
     """Tests for the optional fill_price parameter on _reconcile_stop_filled."""
 

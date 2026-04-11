@@ -1119,6 +1119,21 @@ defmodule DashboardWeb.DashboardLiveTest do
       html = render(view)
       refute html =~ "Drawdown Attribution"
     end
+
+    test "attribution panel shows positive P&L with plus sign", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+
+      # unrealized = 500 × 10 × 2% / 100 = +100.0 — exercises format_signed_dollar positive clause
+      send(view.pid, {:state_update, attribution_state(%{
+        "symbol" => "SPY", "tier" => 1, "quantity" => 10.0,
+        "entry_price" => 500.0, "stop_price" => 490.0, "current_price" => 510.0,
+        "entry_date" => nil, "unrealized_pnl_pct" => 2.0
+      })})
+
+      html = render(view)
+      assert html =~ "Drawdown Attribution"
+      assert html =~ "+$"
+    end
   end
 
   describe "format helpers with non-float inputs" do

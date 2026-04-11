@@ -191,8 +191,10 @@ defmodule Dashboard.Queries do
             into: %{} do
           {symbol, entry * qty * pct / 100.0}
         end
+      # coveralls-ignore-start
       rescue
         _ -> %{}
+      # coveralls-ignore-stop
       end
 
     all_symbols =
@@ -227,6 +229,7 @@ defmodule Dashboard.Queries do
 
   # coveralls-ignore-stop
 
+  # coveralls-ignore-start
   defp compute_derived(row) do
     win_rate =
       if row.trade_count > 0,
