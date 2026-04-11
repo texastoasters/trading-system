@@ -52,6 +52,16 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
+      redis:
+        image: redis:alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     env:
       MIX_ENV: test
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/dashboard_test
