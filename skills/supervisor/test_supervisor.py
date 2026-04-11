@@ -240,6 +240,13 @@ class TestRunCircuitBreakers:
         run_circuit_breakers(r)
         r.set.assert_any_call(Keys.PEAK_EQUITY, "5100.0")
 
+    def test_sets_peak_equity_date_on_new_high(self):
+        from datetime import date
+        r = _make_cb(equity=5100.0, peak=5000.0)
+        from supervisor import run_circuit_breakers
+        run_circuit_breakers(r)
+        r.set.assert_any_call(Keys.PEAK_EQUITY_DATE, date.today().isoformat())
+
     def test_halt_threshold_returns_false_and_alerts(self):
         # 20% drawdown: equity=4000, peak=5000
         r = _make_cb(equity=4000.0, peak=5000.0, status="active")
@@ -575,6 +582,14 @@ class TestResetDaily:
             from supervisor import reset_daily
             reset_daily(r)
         r.set.assert_any_call(Keys.PEAK_EQUITY, "4900.0")
+
+    def test_sets_peak_equity_date_on_reset(self):
+        from datetime import date
+        r = self._make(**{Keys.SIMULATED_EQUITY: "4900.0"})
+        with patch("supervisor.notify"):
+            from supervisor import reset_daily
+            reset_daily(r)
+        r.set.assert_any_call(Keys.PEAK_EQUITY_DATE, date.today().isoformat())
 
     def test_re_enables_after_daily_halt(self):
         r = self._make(**{Keys.SYSTEM_STATUS: "daily_halt"})

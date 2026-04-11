@@ -19,7 +19,7 @@ import sys
 import time
 import argparse
 import subprocess
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 
 import psycopg2
 import os
@@ -56,6 +56,7 @@ def run_circuit_breakers(r):
     # Update peak
     if equity > peak:
         r.set(Keys.PEAK_EQUITY, str(round(equity, 2)))
+        r.set(Keys.PEAK_EQUITY_DATE, date.today().isoformat())
 
     # Drawdown circuit breakers
     prev_status = r.get(Keys.SYSTEM_STATUS)
@@ -416,6 +417,7 @@ def reset_daily(r):
     # is measured within the current trading period, not against a stale peak
     equity = get_simulated_equity(r)
     r.set(Keys.PEAK_EQUITY, str(round(equity, 2)))
+    r.set(Keys.PEAK_EQUITY_DATE, date.today().isoformat())
 
     print(f"[Supervisor] Daily counters reset. Peak equity set to ${equity:,.2f}.")
 
