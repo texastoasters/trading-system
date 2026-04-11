@@ -8,6 +8,14 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.12.0] - 2026-04-10
+
+### Added
+- **Graceful shutdown** (PR #83): executor and portfolio_manager daemons install SIGTERM/SIGINT handlers. `while True:` → `while not _shutdown:` — current cycle completes before exit. Prevents mid-cycle state corruption when `start_trading_system.sh --stop` is called. Module-level `_shutdown` flag and `_handle_sigterm` are importable and tested directly without starting the daemon.
+- **Automated Redis state backup** (PR #83): new `scripts/backup_redis.py` snapshots 8 critical keys (`positions`, `simulated_equity`, `peak_equity`, `drawdown`, `system_status`, `universe`, `risk_multiplier`, `pdt_count`) to `~/trading-system/backups/YYYY-MM-DD.json`. Retains 7 days, prunes older files automatically. Suggested cron at 4:30 PM ET Mon–Fri. No Alpaca dependency — fully unit-tested with mock Redis and tmp dirs.
+
+---
+
 ## [0.11.0] - 2026-04-10
 
 ### Added

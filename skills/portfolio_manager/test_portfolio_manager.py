@@ -64,6 +64,27 @@ def make_signal(symbol="SPY", close=500.0, stop=490.0, tier=1, **kwargs):
     return d
 
 
+# ── Graceful Shutdown ────────────────────────────────────────
+
+class TestGracefulShutdown:
+    def setup_method(self):
+        import portfolio_manager
+        portfolio_manager._shutdown = False
+
+    def teardown_method(self):
+        import portfolio_manager
+        portfolio_manager._shutdown = False
+
+    def test_shutdown_flag_starts_false(self):
+        import portfolio_manager
+        assert portfolio_manager._shutdown is False
+
+    def test_handle_sigterm_sets_shutdown(self):
+        import portfolio_manager
+        portfolio_manager._handle_sigterm(None, None)
+        assert portfolio_manager._shutdown is True
+
+
 # ── Bug 2: qty≤0 in DOWNTREND ────────────────────────────────
 
 class TestDowntrendZeroQty:

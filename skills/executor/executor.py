@@ -24,9 +24,20 @@ from alpaca.trading.requests import (
 )
 from alpaca.trading.enums import OrderSide, TimeInForce, QueryOrderStatus
 
+import signal
+
 import config
 from config import Keys, get_redis, get_simulated_equity, is_crypto, init_redis_state
 from notify import trade_alert, exit_alert, critical_alert
+
+_shutdown = False
+
+
+def _handle_sigterm(signum, frame):
+    global _shutdown
+    _shutdown = True
+    print("[Executor] SIGTERM received — finishing current cycle then exiting")
+
 
 # Dry-run symbol — processed through full PM/Executor logic but no Alpaca
 # API calls and no success Telegram notifications.  Use to verify the
@@ -739,6 +750,10 @@ def process_order(r, trading_client, order):
 
 def daemon_loop():  # pragma: no cover
     """Listen for approved orders continuously."""
+    global _shutdown
+    signal.signal(signal.SIGTERM, _handle_sigterm)
+    signal.signal(signal.SIGINT, _handle_sigterm)
+
     r = get_redis()
     init_redis_state(r)
 
@@ -753,7 +768,7 @@ def daemon_loop():  # pragma: no cover
     pubsub = r.pubsub()
     pubsub.subscribe(Keys.APPROVED_ORDERS)
 
-    while True:
+    while not _shutdown:
         r.set(Keys.heartbeat("executor"), datetime.now().isoformat())
         msg = pubsub.get_message(timeout=60)
         if msg is None or msg['type'] != 'message':
@@ -769,6 +784,8 @@ def daemon_loop():  # pragma: no cover
         except Exception as e:
             print(f"[Executor] Error: {e}")
             critical_alert(f"Executor error: {e}")
+
+    print("[Executor] Shutdown complete.")
 
 
 def main():  # pragma: no cover
