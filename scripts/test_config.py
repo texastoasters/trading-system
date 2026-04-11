@@ -230,3 +230,32 @@ class TestDefaultTiers:
     def test_tier3_symbols_mapped(self):
         for sym in DEFAULT_UNIVERSE["tier3"]:
             assert DEFAULT_TIERS[sym] == 3
+
+
+# ── Trailing Stop-Loss Config ────────────────────────────────────
+
+class TestTrailingStopConfig:
+    def test_trigger_pct_has_all_tiers(self):
+        assert set(config.TRAILING_TRIGGER_PCT.keys()) == {1, 2, 3}
+
+    # Needed: invariant (trigger > trail) doesn't prevent negative trigger values
+    def test_trigger_pct_all_positive(self):
+        for tier, pct in config.TRAILING_TRIGGER_PCT.items():
+            assert pct > 0, f"tier {tier} trigger must be positive"
+
+    def test_trail_pct_has_all_tiers(self):
+        assert set(config.TRAILING_TRAIL_PCT.keys()) == {1, 2, 3}
+
+    # Needed: invariant (trigger > trail) doesn't prevent negative trail values
+    def test_trail_pct_all_positive(self):
+        for tier, pct in config.TRAILING_TRAIL_PCT.items():
+            assert pct > 0, f"tier {tier} trail must be positive"
+
+    def test_trigger_exceeds_trail_for_all_tiers(self):
+        # Trigger must be larger than trail distance — otherwise the trailing stop
+        # could immediately fire right after activation.
+        for tier in [1, 2, 3]:
+            assert config.TRAILING_TRIGGER_PCT[tier] > config.TRAILING_TRAIL_PCT[tier], (
+                f"tier {tier}: trigger ({config.TRAILING_TRIGGER_PCT[tier]}) "
+                f"must exceed trail ({config.TRAILING_TRAIL_PCT[tier]})"
+            )

@@ -20,7 +20,7 @@ from datetime import datetime
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import (
     MarketOrderRequest, LimitOrderRequest, StopOrderRequest,
-    GetOrdersRequest,
+    TrailingStopOrderRequest, GetOrdersRequest,
 )
 from alpaca.trading.enums import OrderSide, TimeInForce, QueryOrderStatus
 
@@ -28,7 +28,7 @@ import signal
 
 import config
 from config import Keys, get_redis, get_simulated_equity, is_crypto, init_redis_state
-from notify import trade_alert, exit_alert, critical_alert
+from notify import notify, trade_alert, exit_alert, critical_alert
 
 _shutdown = False
 
@@ -80,17 +80,22 @@ def update_simulated_equity(r, pnl_dollar):
 
 # ── Stop-Loss Reconciliation ────────────────────────────────
 
-def _reconcile_stop_filled(r, pos, positions, symbol):
+def _reconcile_stop_filled(r, pos, positions, symbol, fill_price=None):
     """Clean up Redis when Alpaca auto-triggered a GTC stop-loss.
 
     Call this when we detect the stop order is already 'filled' on Alpaca,
     meaning the position was closed server-side without us knowing.  Updates
-    simulated equity at the stop price, removes the position from Redis, and
-    sends the exit notification.
+    simulated equity at the actual fill price (or falls back to stop_price if
+    fill_price is not provided), removes the position from Redis, and sends
+    the exit notification.
+
+    Args:
+        fill_price: Actual fill price from Alpaca order. If None, falls back
+                    to pos['stop_price'] (original behavior).
     """
     quantity = pos["quantity"]
     entry_price = pos["entry_price"]
-    fill_price = float(pos["stop_price"])
+    fill_price = fill_price if fill_price is not None else float(pos["stop_price"])
 
     pnl_pct = (fill_price - entry_price) / entry_price * 100
     pnl_dollar = (fill_price - entry_price) * quantity
@@ -166,7 +171,11 @@ def _check_cancelled_stops(trading_client, r):
             continue  # healthy
 
         if stop_order.status == "filled":
-            stop_filled_syms.append(symbol)
+            try:
+                fp = float(stop_order.filled_avg_price)
+            except (TypeError, ValueError, AttributeError):
+                fp = None
+            stop_filled_syms.append((symbol, fp))
             continue
 
         if stop_order.status == "cancelled":
@@ -182,13 +191,20 @@ def _check_cancelled_stops(trading_client, r):
                 r.set(Keys.POSITIONS, json.dumps(positions))
                 continue
 
-            # Position still exists — resubmit stop
+            # Position still exists — resubmit stop (trailing or fixed GTC)
             print(f"  [Executor] ⚠️  {symbol}: stop {stop_id} cancelled — resubmitting")
-            new_stop_id = submit_stop_loss(
-                trading_client, symbol, pos["quantity"], pos["stop_price"]
-            )
+            if pos.get("trailing"):
+                new_stop_id = submit_trailing_stop(
+                    trading_client, symbol, pos["quantity"], pos["trail_percent"]
+                )
+                stop_desc = f"trailing stop, trail={pos['trail_percent']}%"
+            else:
+                new_stop_id = submit_stop_loss(
+                    trading_client, symbol, pos["quantity"], pos["stop_price"]
+                )
+                stop_desc = f"fixed stop @ ${pos['stop_price']:.2f}"
+
             if new_stop_id is None:
-                # submit_stop_loss already fired a critical_alert; escalate with naked position warning
                 critical_alert(
                     f"STOP RESUBMIT FAILED — NAKED POSITION: {symbol}\n"
                     f"Stop {stop_id} cancelled. Resubmit failed (see previous alert).\n"
@@ -201,13 +217,116 @@ def _check_cancelled_stops(trading_client, r):
                 critical_alert(
                     f"STOP CANCELLED & RESUBMITTED: {symbol}\n"
                     f"Old stop {stop_id} was cancelled unexpectedly.\n"
-                    f"New stop {new_stop_id} placed @ ${pos['stop_price']:.2f}."
+                    f"New {stop_desc} placed. Order: {new_stop_id}"
                 )
-                print(f"  [Executor] ✅ {symbol}: new stop {new_stop_id} placed @ ${pos['stop_price']:.2f}")
+                print(f"  [Executor] ✅ {symbol}: new {stop_desc}")
 
     # Reconcile any Alpaca-triggered stop fills found during check
-    for sym in stop_filled_syms:
-        _reconcile_stop_filled(r, positions[sym], positions, sym)
+    for sym, fp in stop_filled_syms:
+        _reconcile_stop_filled(r, positions[sym], positions, sym, fill_price=fp)
+
+
+def _check_trailing_upgrades(trading_client, r):
+    """Upgrade fixed GTC stops to Alpaca trailing stops when gain threshold is met.
+
+    Called each idle daemon cycle alongside _check_cancelled_stops. For each open
+    position not already trailing:
+    - Fetches current price from Alpaca
+    - Computes unrealized gain vs entry_price
+    - If gain >= TRAILING_TRIGGER_PCT[tier], cancels fixed stop and submits trailing stop
+    - Updates Redis: trailing=True, trail_percent, stop_order_id
+    - On any error: bails safely (no naked position window)
+    """
+    positions = json.loads(r.get(Keys.POSITIONS) or "{}")
+    if not positions:
+        return
+
+    try:
+        alpaca_positions = {p.symbol: p for p in trading_client.get_all_positions()}
+    except Exception as exc:
+        print(f"  [Executor] _check_trailing_upgrades: could not fetch Alpaca positions: {exc}")
+        return
+
+    changed = False
+
+    for symbol, pos in list(positions.items()):
+        if pos.get("trailing"):
+            continue  # already upgraded — Alpaca owns this stop
+
+        alpaca_pos = alpaca_positions.get(symbol)
+        if alpaca_pos is None:
+            continue  # not on Alpaca (edge case)
+
+        current_price = float(alpaca_pos.current_price)
+        entry_price = float(pos["entry_price"])
+        gain_pct = (current_price - entry_price) / entry_price * 100
+
+        tier = int(pos.get("tier", 3))
+        trigger = config.TRAILING_TRIGGER_PCT.get(tier, config.TRAILING_TRIGGER_PCT[3])
+
+        if gain_pct < trigger:
+            continue
+
+        trail_pct = config.TRAILING_TRAIL_PCT.get(tier, config.TRAILING_TRAIL_PCT[3])
+
+        print(f"  [Executor] 🎯 {symbol}: gain {gain_pct:.1f}% >= {trigger}% — upgrading to "
+              f"trailing stop ({trail_pct}%)")
+
+        # Cancel existing fixed stop
+        old_stop_id = pos.get("stop_order_id")
+        if old_stop_id:
+            try:
+                trading_client.cancel_order_by_id(old_stop_id)
+            except Exception as exc:
+                print(f"  [Executor] ⚠️ {symbol}: could not cancel old stop {old_stop_id}: {exc}")
+                continue  # bail — don't risk a double-stop situation
+        else:
+            print(f"  [Executor] {symbol}: no fixed stop on record — submitting trailing stop directly")
+
+        # Submit trailing stop
+        new_stop_id = submit_trailing_stop(trading_client, symbol, pos["quantity"], trail_pct)
+        if new_stop_id is None:
+            # submit_trailing_stop failed; try to restore fixed stop
+            resubmit_id = submit_stop_loss(trading_client, symbol, pos["quantity"],
+                                           pos["stop_price"])
+            if resubmit_id:
+                pos["stop_order_id"] = resubmit_id
+                changed = True
+                critical_alert(
+                    f"TRAILING STOP FAILED — REVERTED TO FIXED STOP: {symbol}\n"
+                    f"Could not submit trailing stop. Re-placed fixed stop @ "
+                    f"${pos['stop_price']:.2f}."
+                )
+            else:
+                critical_alert(
+                    f"TRAILING STOP FAILED + FIXED STOP RESUBMIT FAILED — NAKED POSITION: "
+                    f"{symbol}\nManual intervention required immediately."
+                )
+            continue
+
+        pos["trailing"] = True
+        pos["trail_percent"] = trail_pct
+        pos["stop_order_id"] = new_stop_id
+        changed = True
+
+        trade_alert(
+            side="trail_activated",
+            symbol=symbol,
+            quantity=pos["quantity"],
+            price=current_price,
+            stop_price=0.0,
+            strategy="RSI2-trailing",
+            tier=tier,
+            risk_pct=0.0,
+            reasoning=(
+                f"Gain: {gain_pct:.1f}% (>= {trigger}% trigger). "
+                f"Trailing {trail_pct}% below price. Stop order: {new_stop_id}"
+            ),
+        )
+        print(f"  [Executor] ✅ {symbol}: trailing stop activated, trailing {trail_pct}%")
+
+    if changed:
+        r.set(Keys.POSITIONS, json.dumps(positions))
 
 
 # ── Safety Validation ───────────────────────────────────────
@@ -648,6 +767,33 @@ def submit_stop_loss(trading_client, symbol, quantity, stop_price):
             return None
 
 
+def submit_trailing_stop(trading_client, symbol, quantity, trail_percent):
+    """Submit a server-side GTC trailing stop order. Retries once after cancelling conflicting orders.
+
+    trail_percent: Alpaca trail_percent value — price trails this % below the high-water mark.
+    Returns the order ID string on success, None on failure.
+    """
+    for attempt in range(2):
+        try:
+            req = TrailingStopOrderRequest(
+                symbol=symbol,
+                qty=int(quantity) if not is_crypto(symbol) else quantity,
+                side=OrderSide.SELL,
+                time_in_force=TimeInForce.GTC,
+                trail_percent=trail_percent,
+            )
+            order = trading_client.submit_order(req)
+            print(f"  [Executor] Trailing stop placed: {order.id}, trail={trail_percent}%")
+            return str(order.id)
+        except Exception as e:
+            if attempt == 0 and "wash trade" in str(e).lower():
+                print(f"  [Executor] ⚠️ Wash trade conflict — cancelling existing orders and retrying")
+                cancel_existing_orders(trading_client, symbol)
+                continue
+            print(f"  [Executor] ⚠️ Failed to place trailing stop: {e}")
+            return None
+
+
 # ── Startup Verification ────────────────────────────────────
 
 def verify_startup(trading_client, r):
@@ -691,7 +837,11 @@ def verify_startup(trading_client, r):
                         print(f"    ✅ {sym}: stop-loss active @ ${pos['stop_price']}")
                     elif stop_order.status == "filled":
                         print(f"    ⚠️  {sym}: stop-loss filled by Alpaca — will reconcile")
-                        stop_filled_syms.append(sym)
+                        try:
+                            fp = float(stop_order.filled_avg_price)
+                        except (TypeError, ValueError, AttributeError):
+                            fp = None
+                        stop_filled_syms.append((sym, fp))
                     else:
                         print(f"    ⚠️  {sym}: stop-loss status={stop_order.status}")
                 except Exception:
@@ -703,8 +853,8 @@ def verify_startup(trading_client, r):
                 pos["stop_order_id"] = new_stop_id
                 r.set(Keys.POSITIONS, json.dumps(positions))
         # Reconcile any positions that Alpaca closed via stop-loss
-        for sym in stop_filled_syms:
-            _reconcile_stop_filled(r, positions[sym], positions, sym)
+        for sym, fp in stop_filled_syms:
+            _reconcile_stop_filled(r, positions[sym], positions, sym, fill_price=fp)
     else:
         print(f"  ✅ No open positions")
 
@@ -773,6 +923,7 @@ def daemon_loop():  # pragma: no cover
         msg = pubsub.get_message(timeout=60)
         if msg is None or msg['type'] != 'message':
             _check_cancelled_stops(trading_client, r)
+            _check_trailing_upgrades(trading_client, r)
             continue
 
         try:

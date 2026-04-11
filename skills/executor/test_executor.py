@@ -968,6 +968,7 @@ class TestVerifyStartup:
         tc.get_account.return_value = account or make_account()
         stop_order = MagicMock()
         stop_order.status = stop_status
+        stop_order.filled_avg_price = None  # prevent float(MagicMock()) returning 1.0
         tc.get_order_by_id.return_value = stop_order
         return tc
 
@@ -1344,3 +1345,299 @@ class TestCheckCancelledStops:
         # QQQ was still checked (2 calls attempted)
         assert tc.get_order_by_id.call_count == 2
         mock_alert.assert_not_called()
+
+    def test_filled_stop_passes_actual_fill_price_to_reconcile(self):
+        """fill_price from Alpaca order is forwarded to _reconcile_stop_filled."""
+        pos = make_position(symbol="SPY", stop_order_id="stop-456")
+        r, _ = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        filled_order = self._make_stop_order(status="filled")
+        filled_order.filled_avg_price = "492.50"  # Alpaca returns prices as strings
+        tc.get_order_by_id.return_value = filled_order
+        tc.get_all_positions.return_value = [self._make_alpaca_position("SPY")]
+
+        with patch("executor._reconcile_stop_filled") as mock_reconcile, \
+             patch("executor.critical_alert"):
+            from executor import _check_cancelled_stops
+            _check_cancelled_stops(tc, r)
+
+        mock_reconcile.assert_called_once()
+        _, kwargs = mock_reconcile.call_args
+        assert kwargs.get("fill_price") == pytest.approx(492.50)
+
+    def test_filled_stop_invalid_fill_price_passes_none_to_reconcile(self):
+        """filled_avg_price that can't convert to float → fp=None forwarded to reconcile."""
+        pos = make_position(symbol="SPY", stop_order_id="stop-456")
+        r, _ = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        filled_order = self._make_stop_order(status="filled")
+        filled_order.filled_avg_price = "invalid_price"
+        tc.get_order_by_id.return_value = filled_order
+        tc.get_all_positions.return_value = [self._make_alpaca_position("SPY")]
+
+        with patch("executor._reconcile_stop_filled") as mock_reconcile, \
+             patch("executor.critical_alert"):
+            from executor import _check_cancelled_stops
+            _check_cancelled_stops(tc, r)
+
+        mock_reconcile.assert_called_once()
+        _, kwargs = mock_reconcile.call_args
+        assert kwargs.get("fill_price") is None
+
+    def test_cancelled_trailing_stop_resubmits_as_trailing(self):
+        """Cancelled stop on a trailing position → resubmit as trailing stop, not fixed GTC."""
+        pos = make_position(symbol="SPY", qty=10, stop=490.0, stop_order_id="old-trail-stop")
+        pos["trailing"] = True
+        pos["trail_percent"] = 2.0
+        r, store = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        tc.get_order_by_id.return_value = self._make_stop_order(status="cancelled")
+        tc.get_all_positions.return_value = [self._make_alpaca_position("SPY")]
+
+        with patch("executor.submit_trailing_stop", return_value="new-trail-001") as mock_trail, \
+             patch("executor.submit_stop_loss") as mock_fixed, \
+             patch("executor.critical_alert"):
+            from executor import _check_cancelled_stops
+            _check_cancelled_stops(tc, r)
+
+        mock_trail.assert_called_once_with(tc, "SPY", pos["quantity"], 2.0)
+        mock_fixed.assert_not_called()
+        saved = json.loads(store["trading:positions"])
+        assert saved["SPY"]["stop_order_id"] == "new-trail-001"
+        assert saved["SPY"]["trailing"] is True
+
+    def test_cancelled_non_trailing_stop_resubmits_as_fixed_gtc(self):
+        """Cancelled stop on a non-trailing position → still resubmits as fixed GTC (existing behavior)."""
+        pos = make_position(symbol="SPY", qty=10, stop=490.0, stop_order_id="old-stop")
+        # trailing not set / False
+        r, store = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        tc.get_order_by_id.return_value = self._make_stop_order(status="cancelled")
+        tc.get_all_positions.return_value = [self._make_alpaca_position("SPY")]
+        new_stop = MagicMock()
+        new_stop.id = "new-fixed-001"
+        tc.submit_order.return_value = new_stop
+
+        with patch("executor.submit_trailing_stop") as mock_trail, \
+             patch("executor.critical_alert"):
+            from executor import _check_cancelled_stops
+            _check_cancelled_stops(tc, r)
+
+        mock_trail.assert_not_called()
+        saved = json.loads(store["trading:positions"])
+        assert saved["SPY"]["stop_order_id"] == "new-fixed-001"
+
+
+# ── TestReconcileStopFilledFillPrice ─────────────────────────
+
+class TestCheckTrailingUpgrades:
+    def _make_alpaca_pos(self, symbol="SPY", current_price="526.0"):
+        p = MagicMock()
+        p.symbol = symbol
+        p.current_price = current_price
+        return p
+
+    def test_activates_trailing_stop_when_gain_meets_t1_threshold(self):
+        """T1 threshold=5.0%; entry=500, current=526 → gain=5.2% ≥ 5.0% → upgrade."""
+        pos = make_position(symbol="SPY", qty=10, entry=500.0, stop=490.0,
+                            stop_order_id="old-stop")
+        pos["tier"] = 1
+        r, store = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        tc.get_all_positions.return_value = [self._make_alpaca_pos("SPY", "526.0")]
+        new_stop = MagicMock()
+        new_stop.id = "trail-001"
+        tc.submit_order.return_value = new_stop
+
+        with patch("executor.critical_alert"):
+            from executor import _check_trailing_upgrades
+            _check_trailing_upgrades(tc, r)
+
+        # Old stop cancelled
+        tc.cancel_order_by_id.assert_called_once_with("old-stop")
+        # New trailing stop submitted
+        tc.submit_order.assert_called_once()
+        # Redis updated: trailing=True, trail_percent set, stop_order_id updated
+        import config as cfg
+        saved = json.loads(store["trading:positions"])
+        assert saved["SPY"]["trailing"] is True
+        assert saved["SPY"]["trail_percent"] == cfg.TRAILING_TRAIL_PCT[1]
+        assert saved["SPY"]["stop_order_id"] == "trail-001"
+
+    def test_skips_when_gain_below_threshold(self):
+        """T1 threshold=5.0%; gain=2.0% → no upgrade."""
+        pos = make_position(symbol="SPY", entry=500.0, stop_order_id="old-stop")
+        pos["tier"] = 1
+        r, _ = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        tc.get_all_positions.return_value = [self._make_alpaca_pos("SPY", "510.0")]
+
+        from executor import _check_trailing_upgrades
+        _check_trailing_upgrades(tc, r)
+
+        tc.cancel_order_by_id.assert_not_called()
+        tc.submit_order.assert_not_called()
+
+    def test_skips_already_trailing_positions(self):
+        """Position already upgraded → no action even on massive gain."""
+        pos = make_position(symbol="SPY", entry=500.0)
+        pos["tier"] = 1
+        pos["trailing"] = True
+        pos["trail_percent"] = 2.0
+        r, _ = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        tc.get_all_positions.return_value = [self._make_alpaca_pos("SPY", "700.0")]
+
+        from executor import _check_trailing_upgrades
+        _check_trailing_upgrades(tc, r)
+
+        tc.cancel_order_by_id.assert_not_called()
+        tc.submit_order.assert_not_called()
+
+    def test_cancel_failure_skips_symbol_safely(self):
+        """Cancel API error → bail out for that symbol, no submit, Redis unchanged."""
+        pos = make_position(symbol="SPY", entry=500.0, stop_order_id="old-stop")
+        pos["tier"] = 1
+        r, store = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        tc.get_all_positions.return_value = [self._make_alpaca_pos("SPY", "526.0")]
+        tc.cancel_order_by_id.side_effect = RuntimeError("cancel failed")
+
+        from executor import _check_trailing_upgrades
+        _check_trailing_upgrades(tc, r)
+
+        tc.submit_order.assert_not_called()
+        saved = json.loads(store["trading:positions"])
+        assert not saved["SPY"].get("trailing")
+
+    def test_submit_failure_reverts_to_fixed_stop(self):
+        """Trailing stop submit fails → fallback to fixed GTC stop, critical alert."""
+        pos = make_position(symbol="SPY", entry=500.0, stop=490.0, stop_order_id="old-stop")
+        pos["tier"] = 1
+        r, store = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        tc.get_all_positions.return_value = [self._make_alpaca_pos("SPY", "526.0")]
+        fallback = MagicMock()
+        fallback.id = "fallback-stop-001"
+        # First call (trailing stop): fail. Second call (fixed stop fallback): succeed.
+        tc.submit_order.side_effect = [RuntimeError("API timeout"), fallback]
+
+        with patch("executor.critical_alert") as mock_alert:
+            from executor import _check_trailing_upgrades
+            _check_trailing_upgrades(tc, r)
+
+        # Two submit_order attempts: trailing failed, fixed stop succeeded
+        assert tc.submit_order.call_count == 2
+        saved = json.loads(store["trading:positions"])
+        # Not marked trailing
+        assert not saved["SPY"].get("trailing")
+        # Fallback stop_order_id recorded
+        assert saved["SPY"]["stop_order_id"] == "fallback-stop-001"
+        mock_alert.assert_called_once()  # caller fires one alert, not two (Fix 1 removed duplicate)
+
+    def test_no_positions_skips_alpaca_call(self):
+        """Empty Redis positions → get_all_positions is never called."""
+        r, _ = make_redis({})
+        tc = MagicMock()
+
+        from executor import _check_trailing_upgrades
+        _check_trailing_upgrades(tc, r)
+
+        tc.get_all_positions.assert_not_called()
+
+    def test_alpaca_api_error_returns_early(self):
+        """get_all_positions raises → function returns without crashing."""
+        pos = make_position(symbol="SPY", entry=500.0)
+        pos["tier"] = 1
+        r, _ = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        tc.get_all_positions.side_effect = RuntimeError("API down")
+
+        from executor import _check_trailing_upgrades
+        _check_trailing_upgrades(tc, r)  # should not raise
+
+        tc.cancel_order_by_id.assert_not_called()
+
+    def test_symbol_not_on_alpaca_is_skipped(self):
+        """Position in Redis but not in Alpaca positions → skip gracefully."""
+        pos = make_position(symbol="SPY", entry=500.0)
+        pos["tier"] = 1
+        r, _ = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        tc.get_all_positions.return_value = []  # SPY not on Alpaca
+
+        from executor import _check_trailing_upgrades
+        _check_trailing_upgrades(tc, r)
+
+        tc.cancel_order_by_id.assert_not_called()
+
+    def test_multi_position_persists_all_positions(self):
+        """With two positions, only the one above threshold upgrades; both saved to Redis."""
+        pos_spy = make_position(symbol="SPY", qty=10, entry=500.0, stop=490.0,
+                                stop_order_id="old-spy")
+        pos_spy["tier"] = 1  # threshold=5.0%; will gain 5.2% → upgrade
+
+        pos_qqq = make_position(symbol="QQQ", qty=5, entry=400.0, stop=390.0,
+                                stop_order_id="old-qqq")
+        pos_qqq["tier"] = 1  # threshold=5.0%; will gain 2.0% → no upgrade
+
+        r, store = make_redis({"SPY": pos_spy, "QQQ": pos_qqq})
+
+        tc = MagicMock()
+        tc.get_all_positions.return_value = [
+            self._make_alpaca_pos("SPY", "526.0"),  # 5.2% gain
+            self._make_alpaca_pos("QQQ", "408.0"),  # 2.0% gain
+        ]
+        new_stop = MagicMock()
+        new_stop.id = "trail-spy-001"
+        tc.submit_order.return_value = new_stop
+
+        with patch("executor.critical_alert"):
+            from executor import _check_trailing_upgrades
+            _check_trailing_upgrades(tc, r)
+
+        saved = json.loads(store["trading:positions"])
+        assert saved["SPY"]["trailing"] is True
+        assert saved["SPY"]["stop_order_id"] == "trail-spy-001"
+        assert not saved["QQQ"].get("trailing")  # QQQ unchanged
+
+
+class TestReconcileStopFilledFillPrice:
+    """Tests for the optional fill_price parameter on _reconcile_stop_filled."""
+
+    def test_uses_provided_fill_price_when_given(self):
+        """When fill_price kwarg is passed, uses it for P&L (not pos['stop_price'])."""
+        pos = make_position(qty=10, entry=500.0, stop=490.0, stop_order_id="stop-456")
+        r, store = make_redis({"SPY": pos})
+        r.delete = MagicMock()
+
+        with patch("executor.exit_alert"):
+            from executor import _reconcile_stop_filled
+            _reconcile_stop_filled(r, pos, {"SPY": pos}, "SPY", fill_price=495.0)
+
+        # pnl = (495 - 500) * 10 = -50  (not -100 from stop_price=490)
+        assert float(store["trading:simulated_equity"]) == pytest.approx(4950.0)
+
+    def test_falls_back_to_stop_price_when_fill_price_not_provided(self):
+        """When fill_price is omitted, behavior is identical to before (uses stop_price)."""
+        pos = make_position(qty=10, entry=500.0, stop=490.0, stop_order_id="stop-456")
+        r, store = make_redis({"SPY": pos})
+        r.delete = MagicMock()
+
+        with patch("executor.exit_alert"):
+            from executor import _reconcile_stop_filled
+            _reconcile_stop_filled(r, pos, {"SPY": pos}, "SPY")
+
+        # pnl = (490 - 500) * 10 = -100 (original behavior)
+        assert float(store["trading:simulated_equity"]) == pytest.approx(4900.0)
