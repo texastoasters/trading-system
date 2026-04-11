@@ -34,57 +34,116 @@ _load_trading_env()
 
 # ── Environment ─────────────────────────────────────────────
 
+# Alpaca API credentials loaded from ~/.trading_env via _load_trading_env().
+# Both must be set before any agent starts. Keys are read-only at import time.
 ALPACA_API_KEY = os.environ.get("ALPACA_API_KEY", "")
 ALPACA_SECRET_KEY = os.environ.get("ALPACA_SECRET_KEY", "")
-PAPER_TRADING = True  # Set False when going live
+# When True, all orders go to Alpaca's paper trading environment. Set False for live.
+PAPER_TRADING = True
 
 # ── Capital ─────────────────────────────────────────────────
 
+# Total virtual capital ($). NOT Alpaca's $100K paper balance. The system enforces
+# this cap via trading:simulated_equity in Redis. Position sizing and Rule 1 are
+# both based on this number, not Alpaca's reported equity.
 INITIAL_CAPITAL = 5000.00
+# Maximum simultaneous open positions across all tiers and asset classes.
 MAX_CONCURRENT_POSITIONS = 5
+# Maximum open positions in equity instruments (stocks, ETFs).
 MAX_EQUITY_POSITIONS = 3
+# Maximum open positions in crypto instruments (BTC/USD, etc.).
 MAX_CRYPTO_POSITIONS = 2
+# Fraction of INITIAL_CAPITAL allocated to equities. Portfolio Manager uses this
+# for per-asset-class exposure limits.
 EQUITY_ALLOCATION_PCT = 0.70
+# Fraction of INITIAL_CAPITAL allocated to crypto. Must sum to 1.0 with EQUITY_ALLOCATION_PCT.
 CRYPTO_ALLOCATION_PCT = 0.30
 
 # ── Risk ────────────────────────────────────────────────────
 
-RISK_PER_TRADE_PCT = 0.01       # 1% of equity
-DAILY_LOSS_LIMIT_PCT = 0.03     # 3% of equity
-MANUAL_EXIT_REENTRY_DROP_PCT = 0.03  # price must drop 3% below manual-exit price before re-entry
+# Risk per trade as a fraction of current simulated equity (1%). Portfolio Manager
+# sizes every position so that a stop-loss hit equals exactly this loss in dollar terms:
+#   qty = (equity * RISK_PER_TRADE_PCT) / (entry_price - stop_price)
+RISK_PER_TRADE_PCT = 0.01
+# Maximum daily loss as a fraction of simulated equity (3%). When the daily P&L
+# reaches -(equity × DAILY_LOSS_LIMIT_PCT), Executor blocks new buys and Supervisor
+# sets system_status → daily_halt until the next trading day reset.
+DAILY_LOSS_LIMIT_PCT = 0.03
+# After a manual dashboard exit, entry for that symbol is blocked until its price
+# drops this % below the manual-exit fill price. Prevents immediate re-entry into
+# a position we just decided to close.
+MANUAL_EXIT_REENTRY_DROP_PCT = 0.03
+# ATR(14) multiplier used to compute the initial stop-loss distance from entry.
+# stop_price = entry_price - (ATR_STOP_MULTIPLIER × ATR14).
+# This multiplier is adjusted per-regime in Watcher: 1.5× in downtrends, 2.5× in uptrends.
 ATR_STOP_MULTIPLIER = 2.0
-BTC_FEE_RATE = 0.004            # 0.40% round-trip
-BTC_MIN_EXPECTED_GAIN = 0.006   # 0.60% minimum expected gain
+# BTC/USD estimated round-trip fee rate (0.40%). Deducted from realized P&L on all
+# crypto exits (buy fee + sell fee combined).
+BTC_FEE_RATE = 0.004
+# Minimum expected gain on a BTC/USD trade (0.60%). Entry signals below this threshold
+# are filtered in Portfolio Manager to avoid fee-eating micro-gains.
+BTC_MIN_EXPECTED_GAIN = 0.006
 
 # ── Agent Restart Policy ────────────────────────────────────
 
-MAX_AUTO_RESTARTS = 3  # halt and alert after this many consecutive restart attempts
+# After this many consecutive automatic restarts, the agent halts and fires a
+# critical Telegram alert. Prevents infinite crash-restart loops from generating noise.
+MAX_AUTO_RESTARTS = 3
 
 # ── Earnings Avoidance ──────────────────────────────────────
 
-EARNINGS_DAYS_BEFORE = 2   # block entry N days before earnings
-EARNINGS_DAYS_AFTER = 1    # block entry N days after earnings
+# Block new entries this many calendar days before a scheduled earnings release.
+# RSI-2 mean reversion signals ahead of earnings carry outsized binary risk.
+EARNINGS_DAYS_BEFORE = 2
+# Block new entries this many calendar days after a scheduled earnings release.
+# Post-earnings gaps can invalidate the SMA-200 trend filter temporarily.
+EARNINGS_DAYS_AFTER = 1
 
 # ── RSI-2 Strategy Parameters ──────────────────────────────
 
+# RSI-2 entry threshold in conservative (RANGING) regime. Entry signal requires
+# RSI-2 < this value AND price > SMA(RSI2_SMA_PERIOD).
 RSI2_ENTRY_CONSERVATIVE = 10.0
+# RSI-2 entry threshold in aggressive (TRENDING) regime. Tighter threshold used
+# when ADX > ADX_TREND_THRESHOLD, since trending markets mean-revert less deeply.
 RSI2_ENTRY_AGGRESSIVE = 5.0
+# RSI-2 exit threshold. Exit signal generated (take-profit) when RSI-2 rises above
+# this value on a daily bar, indicating the oversold condition has normalized.
 RSI2_EXIT = 60.0
+# SMA lookback period (days) for the trend filter. Entries only allowed when
+# the instrument's close price > its simple moving average over this period.
 RSI2_SMA_PERIOD = 200
+# ATR lookback period (days). Used to calculate stop-loss distance and regime-adjusted
+# position sizing. Screener populates atr14 in the watchlist on each scan.
 RSI2_ATR_PERIOD = 14
+# Maximum days to hold a position. If a trade is still open after this many days
+# with no RSI-2 exit or stop hit, Watcher generates a time-stop exit signal.
 RSI2_MAX_HOLD_DAYS = 5
 
 # ── Regime ──────────────────────────────────────────────────
 
+# ADX indicator lookback period (days). ADX measures trend strength regardless of
+# direction. Screener computes ADX on each scan and publishes the regime to Redis.
 ADX_PERIOD = 14
+# ADX below this threshold → RANGING regime. Standard RSI-2 entry threshold
+# (RSI2_ENTRY_CONSERVATIVE) applies. Most conducive to mean reversion.
 ADX_RANGING_THRESHOLD = 20
+# ADX above this threshold → TRENDING regime. Aggressive entry threshold
+# (RSI2_ENTRY_AGGRESSIVE) applies and stop distance is widened by 2.5× ATR.
 ADX_TREND_THRESHOLD = 25
 
 # ── Drawdown Thresholds ─────────────────────────────────────
 
+# At CAUTION level (5% drawdown from peak), Supervisor halves position sizes.
 DRAWDOWN_CAUTION = 5.0
+# At DEFENSIVE level (10% drawdown), Tier 2 and Tier 3 entries are disabled.
+# Only Tier 1 instruments can receive new entries.
 DRAWDOWN_DEFENSIVE = 10.0
+# At CRITICAL level (15% drawdown), Tier 2+ are disabled AND the simulated
+# equity cap is cut in half to further reduce exposure.
 DRAWDOWN_CRITICAL = 15.0
+# At HALT level (20% drawdown), ALL new entries are blocked. system_status → halted.
+# Only manual intervention or EOD Supervisor reset can clear the halt.
 DRAWDOWN_HALT = 20.0
 
 # ── Trailing Stop-Loss ──────────────────────────────────────
