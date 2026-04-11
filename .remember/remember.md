@@ -1,8 +1,8 @@
 # Handoff
 
 ## State
-v0.14.0 tagged and merged. `/performance` page (wishlist #7) shipped.
+feat/trailing-stop-loss branch — all tasks done, 100% test coverage. Bump to v0.15.0. Ready for cpr.
 
 ## Next
-1. Trailing stop-loss (#9) — after N% gain, trail price up with trailing stop
-2. After that: drawdown attribution (#10)
+1. cpr → merge PR, tag v0.15.0
+2. Next wishlist: drawdown attribution (#10)

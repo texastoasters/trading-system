@@ -4,6 +4,22 @@ All notable changes to the Trading System project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## v0.15.0 — 2026-04-11
+
+### Added
+- **Trailing stop-loss** (wishlist #9): after a position gains N% from entry (configurable
+  per tier via `TRAILING_TRIGGER_PCT`), executor upgrades the fixed GTC stop to an Alpaca
+  native trailing stop with a per-tier trail distance (`TRAILING_TRAIL_PCT`). Locks in
+  profits while letting winners run. Trailing state tracked in Redis (`trailing`, `trail_percent`).
+- `submit_trailing_stop` — parallel to `submit_stop_loss`, submits Alpaca `TrailingStopOrderRequest`
+- `_check_trailing_upgrades` — called every idle cycle, detects and upgrades eligible positions
+- Watcher skips manual stop detection for trailing positions (Alpaca owns the fill)
+- `_check_cancelled_stops` resubmits trailing stops correctly on cancellation
+- `_reconcile_stop_filled` uses actual Alpaca fill price for trailing positions (fixes stale stop_price P&L)
+- Comprehensive inline documentation comments for all `config.py` constants
+
+---
+
 ## [0.14.0] — 2026-04-11
 
 ### Added
