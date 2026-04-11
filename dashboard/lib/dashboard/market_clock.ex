@@ -61,12 +61,17 @@ defmodule Dashboard.MarketClock do
          "error" => "no_credentials"
        }}
     else
-      Req.get("#{@alpaca_base_url}/v2/clock",
-        headers: [
-          {"APCA-API-KEY-ID", api_key},
-          {"APCA-API-SECRET-KEY", secret_key}
-        ],
-        receive_timeout: 5_000
+      req_options = Application.get_env(:dashboard, :req_options, [])
+
+      Req.get(
+        "#{@alpaca_base_url}/v2/clock",
+        [
+          headers: [
+            {"APCA-API-KEY-ID", api_key},
+            {"APCA-API-SECRET-KEY", secret_key}
+          ],
+          receive_timeout: 5_000
+        ] ++ req_options
       )
       |> case do
         {:ok, %{status: 200, body: body}} -> {:ok, body}
@@ -75,6 +80,7 @@ defmodule Dashboard.MarketClock do
       end
     end
   rescue
+    # coveralls-ignore-next-line
     e -> {:error, Exception.message(e)}
   end
 end

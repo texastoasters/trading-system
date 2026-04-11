@@ -183,6 +183,14 @@ defmodule DashboardWeb.DashboardLiveTest do
       assert html =~ "border-l-gray-600"
     end
 
+    test "regime map without 'regime' key shows Unknown label via catch-all", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      # Map exists but has no "regime" key — hits regime_name(_) and regime_border_class(_) catch-alls
+      send(view.pid, {:state_update, regime_state(%{"adx" => 25.0})})
+      html = render(view)
+      assert html =~ "Unknown"
+    end
+
     test "+DI and -DI values are displayed when present", %{conn: conn} do
       {:ok, view, _} = live(conn, "/")
       send(view.pid, {:state_update, regime_state(%{"regime" => "UPTREND", "adx" => 28.4, "plus_di" => 22.1, "minus_di" => 14.3})})
@@ -644,6 +652,20 @@ defmodule DashboardWeb.DashboardLiveTest do
       assert html =~ "Days"
     end
 
+    test "hold days shows dash when entry_date is an unparseable string", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+
+      send(view.pid, {:state_update, position_state(%{
+        "symbol" => "SPY", "tier" => 1, "quantity" => 10,
+        "entry_price" => 480.0, "entry_date" => "not-a-date",
+        "stop_price" => 470.0, "current_price" => 490.0
+      })})
+
+      html = render(view)
+      # invalid date → hold_days returns nil → format_hold_days(nil) → "—"
+      assert html =~ "—"
+    end
+
     test "stop distance shows percentage below current price", %{conn: conn} do
       {:ok, view, _} = live(conn, "/")
       entry_date = Date.utc_today() |> Date.to_iso8601()
@@ -811,6 +833,24 @@ defmodule DashboardWeb.DashboardLiveTest do
       html = render_click(view, "liquidate", %{"symbol" => "SPY"})
       assert html =~ "SPY"
     end
+
+    test "liquidate event shows error flash when Redix command fails", %{conn: conn} do
+      real_redix = Process.whereis(:redix)
+      Process.unregister(:redix)
+      {:ok, stub} = Dashboard.FakeRedix.start_link()
+      Process.register(stub, :redix)
+
+      on_exit(fn ->
+        try do Process.unregister(:redix) rescue _ -> :ok end
+        if real_redix && Process.alive?(real_redix) do
+          Process.register(real_redix, :redix)
+        end
+      end)
+
+      {:ok, view, _} = live(conn, "/")
+      html = render_click(view, "liquidate", %{"symbol" => "SPY"})
+      assert html =~ "Failed to send liquidation order"
+    end
   end
 
   describe "heartbeat_age with timezone-aware timestamps" do
@@ -935,6 +975,24 @@ defmodule DashboardWeb.DashboardLiveTest do
       html = render(view)
       # Should show "Xm" format
       assert html =~ "m"
+    end
+  end
+
+  describe "signal_time/1 with tz-aware timestamp" do
+    test "tz-aware signal time is formatted as Eastern time", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      # 2026-04-10T18:00:00Z = 2:00 PM ET (UTC-4, EDT)
+      signal = %{
+        "signal_type" => "entry",
+        "symbol" => "SPY",
+        "tier" => 1,
+        "indicators" => %{"rsi2" => 4.0},
+        "suggested_stop" => 480.0,
+        "time" => "2026-04-10T18:00:00Z"
+      }
+      send(view.pid, {:new_signal, signal})
+      html = render(view)
+      assert html =~ "2:00 PM"
     end
   end
 

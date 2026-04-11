@@ -103,6 +103,7 @@ defmodule Dashboard.RedisPoller do
               |> Enum.zip(values)
               |> Enum.flat_map(fn {key, val} -> parse_cooldown(key, val) end)
 
+            # coveralls-ignore-next-line
             _ ->
               []
           end

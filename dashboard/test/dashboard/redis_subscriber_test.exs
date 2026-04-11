@@ -59,4 +59,47 @@ defmodule Dashboard.RedisSubscriberTest do
     state = :sys.get_state(pid)
     assert state == %{}
   end
+
+  describe "subscribe failure paths via FakeRedixPubSub stub" do
+    setup do
+      real_pubsub = Process.whereis(:redix_pubsub)
+      Process.unregister(:redix_pubsub)
+      {:ok, stub} = Dashboard.FakeRedixPubSub.start_link()
+      Process.register(stub, :redix_pubsub)
+
+      on_exit(fn ->
+        try do
+          Process.unregister(:redix_pubsub)
+        rescue
+          _ -> :ok
+        end
+
+        if real_pubsub && Process.alive?(real_pubsub) do
+          Process.register(real_pubsub, :redix_pubsub)
+        end
+      end)
+
+      {:ok, stub: stub}
+    end
+
+    test "init subscribe failure — logs error and schedules retry without crashing" do
+      # Start an unnamed instance so it doesn't conflict with the running subscriber.
+      # GenServer.start_link/3 calls init/1 which calls Redix.PubSub.subscribe(:redix_pubsub, ...)
+      # against our stub, which returns {:error, :test_subscribe_error}.
+      {:ok, pid} = GenServer.start_link(Dashboard.RedisSubscriber, %{})
+      state = :sys.get_state(pid)
+      assert state == %{}
+      assert Process.alive?(pid)
+      GenServer.stop(pid)
+    end
+
+    test "retry_subscribe failure — logs error and reschedules without crashing" do
+      {:ok, pid} = GenServer.start_link(Dashboard.RedisSubscriber, %{})
+      send(pid, :retry_subscribe)
+      state = :sys.get_state(pid)
+      assert state == %{}
+      assert Process.alive?(pid)
+      GenServer.stop(pid)
+    end
+  end
 end

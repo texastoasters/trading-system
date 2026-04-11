@@ -184,4 +184,39 @@ defmodule Dashboard.RedisPollerTest do
       Redix.command(:redix, ["DEL", "trading:heartbeat:executor"])
     end
   end
+
+  describe "poll error path via FakeRedix stub" do
+    setup %{pid: pid} do
+      real_redix = Process.whereis(:redix)
+      Process.unregister(:redix)
+      {:ok, stub} = Dashboard.FakeRedix.start_link()
+      Process.register(stub, :redix)
+
+      on_exit(fn ->
+        try do
+          Process.unregister(:redix)
+        rescue
+          _ -> :ok
+        end
+
+        if real_redix && Process.alive?(real_redix) do
+          Process.register(real_redix, :redix)
+        end
+      end)
+
+      {:ok, stub: stub, pid: pid}
+    end
+
+    test "logs warning and does not crash when Redis pipeline fails", %{pid: pid} do
+      # Expire the cooldown cache so fetch_cooldowns is called (hits the pipeline too)
+      expired_at = System.monotonic_time(:second) - 31
+      :sys.replace_state(pid, fn state -> %{state | cooldown_cache: {[], expired_at}} end)
+
+      send(pid, :poll)
+      # Synchronous barrier — confirms :poll was fully processed
+      state = :sys.get_state(pid)
+      assert is_map(state)
+      assert Process.alive?(pid)
+    end
+  end
 end
