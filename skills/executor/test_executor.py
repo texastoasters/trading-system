@@ -1366,6 +1366,26 @@ class TestCheckCancelledStops:
         _, kwargs = mock_reconcile.call_args
         assert kwargs.get("fill_price") == pytest.approx(492.50)
 
+    def test_filled_stop_invalid_fill_price_passes_none_to_reconcile(self):
+        """filled_avg_price that can't convert to float → fp=None forwarded to reconcile."""
+        pos = make_position(symbol="SPY", stop_order_id="stop-456")
+        r, _ = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        filled_order = self._make_stop_order(status="filled")
+        filled_order.filled_avg_price = "invalid_price"
+        tc.get_order_by_id.return_value = filled_order
+        tc.get_all_positions.return_value = [self._make_alpaca_position("SPY")]
+
+        with patch("executor._reconcile_stop_filled") as mock_reconcile, \
+             patch("executor.critical_alert"):
+            from executor import _check_cancelled_stops
+            _check_cancelled_stops(tc, r)
+
+        mock_reconcile.assert_called_once()
+        _, kwargs = mock_reconcile.call_args
+        assert kwargs.get("fill_price") is None
+
 
 # ── TestReconcileStopFilledFillPrice ─────────────────────────
 
