@@ -1,0 +1,199 @@
+defmodule DashboardWeb.PerformanceLiveTest do
+  use DashboardWeb.ConnCase
+
+  # Helper to build a row map as compute_derived/1 would return it
+  defp make_row(symbol, total_pnl, wins, trade_count, avg_win, avg_loss, tier_hint \\ nil) do
+    _ = tier_hint
+
+    %{
+      symbol: symbol,
+      asset_class: "equity",
+      last_trade: ~U[2026-04-10 14:30:00Z],
+      trade_count: trade_count,
+      total_pnl: Decimal.new(total_pnl),
+      wins: wins,
+      losses: trade_count - wins,
+      avg_win: if(avg_win, do: Decimal.new(avg_win), else: nil),
+      avg_loss: if(avg_loss, do: Decimal.new(avg_loss), else: nil),
+      gross_wins: nil,
+      gross_losses: nil,
+      win_rate: if(trade_count > 0, do: Float.round(wins * 1.0 / trade_count * 100, 1), else: 0.0),
+      profit_factor: nil
+    }
+  end
+
+  describe "mount" do
+    test "renders page heading", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/performance")
+      assert html =~ "Per-Instrument P&amp;L"
+    end
+
+    test "renders table column headers", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/performance")
+      assert html =~ "Symbol"
+      assert html =~ "Total P&amp;L"
+      assert html =~ "Trades"
+      assert html =~ "Win%"
+      assert html =~ "PF"
+      assert html =~ "Avg Win"
+      assert html =~ "Avg Loss"
+      assert html =~ "Last Trade"
+      assert html =~ "Class"
+    end
+
+    test "range buttons present with 30d active by default", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/performance")
+      assert html =~ "30d"
+      assert html =~ "90d"
+      assert html =~ "All"
+    end
+
+    test "initial assigns", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/performance")
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.range == "30d"
+      assert assigns.sort_col == :total_pnl
+      assert assigns.sort_dir == :desc
+      assert assigns.rows == []
+    end
+
+    test "shows empty state when no rows", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/performance")
+      assert html =~ "no trades"
+    end
+  end
+
+  describe "set_range event" do
+    test "switches range to 90d", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/performance")
+      render_click(view, "set_range", %{"range" => "90d"})
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.range == "90d"
+    end
+
+    test "switches range to all", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/performance")
+      render_click(view, "set_range", %{"range" => "all"})
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.range == "all"
+    end
+
+    test "resets sort to total_pnl desc on range change", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/performance")
+
+      # First sort by symbol
+      render_click(view, "sort", %{"col" => "symbol"})
+
+      # Then change range — sort should reset
+      render_click(view, "set_range", %{"range" => "90d"})
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.sort_col == :total_pnl
+      assert assigns.sort_dir == :desc
+    end
+
+    test "ignores unknown range value", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/performance")
+      render_click(view, "set_range", %{"range" => "7d"})
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.range == "30d"
+    end
+  end
+
+  describe "sort event" do
+    setup %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/performance")
+
+      rows = [
+        make_row("SPY", "142.50", 7, 9, "28.10", "-13.20"),
+        make_row("NVDA", "-22.00", 2, 4, "18.00", "-29.00"),
+        make_row("QQQ", "88.00", 5, 7, "22.40", "-15.80")
+      ]
+
+      send(view.pid, {:set_rows, rows})
+      {:ok, view: view}
+    end
+
+    test "sorts by symbol ascending when clicking symbol col", %{view: view} do
+      render_click(view, "sort", %{"col" => "symbol"})
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.sort_col == :symbol
+      assert assigns.sort_dir == :desc
+
+      # Second click toggles to asc
+      render_click(view, "sort", %{"col" => "symbol"})
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.sort_dir == :asc
+      assert hd(assigns.rows).symbol == "NVDA"
+    end
+
+    test "clicking new column defaults to desc", %{view: view} do
+      # Start sorted by total_pnl desc (default)
+      render_click(view, "sort", %{"col" => "trade_count"})
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.sort_col == :trade_count
+      assert assigns.sort_dir == :desc
+    end
+
+    test "clicking same column toggles direction", %{view: view} do
+      render_click(view, "sort", %{"col" => "total_pnl"})
+      assigns = :sys.get_state(view.pid).socket.assigns
+      # Was :desc (default), click same col -> :asc
+      assert assigns.sort_dir == :asc
+    end
+
+    test "ignores unknown column name", %{view: view} do
+      render_click(view, "sort", %{"col" => "nonexistent"})
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.sort_col == :total_pnl
+    end
+  end
+
+  describe "rendered rows" do
+    test "renders symbol and P&L from injected rows", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/performance")
+      send(view.pid, {:set_rows, [make_row("SPY", "142.50", 7, 9, "28.10", "-13.20")]})
+      html = render(view)
+      assert html =~ "SPY"
+      assert html =~ "+$142.50"
+    end
+
+    test "negative P&L renders red", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/performance")
+      send(view.pid, {:set_rows, [make_row("NVDA", "-22.00", 2, 4, "18.00", "-29.00")]})
+      html = render(view)
+      assert html =~ "NVDA"
+      assert html =~ "text-red-400"
+    end
+
+    test "tier badge renders when universe assign populated", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/performance")
+      send(view.pid, {:set_rows, [make_row("SPY", "50.00", 3, 4, "20.00", "-10.00")]})
+
+      # Simulate Redis state_update with universe
+      send(view.pid, {:state_update, %{"trading:universe" => %{"tier1" => ["SPY"], "tier2" => [], "tier3" => []}}})
+      html = render(view)
+      assert html =~ "T1"
+    end
+
+    test "no tier badge when universe is nil", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/performance")
+      send(view.pid, {:set_rows, [make_row("SPY", "50.00", 3, 4, "20.00", "-10.00")]})
+      html = render(view)
+      refute html =~ "T1"
+      refute html =~ "T2"
+    end
+
+    test "footer summary row present", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/performance")
+
+      send(view.pid, {:set_rows, [
+        make_row("SPY", "100.00", 8, 10, "20.00", "-10.00"),
+        make_row("QQQ", "50.00", 6, 8, "15.00", "-8.00")
+      ]})
+
+      html = render(view)
+      assert html =~ "instruments"
+      assert html =~ "+$150.00"
+    end
+  end
+end
