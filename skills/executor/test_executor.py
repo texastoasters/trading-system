@@ -1816,3 +1816,280 @@ class TestLogTrade:
         call_args = mock_print.call_args[0][0]
         assert "Failed to log trade to DB" in call_args
         assert "connection refused" in call_args
+
+
+# ── TestExecuteBuyLogsTradeTask5 ─────────────────────────────
+
+class TestExecuteBuyLogsTrade:
+    def test_log_trade_called_after_confirmed_buy_fill(self):
+        """_log_trade called once with correct buy params after confirmed fill."""
+        r, store = make_redis({})
+        filled = MagicMock()
+        filled.status = "filled"
+        filled.filled_avg_price = "500.0"
+        filled.filled_qty = "10"
+        submitted = MagicMock()
+        submitted.id = "ord-buy-1"
+        submitted.status = "accepted"
+        stop_order = MagicMock()
+        stop_order.id = "stop-1"
+
+        tc = MagicMock()
+        tc.get_clock.return_value = make_clock(is_open=True)
+        tc.get_orders.return_value = []
+        tc.submit_order.side_effect = [submitted, stop_order]
+        tc.get_order_by_id.return_value = filled
+
+        order = make_buy_signal(
+            symbol="SPY", qty=10, entry=500.0, stop=490.0,
+            strategy="rsi2", asset_class="equity",
+        )
+
+        with patch("time.sleep"), patch("notify.trade_alert"), \
+             patch("executor._log_trade") as mock_log:
+            from executor import execute_buy
+            result = execute_buy(r, tc, order)
+
+        assert result is True
+        mock_log.assert_called_once_with(
+            symbol="SPY",
+            side="buy",
+            quantity=10.0,
+            price=500.0,
+            total_value=5000.0,
+            order_id="ord-buy-1",
+            strategy="rsi2",
+            asset_class="equity",
+        )
+
+    def test_log_trade_buy_realized_pnl_and_exit_reason_are_none(self):
+        """For a buy, _log_trade must not receive realized_pnl or exit_reason kwargs."""
+        r, _ = make_redis({})
+        filled = MagicMock()
+        filled.status = "filled"
+        filled.filled_avg_price = "500.0"
+        filled.filled_qty = "10"
+        submitted = MagicMock()
+        submitted.id = "ord-buy-2"
+        stop_order = MagicMock()
+        stop_order.id = "stop-2"
+
+        tc = MagicMock()
+        tc.get_clock.return_value = make_clock(is_open=True)
+        tc.get_orders.return_value = []
+        tc.submit_order.side_effect = [submitted, stop_order]
+        tc.get_order_by_id.return_value = filled
+
+        order = make_buy_signal(strategy="rsi2", asset_class="equity")
+
+        with patch("time.sleep"), patch("notify.trade_alert"), \
+             patch("executor._log_trade") as mock_log:
+            from executor import execute_buy
+            execute_buy(r, tc, order)
+
+        _, kwargs = mock_log.call_args
+        assert kwargs.get("realized_pnl") is None
+        assert kwargs.get("exit_reason") is None
+
+    def test_log_trade_uses_strategy_fallback_when_missing(self):
+        """order without 'asset_class' key → defaults to 'equity'."""
+        r, _ = make_redis({})
+        filled = MagicMock()
+        filled.status = "filled"
+        filled.filled_avg_price = "500.0"
+        filled.filled_qty = "10"
+        submitted = MagicMock()
+        submitted.id = "ord-buy-3"
+        stop_order = MagicMock()
+        stop_order.id = "stop-3"
+
+        tc = MagicMock()
+        tc.get_clock.return_value = make_clock(is_open=True)
+        tc.get_orders.return_value = []
+        tc.submit_order.side_effect = [submitted, stop_order]
+        tc.get_order_by_id.return_value = filled
+
+        # No 'asset_class' in order
+        order = make_buy_signal(strategy="rsi2")
+
+        with patch("time.sleep"), patch("notify.trade_alert"), \
+             patch("executor._log_trade") as mock_log:
+            from executor import execute_buy
+            execute_buy(r, tc, order)
+
+        _, kwargs = mock_log.call_args
+        assert kwargs["asset_class"] == "equity"
+
+
+# ── TestExecuteSellLogsTrade (Task 7) ────────────────────────
+
+class TestExecuteSellLogsTrade:
+    def _setup_successful_sell(self, symbol="SPY", entry=500.0, exit_price=510.0,
+                                signal_type="rsi_exit"):
+        pos = make_position(symbol=symbol, qty=10, entry=entry)
+        r, store = make_redis({symbol: pos})
+
+        filled = MagicMock()
+        filled.status = "filled"
+        filled.filled_avg_price = str(exit_price)
+        filled.filled_qty = "10"
+        submitted = MagicMock()
+        submitted.id = "ord-sell-1"
+
+        tc = MagicMock()
+        tc.get_clock.return_value = make_clock(is_open=True)
+        tc.cancel_order_by_id.return_value = None
+        tc.submit_order.return_value = submitted
+        tc.get_order_by_id.return_value = filled
+
+        signal = make_sell_signal(symbol=symbol, signal_type=signal_type)
+        return r, store, tc, signal, pos
+
+    def test_log_trade_called_after_confirmed_sell_fill(self):
+        """_log_trade called once with side='sell' after confirmed fill."""
+        r, store, tc, signal, pos = self._setup_successful_sell()
+
+        with patch("time.sleep"), patch("notify.exit_alert"), \
+             patch("executor._log_trade") as mock_log:
+            from executor import execute_sell
+            result = execute_sell(r, tc, signal)
+
+        assert result is True
+        mock_log.assert_called_once()
+        _, kwargs = mock_log.call_args
+        assert kwargs["side"] == "sell"
+        assert kwargs["symbol"] == "SPY"
+
+    def test_log_trade_sell_exit_reason_from_signal_type(self):
+        """exit_reason comes from order.get('signal_type', 'unknown')."""
+        r, store, tc, signal, pos = self._setup_successful_sell(signal_type="time_stop")
+
+        with patch("time.sleep"), patch("notify.exit_alert"), \
+             patch("executor._log_trade") as mock_log:
+            from executor import execute_sell
+            execute_sell(r, tc, signal)
+
+        _, kwargs = mock_log.call_args
+        assert kwargs["exit_reason"] == "time_stop"
+
+    def test_log_trade_sell_exit_reason_defaults_to_unknown(self):
+        """Signal with no signal_type → exit_reason='unknown'."""
+        pos = make_position()
+        r, store = make_redis({"SPY": pos})
+
+        filled = MagicMock()
+        filled.status = "filled"
+        filled.filled_avg_price = "505.0"
+        filled.filled_qty = "10"
+        submitted = MagicMock()
+        submitted.id = "ord-s"
+
+        tc = MagicMock()
+        tc.get_clock.return_value = make_clock(is_open=True)
+        tc.cancel_order_by_id.return_value = None
+        tc.submit_order.return_value = submitted
+        tc.get_order_by_id.return_value = filled
+
+        # No signal_type key
+        signal = {"symbol": "SPY", "side": "sell"}
+
+        with patch("time.sleep"), patch("notify.exit_alert"), \
+             patch("executor._log_trade") as mock_log:
+            from executor import execute_sell
+            execute_sell(r, tc, signal)
+
+        _, kwargs = mock_log.call_args
+        assert kwargs["exit_reason"] == "unknown"
+
+    def test_log_trade_sell_realized_pnl_computed(self):
+        """realized_pnl = (fill_price - entry_price) * quantity (before fee adjustments)."""
+        r, store, tc, signal, pos = self._setup_successful_sell(
+            entry=500.0, exit_price=510.0
+        )
+        # pnl = (510 - 500) * 10 = 100
+
+        with patch("time.sleep"), patch("notify.exit_alert"), \
+             patch("executor._log_trade") as mock_log:
+            from executor import execute_sell
+            execute_sell(r, tc, signal)
+
+        _, kwargs = mock_log.call_args
+        assert kwargs["realized_pnl"] == pytest.approx(100.0)
+
+    def test_log_trade_sell_order_id_from_alpaca(self):
+        """order_id comes from the Alpaca order id."""
+        pos = make_position()
+        r, _ = make_redis({"SPY": pos})
+
+        filled = MagicMock()
+        filled.status = "filled"
+        filled.filled_avg_price = "505.0"
+        filled.filled_qty = "10"
+        submitted = MagicMock()
+        submitted.id = "alpaca-sell-999"
+
+        tc = MagicMock()
+        tc.get_clock.return_value = make_clock(is_open=True)
+        tc.cancel_order_by_id.return_value = None
+        tc.submit_order.return_value = submitted
+        tc.get_order_by_id.return_value = filled
+
+        with patch("time.sleep"), patch("notify.exit_alert"), \
+             patch("executor._log_trade") as mock_log:
+            from executor import execute_sell
+            execute_sell(r, tc, make_sell_signal())
+
+        _, kwargs = mock_log.call_args
+        assert kwargs["order_id"] == "alpaca-sell-999"
+
+
+# ── TestReconcileStopFilledLogsTrade (Task 8) ────────────────
+
+class TestReconcileStopFilledLogsTrade:
+    def test_log_trade_called_with_stop_loss_auto(self):
+        """_log_trade called with side='sell', exit_reason='stop_loss_auto'."""
+        pos = make_position(qty=10, entry=500.0, stop=490.0, stop_order_id="stop-456")
+        positions = {"SPY": pos}
+        r, store = make_redis({"SPY": pos})
+        r.delete = MagicMock()
+
+        with patch("executor.exit_alert"), \
+             patch("executor._log_trade") as mock_log:
+            from executor import _reconcile_stop_filled
+            _reconcile_stop_filled(r, pos, positions, "SPY")
+
+        mock_log.assert_called_once()
+        _, kwargs = mock_log.call_args
+        assert kwargs["side"] == "sell"
+        assert kwargs["exit_reason"] == "stop_loss_auto"
+
+    def test_log_trade_reconcile_symbol_and_quantity(self):
+        """_log_trade receives correct symbol and quantity in reconcile path."""
+        pos = make_position(symbol="SPY", qty=10, entry=500.0, stop=490.0)
+        positions = {"SPY": pos}
+        r, store = make_redis({"SPY": pos})
+        r.delete = MagicMock()
+
+        with patch("executor.exit_alert"), \
+             patch("executor._log_trade") as mock_log:
+            from executor import _reconcile_stop_filled
+            _reconcile_stop_filled(r, pos, positions, "SPY")
+
+        _, kwargs = mock_log.call_args
+        assert kwargs["symbol"] == "SPY"
+        assert kwargs["quantity"] == 10
+
+    def test_log_trade_reconcile_fill_price_used_when_provided(self):
+        """fill_price kwarg is used as price when explicitly passed."""
+        pos = make_position(qty=10, entry=500.0, stop=490.0)
+        positions = {"SPY": pos}
+        r, store = make_redis({"SPY": pos})
+        r.delete = MagicMock()
+
+        with patch("executor.exit_alert"), \
+             patch("executor._log_trade") as mock_log:
+            from executor import _reconcile_stop_filled
+            _reconcile_stop_filled(r, pos, positions, "SPY", fill_price=488.0)
+
+        _, kwargs = mock_log.call_args
+        assert kwargs["price"] == pytest.approx(488.0)
