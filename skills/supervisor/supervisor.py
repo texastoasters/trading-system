@@ -103,7 +103,7 @@ def run_circuit_breakers(r):
             drawdown_alert(dd, "Caution: Tier 3 at reduced size.", attribution=attribution)
 
     else:
-        if prev_status != "active":
+        if prev_status not in ("active", "paused"):
             r.set(Keys.SYSTEM_STATUS, "active")
             r.set(Keys.RISK_MULTIPLIER, "1.0")
             enable_all_tiers(r)
