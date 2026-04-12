@@ -1251,5 +1251,25 @@ defmodule DashboardWeb.DashboardLiveTest do
       {:ok, _view, html} = live(conn, "/")
       assert html =~ "px-3 sm:px-6"
     end
+
+    test "stat grid is responsive across breakpoints", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/")
+      assert html =~ "grid-cols-2 sm:grid-cols-4 lg:grid-cols-7"
+    end
+
+    test "universe stat card spans full width on mobile", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/")
+      assert html =~ "col-span-2 sm:col-span-1"
+    end
+
+    test "heartbeat grid is responsive", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/")
+      assert html =~ "grid-cols-3 sm:grid-cols-5"
+    end
+
+    test "pause button has minimum 44px touch height", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/")
+      assert html =~ "min-h-[44px]"
+    end
   end
 end
