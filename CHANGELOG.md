@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.22.1] — 2026-04-11
+
+### Added
+- Legend below equity curve SVG with color swatches for all five series: Equity, Peak, −10% caution, −15% halt T2, −20% halt all
+
+---
+
 ## [0.22.0] — 2026-04-11
 
 ### Changed
