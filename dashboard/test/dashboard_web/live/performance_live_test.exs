@@ -172,15 +172,15 @@ defmodule DashboardWeb.PerformanceLiveTest do
       # Simulate Redis state_update with universe
       send(view.pid, {:state_update, %{"trading:universe" => %{"tier1" => ["SPY"], "tier2" => [], "tier3" => []}}})
       html = render(view)
-      assert html =~ "T1"
+      assert html =~ "border-yellow-700"
     end
 
     test "no tier badge when universe is nil", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/performance")
       send(view.pid, {:set_rows, [make_row("SPY", "50.00", 3, 4, "20.00", "-10.00")]})
       html = render(view)
-      refute html =~ "T1"
-      refute html =~ "T2"
+      refute html =~ "border-yellow-700"
+      refute html =~ "border-blue-700"
     end
 
     test "footer summary row present", %{conn: conn} do
@@ -362,8 +362,8 @@ defmodule DashboardWeb.PerformanceLiveTest do
       }})
 
       html = render(view)
-      assert html =~ "T2"
-      assert html =~ "T3"
+      assert html =~ "border-blue-700"
+      assert html =~ "border-gray-600"
     end
 
     test "symbol not in any tier shows no badge", %{conn: conn} do
@@ -373,9 +373,9 @@ defmodule DashboardWeb.PerformanceLiveTest do
         "trading:universe" => %{"tier1" => [], "tier2" => [], "tier3" => []}
       }})
       html = render(view)
-      refute html =~ "T1"
-      refute html =~ "T2"
-      refute html =~ "T3"
+      refute html =~ "border-yellow-700"
+      refute html =~ "border-blue-700"
+      refute html =~ "border-gray-600"
     end
   end
 
