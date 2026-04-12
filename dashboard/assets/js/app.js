@@ -41,8 +41,7 @@ const EquityChart = {
       borderDash: [4, 6],
       pointRadius: 0,
       fill: false,
-      tension: 0,
-      tooltip: { enabled: false }
+      tension: 0
     })
 
     const datasets = [
