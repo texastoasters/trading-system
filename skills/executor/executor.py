@@ -24,13 +24,50 @@ from alpaca.trading.requests import (
 )
 from alpaca.trading.enums import OrderSide, TimeInForce, QueryOrderStatus
 
+import os
 import signal
+
+import psycopg2
 
 import config
 from config import Keys, get_redis, get_simulated_equity, is_crypto, init_redis_state
 from notify import notify, trade_alert, exit_alert, critical_alert
 
 _shutdown = False
+
+
+# ── Database Connection ─────────────────────────────────────
+
+def get_db():  # pragma: no cover
+    """Connect to TimescaleDB."""
+    return psycopg2.connect(
+        host=os.environ.get("TIMESCALEDB_HOST", "localhost"),
+        port=int(os.environ.get("TIMESCALEDB_PORT", "5432")),
+        dbname=os.environ.get("TIMESCALEDB_DB", "trading"),
+        user=os.environ.get("TIMESCALEDB_USER", "trader"),
+        password=os.environ.get("TIMESCALEDB_PASSWORD", "changeme_in_env_file"),
+    )
+
+
+def _log_trade(symbol, side, quantity, price, total_value, order_id,
+               strategy, asset_class, realized_pnl=None, exit_reason=None):
+    """Insert one trade row into TimescaleDB. Non-fatal — DB failure never blocks a trade."""
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute(
+            """INSERT INTO trades
+               (symbol, side, quantity, price, total_value, order_id,
+                strategy, asset_class, realized_pnl, exit_reason)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+            (symbol, side, quantity, price, total_value, order_id,
+             strategy, asset_class, realized_pnl, exit_reason),
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"  [Executor] ⚠️ Failed to log trade to DB: {e}")
 
 
 def _handle_sigterm(signum, frame):

@@ -406,3 +406,16 @@ class TestGetDrawdownAttribution:
         called_date = cur.execute.call_args[0][1][0]
         max_allowed = date.today() - timedelta(days=ATTRIBUTION_MAX_LOOKBACK_DAYS)
         assert called_date >= max_allowed
+
+
+# ── Keys.age_alert ───────────────────────────────────────────
+
+def test_keys_age_alert():
+    from config import Keys
+    key = Keys.age_alert("SPY")
+    assert key == "trading:age_alert:SPY"
+
+def test_keys_age_alert_crypto():
+    from config import Keys
+    key = Keys.age_alert("BTC/USD")
+    assert key == "trading:age_alert:BTC/USD"

@@ -12,10 +12,10 @@ from unittest.mock import MagicMock, patch, call
 
 sys.path.insert(0, "scripts")
 
-# Mock alpaca and redis before executor imports them
+# Mock alpaca, redis, and psycopg2 before executor imports them
 for mod in [
     "alpaca", "alpaca.trading", "alpaca.trading.client", "alpaca.trading.requests",
-    "alpaca.trading.enums", "redis",
+    "alpaca.trading.enums", "redis", "psycopg2",
 ]:
     sys.modules[mod] = MagicMock()
 
@@ -1739,3 +1739,74 @@ class TestReconcileStopFilledFillPrice:
 
         # pnl = (490 - 500) * 10 = -100 (original behavior)
         assert float(store["trading:simulated_equity"]) == pytest.approx(4900.0)
+
+
+# ── _log_trade ────────────────────────────────────────────────
+
+class TestLogTrade:
+    def test_log_trade_inserts_buy_row(self):
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_conn.cursor.return_value = mock_cur
+
+        with patch("executor.psycopg2.connect", return_value=mock_conn):
+            from executor import _log_trade
+            _log_trade(
+                symbol="SPY",
+                side="buy",
+                quantity=10,
+                price=500.0,
+                total_value=5000.0,
+                order_id="ord-123",
+                strategy="RSI2",
+                asset_class="equity",
+            )
+
+        call_args = mock_cur.execute.call_args[0]
+        assert "INSERT INTO trades" in call_args[0]
+        params = call_args[1]
+        assert params[0] == "SPY"
+        assert params[1] == "buy"
+        assert params[2] == 10
+        assert params[3] == 500.0
+        assert params[8] is None   # realized_pnl
+        assert params[9] is None   # exit_reason
+        mock_conn.commit.assert_called_once()
+        mock_conn.close.assert_called_once()
+
+    def test_log_trade_inserts_sell_row_with_exit_reason(self):
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_conn.cursor.return_value = mock_cur
+
+        with patch("executor.psycopg2.connect", return_value=mock_conn):
+            from executor import _log_trade
+            _log_trade(
+                symbol="SPY",
+                side="sell",
+                quantity=10,
+                price=510.0,
+                total_value=5100.0,
+                order_id="ord-456",
+                strategy="RSI2",
+                asset_class="equity",
+                realized_pnl=98.0,
+                exit_reason="take_profit",
+            )
+
+        call_args = mock_cur.execute.call_args[0]
+        params = call_args[1]
+        assert params[1] == "sell"
+        assert params[8] == 98.0    # realized_pnl
+        assert params[9] == "take_profit"  # exit_reason
+
+    def test_log_trade_non_fatal_on_db_error(self):
+        """DB failure must never crash the executor."""
+        with patch("executor.psycopg2.connect", side_effect=Exception("db down")):
+            from executor import _log_trade
+            # Should not raise
+            _log_trade(
+                symbol="SPY", side="buy", quantity=10, price=500.0,
+                total_value=5000.0, order_id="ord-999",
+                strategy="RSI2", asset_class="equity",
+            )
