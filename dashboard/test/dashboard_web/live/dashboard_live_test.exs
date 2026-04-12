@@ -1234,4 +1234,17 @@ defmodule DashboardWeb.DashboardLiveTest do
       assert html =~ "5"
     end
   end
+
+  describe "mobile nav" do
+    test "nav has overflow-x-auto for mobile scrolling", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/")
+      assert html =~ "overflow-x-auto"
+      assert html =~ "whitespace-nowrap"
+    end
+
+    test "nav links have shrink-0 to prevent compression", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/")
+      assert html =~ "shrink-0"
+    end
+  end
 end
