@@ -15,7 +15,7 @@ import pytest
 sys.path.insert(0, "scripts")
 
 # Mock external deps before import
-for mod in ["psycopg2", "redis"]:
+for mod in ["psycopg2", "redis", "alpaca", "alpaca.trading", "alpaca.trading.client"]:
     if mod not in sys.modules:
         sys.modules[mod] = MagicMock()
 
@@ -214,6 +214,69 @@ class TestRunWeeklySummary:
         m = mock_ws.call_args[0][0]
         assert "week" in m
         assert len(m["week"]) > 0
+
+
+class TestWeeklySummaryPaperReport:
+    def _make_account(self, portfolio_value):
+        acct = MagicMock()
+        acct.portfolio_value = portfolio_value
+        return acct
+
+    def test_paper_report_included_when_alpaca_succeeds(self):
+        r = make_redis({Keys.SIMULATED_EQUITY: "5100.0"})
+        cur = make_cursor()
+        conn = MagicMock()
+        conn.cursor.return_value = cur
+        account = self._make_account(102000.0)
+
+        with patch("supervisor.weekly_summary") as mock_ws, \
+             patch("supervisor.get_db", return_value=conn), \
+             patch("supervisor.TradingClient") as mock_tc:
+            mock_tc.return_value.get_account.return_value = account
+            from supervisor import run_weekly_summary
+            run_weekly_summary(r)
+
+        kwargs = mock_ws.call_args[1]
+        assert "alpaca_return_pct" in kwargs
+        assert "simulated_return_pct" in kwargs
+        assert "paper_divergence_pct" in kwargs
+        assert abs(kwargs["simulated_return_pct"] - 2.0) < 0.01
+        assert abs(kwargs["alpaca_return_pct"] - 2.0) < 0.01
+        assert abs(kwargs["paper_divergence_pct"]) < 0.01
+
+    def test_paper_report_omitted_when_alpaca_fails(self):
+        r = make_redis()
+        cur = make_cursor()
+        conn = MagicMock()
+        conn.cursor.return_value = cur
+
+        with patch("supervisor.weekly_summary") as mock_ws, \
+             patch("supervisor.get_db", return_value=conn), \
+             patch("supervisor.TradingClient") as mock_tc:
+            mock_tc.return_value.get_account.side_effect = Exception("alpaca down")
+            from supervisor import run_weekly_summary
+            run_weekly_summary(r)
+
+        mock_ws.assert_called_once()
+        kwargs = mock_ws.call_args[1]
+        assert "paper_divergence_pct" not in kwargs
+
+    def test_divergence_warning_when_over_5_pct(self):
+        r = make_redis({Keys.SIMULATED_EQUITY: "5000.0"})
+        cur = make_cursor()
+        conn = MagicMock()
+        conn.cursor.return_value = cur
+        account = self._make_account(110000.0)
+
+        with patch("supervisor.weekly_summary") as mock_ws, \
+             patch("supervisor.get_db", return_value=conn), \
+             patch("supervisor.TradingClient") as mock_tc:
+            mock_tc.return_value.get_account.return_value = account
+            from supervisor import run_weekly_summary
+            run_weekly_summary(r)
+
+        kwargs = mock_ws.call_args[1]
+        assert kwargs["paper_divergence_pct"] > 5.0
 
 
 # ── run_circuit_breakers ─────────────────────────────────────

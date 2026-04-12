@@ -183,13 +183,22 @@ def daily_summary(metrics: dict):
 
 # ── Weekly Summary ──────────────────────────────────────────
 
-def weekly_summary(metrics: dict):
+def weekly_summary(
+    metrics: dict,
+    alpaca_portfolio_value: float = None,
+    alpaca_return_pct: float = None,
+    simulated_return_pct: float = None,
+    paper_divergence_pct: float = None,
+):
     """
     Send the weekly performance summary.
     Expected metrics dict keys:
         week, equity, weekly_pnl, weekly_pnl_pct, drawdown_pct,
         total_trades, winners, losers, best_trade, worst_trade,
         active_instruments, disabled_instruments, universe_size
+
+    Optional paper comparison kwargs:
+        alpaca_portfolio_value, alpaca_return_pct, simulated_return_pct, paper_divergence_pct
     """
     d = metrics
     pnl_emoji = "📈" if d.get('weekly_pnl', 0) >= 0 else "📉"
@@ -211,6 +220,18 @@ def weekly_summary(metrics: dict):
         f"({d.get('active_instruments', 0)} active, "
         f"{d.get('disabled_instruments', 0)} disabled)\n"
     )
+
+    if paper_divergence_pct is not None:
+        if paper_divergence_pct > 5.0:
+            status = f"⚠️ DIVERGENCE: Δ {paper_divergence_pct:.1f}% — check sizing logic"
+        else:
+            status = "✅"
+        msg += (
+            f"\n📊 Paper vs Simulated\n"
+            f"Simulated: {simulated_return_pct:+.1f}% | "
+            f"Alpaca paper: {alpaca_return_pct:+.1f}% | "
+            f"Δ {paper_divergence_pct:.1f}% {status}\n"
+        )
 
     notify(msg)
 

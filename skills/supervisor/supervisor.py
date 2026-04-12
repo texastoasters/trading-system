@@ -24,6 +24,8 @@ from datetime import datetime, timedelta, date
 import psycopg2
 import os
 
+from alpaca.trading.client import TradingClient
+
 import config
 from config import (
     Keys, get_redis, get_simulated_equity, get_drawdown, init_redis_state,
@@ -729,21 +731,46 @@ def run_weekly_summary(r):
     start_equity = equity - weekly_pnl
     weekly_pnl_pct = (weekly_pnl / start_equity * 100) if start_equity > 0 else 0
 
-    weekly_summary({
-        "week": week_label,
-        "equity": round(equity, 2),
-        "weekly_pnl": round(weekly_pnl, 2),
-        "weekly_pnl_pct": round(weekly_pnl_pct, 2),
-        "drawdown_pct": round(dd, 1),
-        "total_trades": total_trades,
-        "winners": winners,
-        "losers": losers,
-        "best_trade": best_trade,
-        "worst_trade": worst_trade,
-        "universe_size": universe_size,
-        "active_instruments": active_instruments,
-        "disabled_instruments": disabled_instruments,
-    })
+    # Paper vs simulated comparison (best-effort — degrade if Alpaca unavailable)
+    paper_kwargs = {}
+    try:
+        trading_client = TradingClient(
+            api_key=os.environ.get("ALPACA_PAPER_API_KEY", ""),
+            secret_key=os.environ.get("ALPACA_PAPER_SECRET_KEY", ""),
+            paper=True,
+        )
+        account = trading_client.get_account()
+        simulated_return_pct = (equity - config.INITIAL_CAPITAL) / config.INITIAL_CAPITAL * 100
+        alpaca_portfolio_value = float(account.portfolio_value)
+        alpaca_return_pct = (alpaca_portfolio_value - 100_000) / 100_000 * 100  # 100k = Alpaca paper starting balance
+        divergence = abs(simulated_return_pct - alpaca_return_pct)
+        paper_kwargs = {
+            "alpaca_portfolio_value": alpaca_portfolio_value,
+            "alpaca_return_pct": round(alpaca_return_pct, 2),
+            "simulated_return_pct": round(simulated_return_pct, 2),
+            "paper_divergence_pct": round(divergence, 2),
+        }
+    except Exception as e:
+        print(f"  [Supervisor] Alpaca paper report failed (omitting): {e}")
+
+    weekly_summary(
+        {
+            "week": week_label,
+            "equity": round(equity, 2),
+            "weekly_pnl": round(weekly_pnl, 2),
+            "weekly_pnl_pct": round(weekly_pnl_pct, 2),
+            "drawdown_pct": round(dd, 1),
+            "total_trades": total_trades,
+            "winners": winners,
+            "losers": losers,
+            "best_trade": best_trade,
+            "worst_trade": worst_trade,
+            "universe_size": universe_size,
+            "active_instruments": active_instruments,
+            "disabled_instruments": disabled_instruments,
+        },
+        **paper_kwargs,
+    )
 
     print(f"[Supervisor] Weekly summary sent. "
           f"W{today.isocalendar()[1]}: {total_trades} trades, "

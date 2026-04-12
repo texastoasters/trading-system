@@ -156,6 +156,34 @@ class TestWeeklySummary:
         notify.weekly_summary(self._base(weekly_pnl=-100.0))
         assert "📉" in capsys.readouterr().out
 
+    def test_paper_section_included_when_data_present(self, capsys):
+        notify.weekly_summary(
+            self._base(),
+            alpaca_portfolio_value=102000.0,
+            alpaca_return_pct=2.0,
+            simulated_return_pct=2.0,
+            paper_divergence_pct=0.0,
+        )
+        out = capsys.readouterr().out
+        assert "Paper vs Simulated" in out
+        assert "Simulated:" in out
+
+    def test_paper_section_shows_divergence_warning(self, capsys):
+        notify.weekly_summary(
+            self._base(),
+            alpaca_portfolio_value=110000.0,
+            alpaca_return_pct=10.0,
+            simulated_return_pct=0.0,
+            paper_divergence_pct=10.0,
+        )
+        out = capsys.readouterr().out
+        assert "DIVERGENCE" in out
+
+    def test_paper_section_omitted_when_no_data(self, capsys):
+        notify.weekly_summary(self._base())
+        out = capsys.readouterr().out
+        assert "Paper vs Simulated" not in out
+
 
 # ── monthly_summary ──────────────────────────────────────────
 
