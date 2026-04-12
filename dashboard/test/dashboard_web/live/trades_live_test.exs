@@ -146,4 +146,26 @@ defmodule DashboardWeb.TradesLiveTest do
       assert html =~ "text-gray-400"
     end
   end
+
+  describe "mobile layout" do
+    test "trades page has mobile-safe horizontal padding", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/trades")
+      assert html =~ "px-3 sm:px-6"
+    end
+
+    test "trades table has responsive card-table desktop header", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/trades")
+      assert html =~ "hidden sm:grid"
+    end
+
+    test "trades card-table wrapper has overflow-hidden", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/trades")
+      assert html =~ "rounded-lg border border-gray-700 overflow-hidden"
+    end
+
+    test "pagination buttons have minimum 44px touch height", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/trades")
+      assert html =~ "min-h-[44px]"
+    end
+  end
 end

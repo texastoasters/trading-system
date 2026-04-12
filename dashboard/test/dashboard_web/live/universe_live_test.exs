@@ -550,4 +550,25 @@ defmodule DashboardWeb.UniverseLiveTest do
       assert html =~ "$500"
     end
   end
+
+  describe "mobile layout" do
+    test "universe page has mobile-safe horizontal padding", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/universe")
+      assert html =~ "px-3 sm:px-6"
+    end
+
+    test "universe tier tables have responsive card-table desktop header", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/universe")
+
+      state = %{
+        "trading:universe" => %{"tier1" => ["SPY"], "tier2" => [], "tier3" => []},
+        "trading:watchlist" => [],
+        "trading:positions" => %{}
+      }
+
+      send(view.pid, {:state_update, state})
+      html = render(view)
+      assert html =~ "hidden sm:grid"
+    end
+  end
 end

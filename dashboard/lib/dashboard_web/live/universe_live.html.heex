@@ -1,4 +1,4 @@
-<div class="min-h-screen bg-gray-900 text-gray-100 p-4 space-y-4">
+<div class="min-h-screen bg-gray-900 text-gray-100 px-3 sm:px-6 py-4 space-y-4">
 
   <%!-- Header --%>
   <div class="flex items-center justify-between">
@@ -54,71 +54,94 @@
           <span class="text-xs text-gray-600 ml-auto">{length(symbols)} symbols</span>
         </div>
 
-        <div class="overflow-x-auto">
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="text-xs text-gray-500 border-b border-gray-700/50">
-                <th class="text-left px-4 py-2 font-medium">Symbol</th>
-                <th class="text-left px-4 py-2 font-medium">Status</th>
-                <th class="text-right px-4 py-2 font-medium">RSI-2 <.tooltip text="Relative Strength Index (2-day) — a 0–100 speed gauge for recent price drops. Below 10 = stock dropped fast and may bounce. The robot buys when RSI-2 is very low." direction="below" /></th>
-                <th class="text-right px-4 py-2 font-medium">Close</th>
-                <th class="text-right px-4 py-2 font-medium">SMA-200 <.tooltip text="Simple Moving Average of the last 200 trading days — a long-term trend line. The robot only buys stocks ABOVE this line to avoid catching a falling knife." direction="below" /></th>
-                <th class="text-center px-4 py-2 font-medium">Above SMA <.tooltip text="Is the stock's price currently above its 200-day trend line? The robot requires ✓ before entering any new trade." direction="below" /></th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-700/30">
-              <%= for sym <- symbols do %>
-                <% status = symbol_status(sym)
-                   {pill_text, pill_class} = status_pill(status)
-                   row_class = cond do
-                     sym.held -> "bg-orange-950/20 hover:bg-orange-950/30"
-                     status == :strong_signal -> "bg-green-950/20 hover:bg-green-950/30"
-                     status == :signal -> "bg-blue-950/20 hover:bg-blue-950/30"
-                     true -> "hover:bg-gray-700/20"
-                   end %>
-                <tr class={["transition-colors", row_class]}>
-                  <td class="px-4 py-2.5">
-                    <span class="font-mono font-semibold text-white">{sym.symbol}</span>
-                  </td>
-                  <td class="px-4 py-2.5">
-                    <%= if pill_text do %>
-                      <span class={["text-xs px-1.5 py-0.5 rounded border font-medium", pill_class]}>
-                        {pill_text}
-                      </span>
-                    <% else %>
-                      <span class="text-gray-700 text-xs">—</span>
-                    <% end %>
-                  </td>
-                  <td class="px-4 py-2.5 text-right font-mono">
-                    <% rsi_class = cond do
-                      is_nil(sym.rsi2) -> "text-gray-600"
-                      sym.rsi2 < 5 -> "text-green-400 font-semibold"
-                      sym.rsi2 < 10 -> "text-blue-400"
-                      true -> "text-gray-400"
-                    end %>
-                    <span class={rsi_class}>{format_float(sym.rsi2)}</span>
-                  </td>
-                  <td class="px-4 py-2.5 text-right font-mono text-gray-300">
-                    {format_price(sym.close)}
-                  </td>
-                  <td class="px-4 py-2.5 text-right font-mono text-gray-500">
-                    {format_price(sym.sma200)}
-                  </td>
-                  <td class="px-4 py-2.5 text-center">
-                    <%= cond do %>
-                      <% is_nil(sym.above_sma) -> %>
-                        <span class="text-gray-700 text-xs">—</span>
-                      <% sym.above_sma -> %>
-                        <span class="text-green-500 text-xs">✓</span>
-                      <% true -> %>
-                        <span class="text-red-500 text-xs">✗</span>
-                    <% end %>
-                  </td>
-                </tr>
-              <% end %>
-            </tbody>
-          </table>
+        <%!-- Desktop header row --%>
+        <div class="hidden sm:grid sm:grid-cols-[5rem_6rem_4rem_5rem_5.5rem_5rem] px-4 py-2 border-b border-gray-700 bg-gray-800/50 text-xs text-gray-500 uppercase tracking-wider">
+          <span class="pr-4">Symbol</span>
+          <span class="pr-4">Status</span>
+          <span class="pr-4 text-right">RSI-2</span>
+          <span class="pr-4 text-right">Close</span>
+          <span class="pr-4 text-right">SMA-200</span>
+          <span class="text-center">Above SMA</span>
         </div>
+
+        <%= for sym <- symbols do %>
+          <% status = symbol_status(sym)
+             {pill_text, pill_class} = status_pill(status)
+             row_class = cond do
+               sym.held -> "bg-orange-950/20 sm:hover:bg-orange-950/30"
+               status == :strong_signal -> "bg-green-950/20 sm:hover:bg-green-950/30"
+               status == :signal -> "bg-blue-950/20 sm:hover:bg-blue-950/30"
+               true -> "sm:hover:bg-gray-700/20"
+             end %>
+          <div class={[
+            "border border-gray-700/50 rounded-lg p-3 mb-1.5 last:mb-0",
+            "sm:bg-transparent sm:border-0 sm:border-b sm:border-gray-700/50 sm:rounded-none",
+            "sm:p-0 sm:px-4 sm:py-2.5 sm:mb-0 sm:last:border-0",
+            "sm:grid sm:grid-cols-[5rem_6rem_4rem_5rem_5.5rem_5rem] sm:transition-colors",
+            row_class
+          ]}>
+
+            <%!-- Mobile headline --%>
+            <div class="flex justify-between items-baseline mb-1.5 sm:hidden">
+              <span class="font-mono font-bold text-white">{sym.symbol}</span>
+              <%= if pill_text do %>
+                <span class={["text-xs px-1.5 py-0.5 rounded border font-medium", pill_class]}>{pill_text}</span>
+              <% else %>
+                <span class="text-gray-700 text-xs">—</span>
+              <% end %>
+            </div>
+
+            <%!-- Mobile label/value grid --%>
+            <div class="grid grid-cols-2 gap-x-3 gap-y-1 text-xs sm:hidden">
+              <% rsi_class = cond do
+                is_nil(sym.rsi2) -> "text-gray-600"
+                sym.rsi2 < 5 -> "text-green-400 font-semibold"
+                sym.rsi2 < 10 -> "text-blue-400"
+                true -> "text-gray-400"
+              end %>
+              <span class="text-gray-500">RSI-2: <span class={rsi_class}>{format_float(sym.rsi2)}</span></span>
+              <span class="text-gray-500">Close: <span class="text-gray-200 font-mono">{format_price(sym.close)}</span></span>
+              <span class="text-gray-500">SMA-200: <span class="text-gray-500 font-mono">{format_price(sym.sma200)}</span></span>
+              <span class="text-gray-500">Above SMA:
+                <%= cond do %>
+                  <% is_nil(sym.above_sma) -> %><span class="text-gray-600"> —</span>
+                  <% sym.above_sma -> %><span class="text-green-500"> ✓</span>
+                  <% true -> %><span class="text-red-500"> ✗</span>
+                <% end %>
+              </span>
+            </div>
+
+            <%!-- Desktop cells --%>
+            <span class="hidden sm:block font-mono font-semibold text-white pr-4">{sym.symbol}</span>
+            <span class="hidden sm:block pr-4">
+              <%= if pill_text do %>
+                <span class={["text-xs px-1.5 py-0.5 rounded border font-medium", pill_class]}>{pill_text}</span>
+              <% else %>
+                <span class="text-gray-700 text-xs">—</span>
+              <% end %>
+            </span>
+            <span class={["hidden sm:block text-right font-mono pr-4",
+              cond do
+                is_nil(sym.rsi2) -> "text-gray-600"
+                sym.rsi2 < 5 -> "text-green-400 font-semibold"
+                sym.rsi2 < 10 -> "text-blue-400"
+                true -> "text-gray-400"
+              end
+            ]}>{format_float(sym.rsi2)}</span>
+            <span class="hidden sm:block text-right font-mono text-gray-300 pr-4">{format_price(sym.close)}</span>
+            <span class="hidden sm:block text-right font-mono text-gray-500 pr-4">{format_price(sym.sma200)}</span>
+            <span class="hidden sm:block text-center">
+              <%= cond do %>
+                <% is_nil(sym.above_sma) -> %>
+                  <span class="text-gray-700 text-xs">—</span>
+                <% sym.above_sma -> %>
+                  <span class="text-green-500 text-xs">✓</span>
+                <% true -> %>
+                  <span class="text-red-500 text-xs">✗</span>
+              <% end %>
+            </span>
+          </div>
+        <% end %>
       </div>
     <% end %>
 
