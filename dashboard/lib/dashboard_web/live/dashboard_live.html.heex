@@ -383,6 +383,7 @@
         <%= if @daily_summaries == [] do %>
           <p class="text-sm text-gray-600 italic">No daily summaries yet</p>
         <% else %>
+          <div class="overflow-x-auto">
           <table class="w-full text-xs">
             <thead>
               <tr class="text-gray-500">
@@ -415,6 +416,7 @@
               <% end %>
             </tbody>
           </table>
+          </div>
         <% end %>
       </div>
     </div>
