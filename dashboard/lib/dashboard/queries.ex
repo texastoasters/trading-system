@@ -202,7 +202,7 @@ defmodule Dashboard.Queries do
             total_pnl: sum(t.realized_pnl)
           }
 
-      query = if cutoff, do: where(base, [t], t.inserted_at >= ^cutoff), else: base
+      query = if cutoff, do: where(base, [t], t.time >= ^cutoff), else: base
 
       Repo.all(query)
     rescue
