@@ -215,5 +215,16 @@ defmodule DashboardWeb.CoreComponentsTest do
       assert html =~ "90D"
       assert html =~ "ALL"
     end
+
+    test "renders legend for all five series when 2+ points" do
+      points = [
+        %{date: ~D[2026-01-01], ending_equity: 4900.0, peak_equity: 5000.0, drawdown_pct: -2.0},
+        %{date: ~D[2026-01-02], ending_equity: 4950.0, peak_equity: 5000.0, drawdown_pct: -1.0}
+      ]
+      html = render_component(&CoreComponents.equity_chart/1, [{:points, points} | @base_attrs])
+      assert html =~ "−10% caution"
+      assert html =~ "−15% halt T2"
+      assert html =~ "−20% halt all"
+    end
   end
 end
