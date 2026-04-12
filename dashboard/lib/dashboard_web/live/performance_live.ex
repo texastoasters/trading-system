@@ -35,6 +35,7 @@ defmodule DashboardWeb.PerformanceLive do
       |> assign(:range, "30d")
       |> assign(:universe, nil)
       |> assign(:summary, compute_summary(rows))
+      |> assign(:equity_points, if(connected?(socket), do: Queries.equity_curve(30), else: []))
 
     {:ok, socket}
   end
@@ -61,7 +62,8 @@ defmodule DashboardWeb.PerformanceLive do
        range: range,
        sort_col: :total_pnl,
        sort_dir: :desc,
-       summary: compute_summary(rows)
+       summary: compute_summary(rows),
+       equity_points: Queries.equity_curve(days_back)
      )}
   end
 
@@ -112,12 +114,20 @@ defmodule DashboardWeb.PerformanceLive do
       Queries.instrument_performance(days_back)
       |> sort_rows(socket.assigns.sort_col, socket.assigns.sort_dir)
 
-    {:noreply, socket |> assign(:rows, rows) |> assign(:summary, compute_summary(rows))}
+    {:noreply,
+     socket
+     |> assign(:rows, rows)
+     |> assign(:summary, compute_summary(rows))
+     |> assign(:equity_points, Queries.equity_curve(days_back))}
   end
 
   # Test injection handler
   def handle_info({:set_rows, rows}, socket) do
     {:noreply, socket |> assign(:rows, rows) |> assign(:summary, compute_summary(rows))}
+  end
+
+  def handle_info({:set_equity_points, points}, socket) do
+    {:noreply, assign(socket, :equity_points, points)}
   end
 
   def handle_info(_, socket), do: {:noreply, socket}

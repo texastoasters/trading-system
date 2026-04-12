@@ -379,6 +379,40 @@ defmodule DashboardWeb.PerformanceLiveTest do
     end
   end
 
+  describe "equity chart" do
+    test "equity chart panel renders on mount", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/performance")
+      assert html =~ "Equity Curve"
+    end
+
+    test "initial equity_points assign is a list", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/performance")
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert is_list(assigns.equity_points)
+    end
+
+    test "set_range event also updates equity_points", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/performance")
+      render_click(view, "set_range", %{"range" => "90d"})
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.range == "90d"
+      assert is_list(assigns.equity_points)
+    end
+
+    test "no-data fallback renders when equity_points is empty", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/performance")
+      # Inject empty equity_points to exercise the fallback unconditionally
+      send(view.pid, {:set_equity_points, []})
+      html = render(view)
+      assert html =~ "No equity data yet."
+    end
+
+    test "equity chart renders canvas or fallback", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/performance")
+      assert html =~ "equity-chart-performance" or html =~ "No equity data yet."
+    end
+  end
+
   describe "summary assign" do
     test "mount assigns summary with zero count", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/performance")
