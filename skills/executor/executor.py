@@ -52,17 +52,16 @@ def _log_trade(symbol, side, quantity, price, total_value, order_id,
     """Insert one trade row into TimescaleDB. Non-fatal — DB failure never blocks a trade."""
     try:
         conn = get_db()
-        cur = conn.cursor()
-        cur.execute(
-            """INSERT INTO trades
-               (symbol, side, quantity, price, total_value, order_id,
-                strategy, asset_class, realized_pnl, exit_reason)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-            (symbol, side, quantity, price, total_value, order_id,
-             strategy, asset_class, realized_pnl, exit_reason),
-        )
-        conn.commit()
-        cur.close()
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO trades
+                       (symbol, side, quantity, price, total_value, order_id,
+                        strategy, asset_class, realized_pnl, exit_reason)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                    (symbol, side, quantity, price, total_value, order_id,
+                     strategy, asset_class, realized_pnl, exit_reason),
+                )
         conn.close()
     except Exception as e:
         print(f"  [Executor] ⚠️ Failed to log trade to DB: {e}")

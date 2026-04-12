@@ -1747,7 +1747,8 @@ class TestLogTrade:
     def test_log_trade_inserts_buy_row(self):
         mock_conn = MagicMock()
         mock_cur = MagicMock()
-        mock_conn.cursor.return_value = mock_cur
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
 
         with patch("executor.psycopg2.connect", return_value=mock_conn):
             from executor import _log_trade
@@ -1771,13 +1772,13 @@ class TestLogTrade:
         assert params[3] == 500.0
         assert params[8] is None   # realized_pnl
         assert params[9] is None   # exit_reason
-        mock_conn.commit.assert_called_once()
         mock_conn.close.assert_called_once()
 
     def test_log_trade_inserts_sell_row_with_exit_reason(self):
         mock_conn = MagicMock()
         mock_cur = MagicMock()
-        mock_conn.cursor.return_value = mock_cur
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
 
         with patch("executor.psycopg2.connect", return_value=mock_conn):
             from executor import _log_trade
@@ -1800,9 +1801,10 @@ class TestLogTrade:
         assert params[8] == 98.0    # realized_pnl
         assert params[9] == "take_profit"  # exit_reason
 
-    def test_log_trade_non_fatal_on_db_error(self):
+    @patch("builtins.print")
+    def test_log_trade_non_fatal_on_db_error(self, mock_print):
         """DB failure must never crash the executor."""
-        with patch("executor.psycopg2.connect", side_effect=Exception("db down")):
+        with patch("executor.psycopg2.connect", side_effect=Exception("connection refused")):
             from executor import _log_trade
             # Should not raise
             _log_trade(
@@ -1810,3 +1812,7 @@ class TestLogTrade:
                 total_value=5000.0, order_id="ord-999",
                 strategy="RSI2", asset_class="equity",
             )
+        mock_print.assert_called_once()
+        call_args = mock_print.call_args[0][0]
+        assert "Failed to log trade to DB" in call_args
+        assert "connection refused" in call_args
