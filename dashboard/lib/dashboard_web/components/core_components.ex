@@ -28,6 +28,7 @@ defmodule DashboardWeb.CoreComponents do
         "active" -> {"bg-green-900/50 border-green-700", "text-green-400"}
         "halted" -> {"bg-red-900/50 border-red-700", "text-red-400"}
         "caution" -> {"bg-yellow-900/50 border-yellow-700", "text-yellow-400"}
+        "paused" -> {"bg-blue-900/50 border-blue-700", "text-blue-400"}
         _ -> {"bg-gray-900/50 border-gray-700", "text-gray-400"}
       end
 

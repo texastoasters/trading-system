@@ -246,6 +246,22 @@ class TestValidateOrder:
         ok, _ = validate_order(r, order, make_account())
         assert ok
 
+    def test_paused_blocks_buy(self):
+        from executor import validate_order
+        r = self._r(status="paused")
+        order = {"side": "buy", "quantity": 1, "entry_price": 10.0, "order_value": 10.0}
+        ok, reason = validate_order(r, order, make_account())
+        assert not ok
+        assert "paused" in reason
+
+    def test_paused_allows_sell(self):
+        from executor import validate_order
+        pos = make_position()
+        r = self._r(positions={"SPY": pos}, status="paused")
+        order = {"side": "sell", "symbol": "SPY"}
+        ok, _ = validate_order(r, order, make_account())
+        assert ok
+
     def test_daily_loss_limit_allows_sell(self):
         from executor import validate_order
         # equity=5000, DAILY_LOSS_LIMIT_PCT=0.03 → threshold=-150; pnl=-200 (breached)

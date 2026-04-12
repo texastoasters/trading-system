@@ -38,7 +38,7 @@ These are known issues documented in HANDOFF.md that can cause real harm.
 ### Dashboard UX
 - [x] **Dashboard: trade history table** — Paginated table of all past trades with symbol, side, entry/exit price, P&L, exit reason, hold duration. Currently stored in TimescaleDB but not shown.
 - [x] **Dashboard: open position cards** — Each open position shows: current price, entry price, unrealized P&L, stop price, distance to stop, hold days, tier. Currently positions are listed but detail is sparse.
-- [ ] **Dashboard: one-click "pause new entries"** — Write `trading:system_status = paused` to Redis without stopping daemons. Resume with one click. Good for going into meetings/travel.
+- [x] **Dashboard: one-click "pause new entries"** — Write `trading:system_status = paused` to Redis without stopping daemons. Resume with one click. Good for going into meetings/travel.
 - [ ] **Mobile-responsive dashboard** — Current layout is desktop-optimized. Basic mobile responsiveness (stacked panels, larger touch targets) would allow monitoring on the go.
 
 ### System Management
@@ -166,7 +166,7 @@ Ranked by impact on the running system. LLM-dependent items excluded — system 
 4. ~~**Dashboard: trailing stop indicator on position cards**~~ ✅ Done (PR #88)
 
 ### Operational Control
-5. **Dashboard: one-click pause** — Write `trading:system_status = paused` to Redis from the dashboard. Resume with one click. Currently requires SSH. Single most useful missing operational control.
+5. ~~**Dashboard: one-click pause**~~ ✅ Done (PR #90)
 
 ### Signal Quality
 6. **Volume filter on entries** — Screener already has all OHLCV data. Add a minimum ADV (average daily volume) threshold check. Prevents entries on thin-volume days that cause wide spreads and bad fills on TSLA, XLV, IWM.

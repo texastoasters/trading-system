@@ -853,6 +853,54 @@ defmodule DashboardWeb.DashboardLiveTest do
     end
   end
 
+  describe "handle_event toggle_pause" do
+    test "pauses when status is active", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:state_update, %{"trading:system_status" => "active"}})
+      html = render_click(view, "toggle_pause", %{})
+      assert html =~ "New entries paused"
+    end
+
+    test "resumes when status is paused", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:state_update, %{"trading:system_status" => "paused"}})
+      html = render_click(view, "toggle_pause", %{})
+      assert html =~ "Entries resumed"
+    end
+
+    test "shows error flash when Redix command fails", %{conn: conn} do
+      real_redix = Process.whereis(:redix)
+      Process.unregister(:redix)
+      {:ok, stub} = Dashboard.FakeRedix.start_link()
+      Process.register(stub, :redix)
+
+      on_exit(fn ->
+        try do Process.unregister(:redix) rescue _ -> :ok end
+        if real_redix && Process.alive?(real_redix) do
+          Process.register(real_redix, :redix)
+        end
+      end)
+
+      {:ok, view, _} = live(conn, "/")
+      html = render_click(view, "toggle_pause", %{})
+      assert html =~ "Failed to update status"
+    end
+
+    test "pause button is disabled when status is halted", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:state_update, %{"trading:system_status" => "halted"}})
+      html = render(view)
+      assert html =~ "disabled"
+    end
+
+    test "pause button is disabled when status is daily_halt", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:state_update, %{"trading:system_status" => "daily_halt"}})
+      html = render(view)
+      assert html =~ "disabled"
+    end
+  end
+
   describe "heartbeat_age with timezone-aware timestamps" do
     test "tz-aware heartbeat timestamp is parsed correctly", %{conn: conn} do
       {:ok, view, _} = live(conn, "/")

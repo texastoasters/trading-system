@@ -8,6 +8,16 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## v0.18.0 — 2026-04-11
+
+### Added
+- Dashboard one-click pause/resume: header button writes `trading:system_status = "paused"` to Redis. Blocks new buy entries; exits and stop-losses unaffected.
+- Executor blocks buy orders when `system_status = "paused"`.
+- Supervisor preserves `"paused"` through 15-min health-check cycles; drawdown circuit breakers (≥5%) still take priority and overwrite it.
+- `status_badge` renders blue for `"paused"` status, visually distinct from yellow `"caution"` (drawdown-triggered).
+
+---
+
 ## [0.16.0] - 2026-04-11
 
 ### Added

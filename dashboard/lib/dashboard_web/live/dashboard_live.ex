@@ -108,6 +108,20 @@ defmodule DashboardWeb.DashboardLive do
   end
 
   @impl true
+  def handle_event("toggle_pause", _params, socket) do
+    new_status = if socket.assigns.system_status == "paused", do: "active", else: "paused"
+
+    case Redix.command(:redix, ["SET", "trading:system_status", new_status]) do
+      {:ok, _} ->
+        msg = if new_status == "paused", do: "New entries paused", else: "Entries resumed"
+        {:noreply, put_flash(socket, :info, msg)}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, "Failed to update status: #{inspect(reason)}")}
+    end
+  end
+
+  @impl true
   def handle_event("liquidate", %{"symbol" => symbol}, socket) do
     order = %{
       "symbol" => symbol,

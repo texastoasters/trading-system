@@ -296,6 +296,33 @@ class TestRunCircuitBreakers:
             run_circuit_breakers(r)
         mock_en.assert_called_once_with(r)
 
+    def test_paused_preserved_when_drawdown_normal(self):
+        """When drawdown < 5% and status is 'paused', do not overwrite to 'active'."""
+        r = _make_cb(status="paused")  # equity=5000, peak=5000 → 0% drawdown
+        with patch("supervisor.notify"), patch("supervisor.enable_all_tiers"):
+            from supervisor import run_circuit_breakers
+            run_circuit_breakers(r)
+        set_keys = [c[0][0] for c in r.set.call_args_list if c[0]]
+        assert Keys.SYSTEM_STATUS not in set_keys
+
+    def test_paused_overwritten_by_halt(self):
+        """20% drawdown always overwrites 'paused' — safety circuit breakers take priority."""
+        r = _make_cb(equity=4000.0, peak=5000.0, status="paused")
+        with patch("supervisor.critical_alert"):
+            from supervisor import run_circuit_breakers
+            run_circuit_breakers(r)
+        set_calls = {c[0][0]: c[0][1] for c in r.set.call_args_list if len(c[0]) == 2}
+        assert set_calls.get(Keys.SYSTEM_STATUS) == "halted"
+
+    def test_paused_overwritten_by_caution(self):
+        """5% drawdown overwrites 'paused' with 'caution' — safety takes priority."""
+        r = _make_cb(equity=4750.0, peak=5000.0, status="paused")
+        with patch("supervisor.drawdown_alert"):
+            from supervisor import run_circuit_breakers
+            run_circuit_breakers(r)
+        set_calls = {c[0][0]: c[0][1] for c in r.set.call_args_list if len(c[0]) == 2}
+        assert set_calls.get(Keys.SYSTEM_STATUS) == "caution"
+
     def test_daily_loss_limit_halts(self):
         equity = 5000.0
         daily_pnl = -(equity * _config.DAILY_LOSS_LIMIT_PCT) - 1

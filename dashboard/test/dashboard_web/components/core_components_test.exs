@@ -37,6 +37,13 @@ defmodule DashboardWeb.CoreComponentsTest do
       assert html =~ "bg-yellow-900/50"
     end
 
+    test "paused status renders blue styling" do
+      html = render_component(&CoreComponents.status_badge/1, status: "paused")
+      assert html =~ "paused"
+      assert html =~ "text-blue-400"
+      assert html =~ "bg-blue-900/50"
+    end
+
     test "unknown status renders gray styling (catch-all)" do
       html = render_component(&CoreComponents.status_badge/1, status: "unknown_status")
       assert html =~ "unknown_status"

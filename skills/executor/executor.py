@@ -337,7 +337,7 @@ def validate_order(r, order, account):
 
     # System status — blocks new entries, always allows exits
     status = r.get(Keys.SYSTEM_STATUS)
-    if status in ("halted", "daily_halt") and order["side"] == "buy":
+    if status in ("halted", "daily_halt", "paused") and order["side"] == "buy":
         return False, f"System is {status} — no new entries"
 
     # Rule 1: Never exceed simulated cash

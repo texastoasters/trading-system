@@ -25,6 +25,23 @@
       <% {mkt_label, mkt_class} = market_status(@clock) %>
       <span class={["font-medium", mkt_class]}>{mkt_label}</span>
       <.status_badge status={@system_status} />
+      <button
+        phx-click="toggle_pause"
+        disabled={@system_status in ["halted", "daily_halt"]}
+        class={[
+          "px-2 py-0.5 rounded border text-xs font-medium uppercase transition-colors",
+          if(@system_status == "paused",
+            do: "bg-blue-900/40 border-blue-700 text-blue-400 hover:bg-blue-800/40",
+            else: "bg-gray-800 border-gray-600 text-gray-400 hover:border-gray-500"
+          ),
+          if(@system_status in ["halted", "daily_halt"],
+            do: "opacity-40 cursor-not-allowed",
+            else: ""
+          )
+        ]}
+      >
+        {if @system_status == "paused", do: "Resume", else: "Pause"}
+      </button>
       <span class="text-gray-600 text-xs">live</span>
     </div>
   </div>
