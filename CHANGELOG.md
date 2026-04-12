@@ -8,6 +8,18 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.20.0] — 2026-04-11
+
+### Added
+- Equity curve chart on main dashboard and performance page (feature #7)
+  - Blue equity line + gray dashed peak line + red drawdown shading
+  - Three circuit-breaker threshold lines (10% caution / 15% halt T2 / 20% halt all)
+  - Hover tooltips showing date, equity, peak, drawdown%
+  - 30D / 90D / All range toggle on dashboard; performance page reuses existing toggle
+  - Vendored Chart.js 4.4.7 — no npm dependency
+
+---
+
 ## v0.19.0 — 2026-04-11
 
 ### Added
