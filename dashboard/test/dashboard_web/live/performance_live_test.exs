@@ -501,6 +501,19 @@ defmodule DashboardWeb.PerformanceLiveTest do
       assert html =~ "Other"
     end
 
+    test "attribution row with nil pnl renders dash and gray class", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/performance")
+
+      send(view.pid, {:set_attribution, [
+        %{exit_reason: "unknown", count: 1, avg_pnl: nil, total_pnl: nil}
+      ]})
+
+      html = render(view)
+      assert html =~ "Other"
+      assert html =~ "—"
+      assert html =~ "text-gray-400"
+    end
+
     test "attribution refresh_db also updates attribution", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/performance")
       send(view.pid, :refresh_db)
