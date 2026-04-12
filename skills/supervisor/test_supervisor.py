@@ -15,7 +15,7 @@ import pytest
 sys.path.insert(0, "scripts")
 
 # Mock external deps before import
-for mod in ["psycopg2", "redis"]:
+for mod in ["psycopg2", "redis", "alpaca", "alpaca.trading", "alpaca.trading.client"]:
     if mod not in sys.modules:
         sys.modules[mod] = MagicMock()
 
@@ -214,6 +214,69 @@ class TestRunWeeklySummary:
         m = mock_ws.call_args[0][0]
         assert "week" in m
         assert len(m["week"]) > 0
+
+
+class TestWeeklySummaryPaperReport:
+    def _make_account(self, portfolio_value):
+        acct = MagicMock()
+        acct.portfolio_value = portfolio_value
+        return acct
+
+    def test_paper_report_included_when_alpaca_succeeds(self):
+        r = make_redis({Keys.SIMULATED_EQUITY: "5100.0"})
+        cur = make_cursor()
+        conn = MagicMock()
+        conn.cursor.return_value = cur
+        account = self._make_account(102000.0)
+
+        with patch("supervisor.weekly_summary") as mock_ws, \
+             patch("supervisor.get_db", return_value=conn), \
+             patch("supervisor.TradingClient") as mock_tc:
+            mock_tc.return_value.get_account.return_value = account
+            from supervisor import run_weekly_summary
+            run_weekly_summary(r)
+
+        kwargs = mock_ws.call_args[1]
+        assert "alpaca_return_pct" in kwargs
+        assert "simulated_return_pct" in kwargs
+        assert "paper_divergence_pct" in kwargs
+        assert abs(kwargs["simulated_return_pct"] - 2.0) < 0.01
+        assert abs(kwargs["alpaca_return_pct"] - 2.0) < 0.01
+        assert abs(kwargs["paper_divergence_pct"]) < 0.01
+
+    def test_paper_report_omitted_when_alpaca_fails(self):
+        r = make_redis()
+        cur = make_cursor()
+        conn = MagicMock()
+        conn.cursor.return_value = cur
+
+        with patch("supervisor.weekly_summary") as mock_ws, \
+             patch("supervisor.get_db", return_value=conn), \
+             patch("supervisor.TradingClient") as mock_tc:
+            mock_tc.return_value.get_account.side_effect = Exception("alpaca down")
+            from supervisor import run_weekly_summary
+            run_weekly_summary(r)
+
+        mock_ws.assert_called_once()
+        kwargs = mock_ws.call_args[1]
+        assert "paper_divergence_pct" not in kwargs
+
+    def test_divergence_warning_when_over_5_pct(self):
+        r = make_redis({Keys.SIMULATED_EQUITY: "5000.0"})
+        cur = make_cursor()
+        conn = MagicMock()
+        conn.cursor.return_value = cur
+        account = self._make_account(110000.0)
+
+        with patch("supervisor.weekly_summary") as mock_ws, \
+             patch("supervisor.get_db", return_value=conn), \
+             patch("supervisor.TradingClient") as mock_tc:
+            mock_tc.return_value.get_account.return_value = account
+            from supervisor import run_weekly_summary
+            run_weekly_summary(r)
+
+        kwargs = mock_ws.call_args[1]
+        assert kwargs["paper_divergence_pct"] > 5.0
 
 
 # ── run_circuit_breakers ─────────────────────────────────────
@@ -609,6 +672,101 @@ class TestRunHealthCheck:
             from supervisor import run_health_check
             run_health_check(r)
         mock_restart.assert_called_once_with(r)
+
+# ── TestPositionAgeAlert ──────────────────────────────────────
+
+class TestPositionAgeAlert:
+    def _make_hb_redis(self, positions_json="{}", dedup_exists=False):
+        from datetime import date
+        now = datetime.now()
+        base = {
+            Keys.SIMULATED_EQUITY: "5000.0",
+            Keys.DRAWDOWN: "0.0",
+            Keys.POSITIONS: positions_json,
+            Keys.PDT_COUNT: "0",
+            Keys.SYSTEM_STATUS: "active",
+            Keys.REGIME: json.dumps({"regime": "RANGING"}),
+            Keys.heartbeat("executor"): (now - timedelta(minutes=1)).isoformat(),
+            Keys.heartbeat("portfolio_manager"): (now - timedelta(minutes=1)).isoformat(),
+            Keys.heartbeat("watcher"): (now - timedelta(minutes=1)).isoformat(),
+            Keys.RISK_MULTIPLIER: "1.0",
+            Keys.PEAK_EQUITY: "5000.0",
+            Keys.DAILY_PNL: "0.0",
+            Keys.UNIVERSE: json.dumps(_config.DEFAULT_UNIVERSE),
+            "trading:restart_count": "0",
+        }
+        r = MagicMock()
+        r.get = lambda k: base.get(k)
+        r.set = MagicMock()
+        r.publish = MagicMock()
+        r.exists = MagicMock(return_value=1 if dedup_exists else 0)
+        r.setex = MagicMock()
+        return r
+
+    def _pos_json(self, symbol, hold_days, entry_price=100.0, unrealized_pnl_pct=2.5):
+        from datetime import date, timedelta as td
+        entry = (date.today() - td(days=hold_days)).isoformat()
+        return json.dumps({
+            symbol: {
+                "symbol": symbol,
+                "entry_date": entry,
+                "entry_price": entry_price,
+                "unrealized_pnl_pct": unrealized_pnl_pct,
+            }
+        })
+
+    def test_age_alert_fires_when_hold_days_at_threshold(self):
+        pos = self._pos_json("SPY", _config.RSI2_MAX_HOLD_DAYS)
+        r = self._make_hb_redis(positions_json=pos, dedup_exists=False)
+        with patch("supervisor.notify") as mock_notify, \
+             patch("supervisor.run_circuit_breakers"), \
+             patch("supervisor.critical_alert"):
+            from supervisor import run_health_check
+            run_health_check(r)
+        calls = [str(c) for c in mock_notify.call_args_list]
+        assert any("SPY" in c and str(_config.RSI2_MAX_HOLD_DAYS) in c for c in calls)
+        r.setex.assert_called_once_with(Keys.age_alert("SPY"), 86400, "1")
+
+    def test_age_alert_suppressed_when_dedup_key_present(self):
+        pos = self._pos_json("SPY", _config.RSI2_MAX_HOLD_DAYS)
+        r = self._make_hb_redis(positions_json=pos, dedup_exists=True)
+        with patch("supervisor.notify") as mock_notify, \
+             patch("supervisor.run_circuit_breakers"), \
+             patch("supervisor.critical_alert"):
+            from supervisor import run_health_check
+            run_health_check(r)
+        age_alert_calls = [
+            c for c in mock_notify.call_args_list
+            if "age alert" in str(c).lower() or "⏰" in str(c)
+        ]
+        assert len(age_alert_calls) == 0
+        r.setex.assert_not_called()
+
+    def test_age_alert_not_fired_when_hold_days_below_threshold(self):
+        pos = self._pos_json("SPY", _config.RSI2_MAX_HOLD_DAYS - 1)
+        r = self._make_hb_redis(positions_json=pos, dedup_exists=False)
+        with patch("supervisor.notify") as mock_notify, \
+             patch("supervisor.run_circuit_breakers"), \
+             patch("supervisor.critical_alert"):
+            from supervisor import run_health_check
+            run_health_check(r)
+        age_alert_calls = [
+            c for c in mock_notify.call_args_list
+            if "age alert" in str(c).lower() or "⏰" in str(c)
+        ]
+        assert len(age_alert_calls) == 0
+        r.setex.assert_not_called()
+
+    def test_dedup_key_set_with_24h_ttl(self):
+        pos = self._pos_json("QQQ", _config.RSI2_MAX_HOLD_DAYS + 1, entry_price=450.0, unrealized_pnl_pct=-1.2)
+        r = self._make_hb_redis(positions_json=pos, dedup_exists=False)
+        with patch("supervisor.notify"), \
+             patch("supervisor.run_circuit_breakers"), \
+             patch("supervisor.critical_alert"):
+            from supervisor import run_health_check
+            run_health_check(r)
+        r.setex.assert_called_once_with(Keys.age_alert("QQQ"), 86400, "1")
+
 
 # ── reset_daily ───────────────────────────────────────────────
 

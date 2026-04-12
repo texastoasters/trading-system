@@ -22,6 +22,7 @@ CREATE TABLE trades (
     asset_class     TEXT            NOT NULL CHECK (asset_class IN ('equity', 'crypto', 'option')),
     realized_pnl    NUMERIC(18,4),                  -- filled on exit trades
     notes           TEXT,                            -- agent reasoning summary
+    exit_reason     TEXT,                            -- stop_loss | take_profit | time_stop | stop_loss_auto | manual_liquidation
     PRIMARY KEY (id, time)
 );
 

@@ -26,6 +26,9 @@ defmodule DashboardWeb.PerformanceLive do
         do: Queries.instrument_performance(30) |> sort_rows(:total_pnl, :desc),
         else: []
 
+    attribution =
+      if connected?(socket), do: Queries.exit_type_attribution(30), else: []
+
     socket =
       socket
       |> assign(:page_title, "Performance")
@@ -36,6 +39,7 @@ defmodule DashboardWeb.PerformanceLive do
       |> assign(:universe, nil)
       |> assign(:summary, compute_summary(rows))
       |> assign(:equity_points, if(connected?(socket), do: Queries.equity_curve(30), else: []))
+      |> assign(:attribution, attribution)
 
     {:ok, socket}
   end
@@ -63,7 +67,8 @@ defmodule DashboardWeb.PerformanceLive do
        sort_col: :total_pnl,
        sort_dir: :desc,
        summary: compute_summary(rows),
-       equity_points: Queries.equity_curve(days_back)
+       equity_points: Queries.equity_curve(days_back),
+       attribution: Queries.exit_type_attribution(days_back)
      )}
   end
 
@@ -118,7 +123,8 @@ defmodule DashboardWeb.PerformanceLive do
      socket
      |> assign(:rows, rows)
      |> assign(:summary, compute_summary(rows))
-     |> assign(:equity_points, Queries.equity_curve(days_back))}
+     |> assign(:equity_points, Queries.equity_curve(days_back))
+     |> assign(:attribution, Queries.exit_type_attribution(days_back))}
   end
 
   # Test injection handler
@@ -128,6 +134,10 @@ defmodule DashboardWeb.PerformanceLive do
 
   def handle_info({:set_equity_points, points}, socket) do
     {:noreply, assign(socket, :equity_points, points)}
+  end
+
+  def handle_info({:set_attribution, rows}, socket) do
+    {:noreply, assign(socket, :attribution, rows)}
   end
 
   def handle_info(_, socket), do: {:noreply, socket}
@@ -225,6 +235,25 @@ defmodule DashboardWeb.PerformanceLive do
   defp tier_badge(2), do: {"T2", "bg-blue-900/40 text-blue-400 border-blue-700"}
   defp tier_badge(3), do: {"T3", "bg-gray-900/40 text-gray-400 border-gray-600"}
   defp tier_badge(_), do: nil
+
+  defp format_float_pnl(nil), do: "—"
+
+  defp format_float_pnl(v) when is_number(v) do
+    rounded = Float.round(v * 1.0, 2)
+    abs_str = :erlang.float_to_binary(abs(rounded), decimals: 2)
+    if rounded >= 0, do: "+$#{abs_str}", else: "-$#{abs_str}"
+  end
+
+  defp float_pnl_class(v) when is_number(v) and v >= 0, do: "text-green-400"
+  defp float_pnl_class(v) when is_number(v), do: "text-red-400"
+  defp float_pnl_class(_), do: "text-gray-400"
+
+  defp exit_type_label("take_profit"), do: "RSI / Price breakout"
+  defp exit_type_label("time_stop"), do: "Time stop"
+  defp exit_type_label("stop_loss"), do: "Stop loss"
+  defp exit_type_label("stop_loss_auto"), do: "Stop loss"
+  defp exit_type_label("manual_liquidation"), do: "Manual"
+  defp exit_type_label(_), do: "Other"
 
   defp sort_indicator(col, col, :asc), do: " ↑"
   defp sort_indicator(col, col, :desc), do: " ↓"

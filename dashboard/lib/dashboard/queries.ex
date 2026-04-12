@@ -182,6 +182,34 @@ defmodule Dashboard.Queries do
     end
   end
 
+  @doc "Exit reason attribution from closed trades. days_back: 30 | 90 | :all."
+  def exit_type_attribution(days_back \\ 30) do
+    try do
+      cutoff =
+        case days_back do
+          :all -> nil
+          n -> DateTime.add(DateTime.utc_now(), -n * 86_400, :second)
+        end
+
+      base =
+        from t in Trade,
+          where: t.side == "sell" and not is_nil(t.realized_pnl),
+          group_by: t.exit_reason,
+          select: %{
+            exit_reason: t.exit_reason,
+            count: count(t.id),
+            avg_pnl: avg(t.realized_pnl),
+            total_pnl: sum(t.realized_pnl)
+          }
+
+      query = if cutoff, do: where(base, [t], t.time >= ^cutoff), else: base
+
+      Repo.all(query)
+    rescue
+      _ -> []
+    end
+  end
+
   @doc """
   Per-instrument drawdown attribution since peak.
 

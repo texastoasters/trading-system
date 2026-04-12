@@ -251,6 +251,12 @@ class Keys:
         below this value, then clears the key automatically."""
         return f"trading:manual_exit:{symbol}"
 
+    @staticmethod
+    def age_alert(symbol: str) -> str:
+        """Set when a position age nudge has been sent for this symbol today.
+        24h TTL prevents repeat alerts within the same calendar day."""
+        return f"trading:age_alert:{symbol}"
+
 
 # ── Redis Connection ────────────────────────────────────────
 

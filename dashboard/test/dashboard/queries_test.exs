@@ -188,6 +188,24 @@ defmodule Dashboard.QueriesTest do
     end
   end
 
+  describe "exit_type_attribution/1" do
+    test "returns [] when no sell trades exist (table absent or empty)" do
+      assert Queries.exit_type_attribution() == []
+    end
+
+    test "returns [] for 90 day window" do
+      assert Queries.exit_type_attribution(90) == []
+    end
+
+    test "returns [] for :all window" do
+      assert Queries.exit_type_attribution(:all) == []
+    end
+
+    test "returns [] for 30 day window (default)" do
+      assert Queries.exit_type_attribution(30) == []
+    end
+  end
+
   describe "equity_curve/1" do
     # The `daily_summary` table is a TimescaleDB hypertable created by Python
     # setup scripts, not Ecto migrations. It does not exist in the test DB, so

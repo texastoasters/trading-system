@@ -24,13 +24,47 @@ from alpaca.trading.requests import (
 )
 from alpaca.trading.enums import OrderSide, TimeInForce, QueryOrderStatus
 
+import os
 import signal
+
+import psycopg2
 
 import config
 from config import Keys, get_redis, get_simulated_equity, is_crypto, init_redis_state
 from notify import notify, trade_alert, exit_alert, critical_alert
 
 _shutdown = False
+
+
+# ── Database Connection ─────────────────────────────────────
+
+def get_db():  # pragma: no cover
+    """Connect to TimescaleDB."""
+    return psycopg2.connect(
+        host="localhost", port=5432,
+        dbname="trading", user="trader",
+        password=os.environ.get("TSDB_PASSWORD", "changeme_in_env_file"),
+    )
+
+
+def _log_trade(symbol, side, quantity, price, total_value, order_id,
+               strategy, asset_class, realized_pnl=None, exit_reason=None):
+    """Insert one trade row into TimescaleDB. Non-fatal — DB failure never blocks a trade."""
+    try:
+        conn = get_db()
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO trades
+                       (symbol, side, quantity, price, total_value, order_id,
+                        strategy, asset_class, realized_pnl, exit_reason)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                    (symbol, side, quantity, price, total_value, order_id,
+                     strategy, asset_class, realized_pnl, exit_reason),
+                )
+        conn.close()
+    except Exception as e:
+        print(f"  [Executor] ⚠️ Failed to log trade to DB: {e}")
 
 
 def _handle_sigterm(signum, frame):
@@ -107,6 +141,19 @@ def _reconcile_stop_filled(r, pos, positions, symbol, fill_price=None):
         pnl_pct -= (config.BTC_FEE_RATE * 100)
 
     new_equity = update_simulated_equity(r, pnl_dollar)
+
+    _log_trade(
+        symbol=symbol,
+        side="sell",
+        quantity=quantity,
+        price=fill_price,
+        total_value=fill_price * quantity,
+        order_id=pos.get("order_id", ""),
+        strategy=pos.get("strategy", "rsi2"),
+        asset_class="equity" if not is_crypto(symbol) else "crypto",
+        realized_pnl=round(pnl_dollar, 2),
+        exit_reason="stop_loss_auto",
+    )
 
     del positions[symbol]
     r.set(Keys.POSITIONS, json.dumps(positions))
@@ -501,6 +548,18 @@ def execute_buy(r, trading_client, order):
         positions[symbol] = position_data
         r.set(Keys.POSITIONS, json.dumps(positions))
 
+        # Log trade to TimescaleDB
+        _log_trade(
+            symbol=symbol,
+            side="buy",
+            quantity=fill_qty,
+            price=fill_price,
+            total_value=fill_qty * fill_price,
+            order_id=str(alpaca_order.id),
+            strategy=order.get("strategy", "rsi2"),
+            asset_class=order.get("asset_class", "equity"),
+        )
+
         # Send Telegram notification
         trade_alert(
             side="buy",
@@ -653,6 +712,20 @@ def execute_sell(r, trading_client, order):
             fee = (entry_price * quantity + fill_price * quantity) * (config.BTC_FEE_RATE / 2)
             pnl_dollar -= fee
             pnl_pct -= (config.BTC_FEE_RATE * 100)
+
+        # Log trade to TimescaleDB
+        _log_trade(
+            symbol=symbol,
+            side="sell",
+            quantity=quantity,
+            price=fill_price,
+            total_value=fill_price * quantity,
+            order_id=str(alpaca_order.id),
+            strategy=pos.get("strategy", "rsi2"),
+            asset_class="crypto" if is_crypto(symbol) else "equity",
+            realized_pnl=round(pnl_dollar, 2),
+            exit_reason=order.get("signal_type", "unknown"),
+        )
 
         # Update simulated equity
         new_equity = update_simulated_equity(r, pnl_dollar)
