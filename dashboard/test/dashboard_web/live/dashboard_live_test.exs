@@ -1229,10 +1229,10 @@ defmodule DashboardWeb.DashboardLiveTest do
       assert assigns.equity_range == "30d"
     end
 
-    test "initial equity_points assign is a list", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/")
-      assigns = :sys.get_state(view.pid).socket.assigns
-      assert is_list(assigns.equity_points)
+    test "equity chart panel renders canvas or fallback on mount", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/")
+      # Either the canvas (has data) or the fallback text (no data) must be present
+      assert html =~ "equity-chart-dashboard" or html =~ "No equity data yet."
     end
 
     test "set_equity_range event updates equity_range assign", %{conn: conn} do
@@ -1258,11 +1258,10 @@ defmodule DashboardWeb.DashboardLiveTest do
 
     test "no-data fallback renders when equity_points empty", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/")
-      assigns = :sys.get_state(view.pid).socket.assigns
-      if assigns.equity_points == [] do
-        html = render(view)
-        assert html =~ "No equity data yet."
-      end
+      # Force equity_points to [] to exercise the fallback unconditionally
+      send(view.pid, {:set_equity_points, []})
+      html = render(view)
+      assert html =~ "No equity data yet."
     end
   end
 

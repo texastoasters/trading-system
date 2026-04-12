@@ -170,6 +170,11 @@ defmodule DashboardWeb.DashboardLive do
     {:noreply, socket |> load_db_data() |> load_equity_data()}
   end
 
+  # Test injection handler
+  def handle_info({:set_equity_points, points}, socket) do
+    {:noreply, assign(socket, :equity_points, points)}
+  end
+
   defp load_db_data(socket) do
     socket
     |> assign(:recent_trades, Queries.recent_trades(15))
