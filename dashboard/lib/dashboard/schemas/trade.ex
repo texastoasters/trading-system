@@ -20,6 +20,7 @@ defmodule Dashboard.Schemas.Trade do
     field :asset_class, :string
     field :realized_pnl, :decimal
     field :notes, :string
+    field :exit_reason, :string
   end
 
   @doc "Base query ordered newest first."
