@@ -4,6 +4,36 @@ All notable changes to the Trading System project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## v0.17.0 — 2026-04-11
+
+### Added
+- **Scheduled reconcile** (wishlist): `supervisor.py --reconcile` runs `scripts/reconcile.py --fix`
+  at 9:15 AM ET Mon–Fri via cron. Catches overnight Redis↔Alpaca state drift automatically.
+  Fires `critical_alert` on non-zero exit. Cron entry: `15 9 * * 1-5`.
+- **Dashboard: trailing stop indicator** (wishlist): position cards now show a "Trail: X%"
+  row (amber) when a position has been upgraded to an Alpaca trailing stop (PR #86).
+
+### Fixed
+- **Drawdown attribution lookback cap**: `get_drawdown_attribution()` (Python) and
+  `Queries.drawdown_attribution/2` (Elixir) now cap `peak_equity_date` lookback at 90 days.
+  Prevents unbounded DB scans and confusing attribution tables during prolonged drawdowns.
+
+---
+
+## v0.16.0 — 2026-04-11
+
+### Added
+- **Drawdown attribution**: per-instrument P&L breakdown since equity peak, shown in
+  Telegram daily alerts and a new Dashboard panel. Merges realized (TimescaleDB) and
+  unrealized (Redis) P&L per symbol. Sorted worst-first. Panel hidden when empty.
+- `get_drawdown_attribution(r, conn)` in `config.py`: queries trades since `peak_equity_date`,
+  merges open position unrealized P&L, returns sorted list of dicts.
+- `trading:peak_equity_date` Redis key: set by executor on new equity highs, supervisor on
+  daily reset.
+- Elixir `Queries.drawdown_attribution/2` and `DashboardLive` attribution panel.
+
+---
+
 ## v0.15.0 — 2026-04-11
 
 ### Added

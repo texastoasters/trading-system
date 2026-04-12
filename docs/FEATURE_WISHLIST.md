@@ -32,8 +32,8 @@ These are known issues documented in HANDOFF.md that can cause real harm.
 - [x] **Weekly summary actually sent** — `run_weekly_summary(r)` queries 7-day rollup from TimescaleDB (trades, P&L, best/worst trade, universe size). Cron at `35 16 * * 5` (Friday 4:35 PM ET, after EOD). PR #62.
 - [x] **Morning briefing Telegram message** — At 9:20 AM ET (Mon-Fri), sends: regime+ADX, watchlist top 5, open positions, drawdown, system status. Cron at `20 9 * * 1-5`. PR #61.
 - [ ] **Drawdown progress bar in alerts** — When drawdown alerts fire, show a visual progress bar toward each threshold (10%/15%/20%) so severity is instantly clear.
-- [ ] **LLM cost daily alert** — Track cumulative LLM spend per day and alert if it exceeds a configured threshold (e.g. $1/day).
-- [ ] **Alert on manual stop-loss cancellation** — If a stop-loss order status becomes "cancelled" unexpectedly (not by executor), fire a critical alert immediately.
+- [ ] **LLM cost tracking + daily alert** — `supervisor.py` has `llm_cost: 0.0 # TODO: track LLM costs` since day 1. Screener (news materiality), PM (high-stakes decisions), and supervisor (EOD review) all call Claude but never accumulate spend. Add a `trading:llm_cost_today` Redis key, increment it in each LLM caller, reset daily by supervisor. Then wire the existing alert threshold. Unblocks the alert and gives visibility into actual API spend.
+- [x] **Alert on manual stop-loss cancellation** — `_check_cancelled_stops` runs every executor daemon cycle. Cancelled stop + position exists → resubmits and fires `critical_alert`. Cancelled + position gone → cleans Redis and fires `critical_alert`. Resubmit failure → naked position `critical_alert`. All paths tested.
 
 ### Dashboard UX
 - [x] **Dashboard: trade history table** — Paginated table of all past trades with symbol, side, entry/exit price, P&L, exit reason, hold duration. Currently stored in TimescaleDB but not shown.
@@ -52,10 +52,13 @@ These are known issues documented in HANDOFF.md that can cause real harm.
 
 ### Risk Management
 - [x] **Trailing stop-loss** — After a position gains N% (configurable), switch from fixed stop to a trailing stop that follows price up. Locks in profits while letting winners run. PR #86.
-- [ ] **Intraday stop monitoring** — Currently watcher polls positions every 30 min. Add intraday check: if price has dropped X% from entry intraday, generate exit signal immediately without waiting for poll.
-- [ ] **Max daily loss limit** — In addition to drawdown circuit breakers (which are cumulative), add a single-day loss limit. If today's P&L exceeds -2%, halt new entries for the rest of the day.
+- [x] **Intraday stop monitoring** — Watcher checks `intraday_low` against `stop_price` on every cycle using 15-min bars. PR #50.
+- [x] **Max daily loss limit** — Daily loss CB fires `critical_alert` + sets `daily_halt`; sells allowed through. PR #81.
 - [ ] **Position age alert** — If a position has been held >5 days without triggering time-stop (maybe stuck in a narrow range), send Telegram nudge for manual review.
 - [x] **Correlated regime adjustment** — DOWNTREND halves equity position sizes. Edge case where halving → 0 shares fixed (PR #58).
+- [x] **Drawdown attribution lookback cap** — Capped at 90 days in both `config.py` (`ATTRIBUTION_MAX_LOOKBACK_DAYS`) and `Queries.drawdown_attribution/2`. PR #88.
+- [x] **Scheduled reconcile** — `supervisor.py --reconcile` calls `scripts/reconcile.py --fix`; cron at 9:15 AM ET Mon–Fri. PR #88.
+- [x] **Dashboard: trailing stop indicator on position cards** — Position cards show "Trail: X%" row (amber) when `trailing=True`. PR #88.
 
 ### Screener & Signal Quality
 - [ ] **Volume filter on entries** — Require minimum average daily volume for entry signals. Prevents entries on thin/illiquid days that can cause bad fills.
@@ -66,7 +69,7 @@ These are known issues documented in HANDOFF.md that can cause real harm.
 
 ### Dashboard
 - [ ] **Equity curve chart** — Full equity curve from inception. Overlaid with drawdown shading. Shows where circuit breakers would have fired historically.
-- [ ] **Per-instrument P&L breakdown** — Table showing each instrument's total trades, win rate, profit factor, and cumulative P&L over rolling 30/90/365 days. Pulled from TimescaleDB.
+- [x] **Per-instrument P&L breakdown** — Table showing each instrument's total trades, win rate, profit factor, and cumulative P&L over rolling 30/90/365 days. Pulled from TimescaleDB. PR #85.
 - [ ] **Signal heatmap** — Grid of all instruments × days showing signal strength (RSI-2 value, color-coded). Makes it easy to spot clusters of oversold conditions.
 - [ ] **Strategy attribution** — For each exit, show how much P&L came from RSI-2 reversal vs time-stop vs stop-loss vs manual. Helps tune which exit types are most valuable.
 
@@ -76,6 +79,7 @@ These are known issues documented in HANDOFF.md that can cause real harm.
 - [x] **Agent restart policy** — If an agent process dies (detected by heartbeat staleness), supervisor should attempt to restart it and send an alert. Currently requires manual intervention.
 - [ ] **Log rotation and archiving** — Ensure agent logs don't fill disk. Rotate daily, compress, keep 30 days.
 - [ ] **Paper trading report vs real Alpaca paper balance** — Weekly comparison: does simulated equity ($5K cap) diverge significantly from what Alpaca's paper account would show if trading at full scale? Catches sizing logic bugs.
+- [ ] **Economic calendar auto-refresh script** — `scripts/economic_calendar.json` covers 2026 and is "updated annually" — a human-memory dependency. A script that generates next year's FOMC/CPI/NFP dates (all publicly scheduled in advance) and patches the JSON would eliminate the dependency.
 
 ---
 
@@ -151,5 +155,31 @@ Remaining top-10 by impact:
 
 ---
 
+## 📋 Next Priority Wave (as of 2026-04-11)
+
+Ranked by impact on the running system. LLM-dependent items excluded — system currently operates without LLM calls.
+
+### Safety / Correctness
+1. ~~**Scheduled reconcile**~~ ✅ Done (PR #88)
+2. ~~**Alert on manual stop-loss cancellation**~~ ✅ Already implemented — `_check_cancelled_stops` polls stop status every daemon cycle and handles all cancellation paths with `critical_alert`.
+3. ~~**Drawdown attribution lookback cap**~~ ✅ Done (PR #88)
+4. ~~**Dashboard: trailing stop indicator on position cards**~~ ✅ Done (PR #88)
+
+### Operational Control
+5. **Dashboard: one-click pause** — Write `trading:system_status = paused` to Redis from the dashboard. Resume with one click. Currently requires SSH. Single most useful missing operational control.
+
+### Signal Quality
+6. **Volume filter on entries** — Screener already has all OHLCV data. Add a minimum ADV (average daily volume) threshold check. Prevents entries on thin-volume days that cause wide spreads and bad fills on TSLA, XLV, IWM.
+
+### Visibility / Tuning
+7. **Equity curve chart** — `daily_summaries` table in TimescaleDB has equity/drawdown data from day 1. Plot the full curve with drawdown shading and circuit breaker threshold lines. Most useful single addition to the dashboard for understanding system behaviour over time.
+8. **Strategy attribution by exit type** — For each closed trade, record whether exit was RSI-2 reversal, time-stop, stop-loss, or manual. Query from TimescaleDB on the performance page. Without this, stop distance and time-stop tuning is guesswork.
+
+### Risk
+9. **Position age alert** — Time-stop fires after 5 days but a position can drift at the boundary indefinitely if RSI-2 never resets above the exit threshold. Send a Telegram nudge after 5 days held for manual review.
+10. **Paper trading report vs Alpaca balance** — Weekly: compare `trading:simulated_equity` to Alpaca's actual paper account value. Divergence indicates a sizing or P&L accounting bug. More important now that trailing stops add complexity to the realized P&L path.
+
+---
+
 *Generated by examining all agent code, dashboard, config, notification module, and git history.*
-*Last updated: 2026-04-11. Drawdown attribution done (PR #87). Next wave: pick from Medium Effort section.*
+*Last updated: 2026-04-11. All Next Priority Wave items done (PRs #57–#87). Fixed stale checkboxes (intraday stop, max daily loss, per-instrument P&L). Added: drawdown attribution lookback cap, scheduled reconcile, trailing stop indicator, LLM cost tracking, economic calendar auto-refresh.*

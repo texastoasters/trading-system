@@ -179,5 +179,12 @@ defmodule Dashboard.QueriesTest do
       [row] = result
       assert_in_delta row.total_pnl, -100.0, 0.001
     end
+
+    test "clamps peak_date older than 90 days to 90-day cutoff" do
+      # 200-day-old peak_date must not raise — treated as 90-day lookback
+      old_date = Date.add(Date.utc_today(), -200)
+      result = Queries.drawdown_attribution(%{}, old_date)
+      assert result == []
+    end
   end
 end

@@ -1136,6 +1136,39 @@ defmodule DashboardWeb.DashboardLiveTest do
     end
   end
 
+  describe "trailing stop indicator on position cards" do
+    defp trailing_position_state(trailing, trail_percent) do
+      %{
+        "trading:positions" => %{
+          "SPY" => %{
+            "symbol" => "SPY", "tier" => 1, "quantity" => 10.0,
+            "entry_price" => 500.0, "stop_price" => 490.0, "current_price" => 510.0,
+            "entry_date" => nil, "unrealized_pnl_pct" => 2.0,
+            "trailing" => trailing, "trail_percent" => trail_percent
+          }
+        },
+        "trading:heartbeat:screener" => nil, "trading:heartbeat:watcher" => nil,
+        "trading:heartbeat:portfolio_manager" => nil, "trading:heartbeat:executor" => nil,
+        "trading:heartbeat:supervisor" => nil
+      }
+    end
+
+    test "shows Trail row when position is trailing", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:state_update, trailing_position_state(true, 2.0)})
+      html = render(view)
+      assert html =~ "Trail:"
+      assert html =~ "2.0"
+    end
+
+    test "hides Trail row when position is not trailing", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:state_update, trailing_position_state(false, nil)})
+      html = render(view)
+      refute html =~ "Trail:"
+    end
+  end
+
   describe "format helpers with non-float inputs" do
     test "entry signal with integer rsi2 renders without crash", %{conn: conn} do
       {:ok, view, _} = live(conn, "/")

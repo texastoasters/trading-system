@@ -70,6 +70,9 @@ RISK_PER_TRADE_PCT = 0.01
 # reaches -(equity × DAILY_LOSS_LIMIT_PCT), Executor blocks new buys and Supervisor
 # sets system_status → daily_halt until the next trading day reset.
 DAILY_LOSS_LIMIT_PCT = 0.03
+# Maximum lookback for drawdown attribution queries. Prevents unbounded DB scans
+# during prolonged drawdowns where peak_equity_date may be months old.
+ATTRIBUTION_MAX_LOOKBACK_DAYS = 90
 # After a manual dashboard exit, entry for that symbol is blocked until its price
 # drops this % below the manual-exit fill price. Prevents immediate re-entry into
 # a position we just decided to close.
@@ -316,6 +319,9 @@ def get_drawdown_attribution(r: redis.Redis, conn) -> list:
         peak_date = date.fromisoformat(peak_date_str)
     else:
         peak_date = date.today() - timedelta(days=30)
+    max_lookback = date.today() - timedelta(days=ATTRIBUTION_MAX_LOOKBACK_DAYS)
+    if peak_date < max_lookback:
+        peak_date = max_lookback
 
     # Realized: query trades closed since peak date
     realized: dict = {}

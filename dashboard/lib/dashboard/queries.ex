@@ -165,7 +165,9 @@ defmodule Dashboard.Queries do
   `peak_date` — `Date.t()` or nil (nil → 30-day fallback).
   """
   def drawdown_attribution(positions, peak_date \\ nil) do
-    cutoff = peak_date || Date.add(Date.utc_today(), -30)
+    raw_cutoff = peak_date || Date.add(Date.utc_today(), -30)
+    max_cutoff = Date.add(Date.utc_today(), -90)
+    cutoff = Enum.max([raw_cutoff, max_cutoff], Date)
     cutoff_dt = DateTime.new!(cutoff, ~T[00:00:00], "Etc/UTC")
 
     realized =
