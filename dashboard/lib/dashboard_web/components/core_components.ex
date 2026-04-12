@@ -162,6 +162,13 @@ defmodule DashboardWeb.CoreComponents do
         <div id={@chart_id} class="w-full equity-chart">
           {@svg}
         </div>
+        <div class="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-[10px] text-gray-500">
+          <span class="flex items-center gap-1.5"><span class="inline-block w-4 h-0.5 bg-blue-500"></span>Equity</span>
+          <span class="flex items-center gap-1.5"><span class="inline-block w-4 h-0.5 bg-gray-500"></span>Peak</span>
+          <span class="flex items-center gap-1.5"><span class="inline-block w-4 h-0.5" style="background:#fbbf24"></span>−10% caution</span>
+          <span class="flex items-center gap-1.5"><span class="inline-block w-4 h-0.5" style="background:#f97316"></span>−15% halt T2</span>
+          <span class="flex items-center gap-1.5"><span class="inline-block w-4 h-0.5" style="background:#ef4444"></span>−20% halt all</span>
+        </div>
       <% else %>
         <p class="text-gray-600 text-sm text-center py-8">No equity data yet.</p>
       <% end %>

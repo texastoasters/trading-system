@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.22.1] — 2026-04-11
+
+### Added
+- Legend below equity curve SVG with color swatches for all five series: Equity, Peak, −10% caution, −15% halt T2, −20% halt all
+
+---
+
 ## [0.22.0] — 2026-04-11
 
 ### Changed
@@ -41,14 +48,14 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
-## v0.19.0 — 2026-04-11
+## [0.19.0] — 2026-04-11
 
 ### Added
 - **Volume filter on entries**: `scan_instrument` skips instruments where today's volume < 50% of the prior 20-day average daily volume (ADV). Prevents entries on holiday half-sessions and anomalously thin-volume days. `volume_ratio` added to watchlist payload for observability. Works for all instruments including BTC/USD — no special-casing needed.
 
 ---
 
-## v0.18.0 — 2026-04-11
+## [0.18.0] — 2026-04-11
 
 ### Added
 - Dashboard one-click pause/resume: header button writes `trading:system_status = "paused"` to Redis. Blocks new buy entries; exits and stop-losses unaffected.
@@ -58,7 +65,14 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
-## v0.17.0 — 2026-04-11
+## [0.17.1] — 2026-04-11
+
+### Fixed
+- Flaky tier badge tests stabilised; Coveralls baseline established (#89)
+
+---
+
+## [0.17.0] — 2026-04-11
 
 ### Added
 - **Scheduled reconcile**: `supervisor.py --reconcile` runs `scripts/reconcile.py --fix` at 9:15 AM ET Mon–Fri via cron. Catches overnight Redis↔Alpaca state drift automatically. Fires `critical_alert` on non-zero exit.
