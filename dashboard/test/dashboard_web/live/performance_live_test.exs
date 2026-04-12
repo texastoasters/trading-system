@@ -563,4 +563,11 @@ defmodule DashboardWeb.PerformanceLiveTest do
       assert Decimal.equal?(assigns.summary.total_pnl, Decimal.new("150.00"))
     end
   end
+
+  describe "mobile layout" do
+    test "performance page has mobile-safe horizontal padding", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/performance")
+      assert html =~ "px-3 sm:px-6"
+    end
+  end
 end

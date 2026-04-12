@@ -146,4 +146,11 @@ defmodule DashboardWeb.TradesLiveTest do
       assert html =~ "text-gray-400"
     end
   end
+
+  describe "mobile layout" do
+    test "trades page has mobile-safe horizontal padding", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/trades")
+      assert html =~ "px-3 sm:px-6"
+    end
+  end
 end

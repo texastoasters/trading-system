@@ -1246,5 +1246,10 @@ defmodule DashboardWeb.DashboardLiveTest do
       {:ok, _view, html} = live(conn, "/")
       assert html =~ "shrink-0"
     end
+
+    test "dashboard page has mobile-safe horizontal padding", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/")
+      assert html =~ "px-3 sm:px-6"
+    end
   end
 end
