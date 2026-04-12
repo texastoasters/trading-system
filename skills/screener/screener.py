@@ -65,6 +65,7 @@ def fetch_daily_bars(symbol, stock_client, crypto_client, days=365):
             'high': np.array([float(b.high) for b in bar_list]),
             'low': np.array([float(b.low) for b in bar_list]),
             'close': np.array([float(b.close) for b in bar_list]),
+            'volume': np.array([float(b.volume) for b in bar_list]),
         }
 
     except Exception as e:

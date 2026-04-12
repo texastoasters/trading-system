@@ -111,6 +111,9 @@ RSI2_ENTRY_CONSERVATIVE = 10.0
 # RSI-2 entry threshold in aggressive (TRENDING) regime. Tighter threshold used
 # when ADX > ADX_TREND_THRESHOLD, since trending markets mean-revert less deeply.
 RSI2_ENTRY_AGGRESSIVE = 5.0
+# Volume filter: skip entry if today's volume < this fraction of the 20-day average daily
+# volume (ADV). Adapts per instrument without per-instrument calibration.
+MIN_VOLUME_RATIO = 0.5
 # RSI-2 exit threshold. Exit signal generated (take-profit) when RSI-2 rises above
 # this value on a daily bar, indicating the oversold condition has normalized.
 RSI2_EXIT = 60.0

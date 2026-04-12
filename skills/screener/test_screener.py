@@ -30,7 +30,7 @@ from config import Keys
 
 # ── Helpers ──────────────────────────────────────────────────
 
-def make_price_data(n=250, close_val=100.0):
+def make_price_data(n=250, close_val=100.0, volume_val=1_000_000.0):
     """Minimal price data arrays."""
     close = np.ones(n) * close_val
     return {
@@ -38,6 +38,7 @@ def make_price_data(n=250, close_val=100.0):
         'close': close,
         'high': close * 1.01,
         'low': close * 0.99,
+        'volume': np.ones(n) * volume_val,
     }
 
 
@@ -49,12 +50,13 @@ def uptrend_regime():
     return {"regime": "UPTREND", "adx": 30.0, "plus_di": 25.0, "minus_di": 15.0}
 
 
-def make_bar(close=100.0, high=101.0, low=99.0):
+def make_bar(close=100.0, high=101.0, low=99.0, volume=1000.0):
     bar = MagicMock()
     bar.timestamp.strftime.return_value = "2024-01-01"
     bar.close = close
     bar.high = high
     bar.low = low
+    bar.volume = volume
     return bar
 
 
@@ -203,6 +205,18 @@ class TestFetchDailyBars:
         assert result is not None
         assert crypto_client.get_crypto_bars.called
         assert not stock_client.get_stock_bars.called
+
+    def test_returns_volume_array_for_equity(self):
+        bars = [make_bar(close=100.0 + i) for i in range(210)]
+        stock_client = MagicMock()
+        stock_client.get_stock_bars.return_value = {"SPY": bars}
+
+        from screener import fetch_daily_bars
+        result = fetch_daily_bars("SPY", stock_client, MagicMock())
+        assert result is not None
+        assert 'volume' in result
+        assert len(result['volume']) == 210
+        assert result['volume'][0] == 1000.0  # make_bar default volume
 
 
 # ── run_scan ──────────────────────────────────────────────────
