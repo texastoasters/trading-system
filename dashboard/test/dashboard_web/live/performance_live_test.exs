@@ -373,9 +373,10 @@ defmodule DashboardWeb.PerformanceLiveTest do
         "trading:universe" => %{"tier1" => [], "tier2" => [], "tier3" => []}
       }})
       html = render(view)
+      # tooltip popup uses border-gray-600; match the badge-specific class instead
       refute html =~ "border-yellow-700"
       refute html =~ "border-blue-700"
-      refute html =~ "border-gray-600"
+      refute html =~ "text-[10px] px-1 py-0.5 rounded border"
     end
   end
 

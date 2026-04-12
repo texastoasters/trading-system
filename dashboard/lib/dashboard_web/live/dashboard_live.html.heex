@@ -48,13 +48,13 @@
 
   <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
     <div class="bg-gray-800 rounded-lg border border-gray-700 p-3">
-      <div class="text-xs text-gray-500 uppercase tracking-wider">Equity</div>
+      <div class="text-xs text-gray-500 uppercase tracking-wider flex items-center gap-0.5">Equity <.tooltip text="The robot's virtual bank account. Started at $5,000 — grows when trades win, shrinks when they lose." /></div>
       <div class="text-xl font-bold text-white mt-1">{format_equity(@equity)}</div>
       <div class="text-xs text-gray-600 mt-0.5">peak {format_equity(@peak_equity)}</div>
     </div>
 
     <div class="bg-gray-800 rounded-lg border border-gray-700 p-3">
-      <div class="text-xs text-gray-500 uppercase tracking-wider">Daily P&L</div>
+      <div class="text-xs text-gray-500 uppercase tracking-wider flex items-center gap-0.5">Daily P&amp;L <.tooltip text="Profit and Loss for today — how much money was made (+) or lost (−) since midnight." /></div>
       <div class={["text-xl font-bold mt-1", pnl_class(@daily_pnl)]}>
         {format_equity(@daily_pnl)}
       </div>
@@ -62,7 +62,7 @@
     </div>
 
     <div class="bg-gray-800 rounded-lg border border-gray-700 p-3">
-      <div class="text-xs text-gray-500 uppercase tracking-wider">Drawdown</div>
+      <div class="text-xs text-gray-500 uppercase tracking-wider flex items-center gap-0.5">Drawdown <.tooltip text="How far the account has fallen from its all-time high. Like measuring how deep a hole is from the top of the hill." /></div>
       <div class={["text-xl font-bold mt-1", drawdown_class(@drawdown)]}>
         {format_pct(@drawdown)}
       </div>
@@ -70,7 +70,7 @@
     </div>
 
     <div class="bg-gray-800 rounded-lg border border-gray-700 p-3">
-      <div class="text-xs text-gray-500 uppercase tracking-wider">PDT Used</div>
+      <div class="text-xs text-gray-500 uppercase tracking-wider flex items-center gap-0.5">PDT Used <.tooltip text="Pattern Day Trader rule — US law limits accounts under $25,000 to 3 same-day buy+sell trades per rolling 5 days. Hitting the limit restricts trading for the rest of the week." /></div>
       <div class={[
         "text-xl font-bold mt-1",
         if(@pdt_count >= 3, do: "text-red-400", else: "text-white")
@@ -81,12 +81,12 @@
     </div>
 
     <div class={["bg-gray-800 rounded-lg border border-gray-700 border-l-4 p-3", regime_border_class(@regime)]}>
-      <div class="text-xs text-gray-500 uppercase tracking-wider">Regime</div>
+      <div class="text-xs text-gray-500 uppercase tracking-wider flex items-center gap-0.5">Regime <.tooltip text="Is the market calm and sideways (Ranging) or charging hard in one direction (Trending)? The robot checks this before every trade." /></div>
       <div class="text-lg font-bold text-white mt-1">
         {regime_emoji(@regime)} {regime_name(@regime)}
       </div>
-      <div class="text-xs text-gray-600 mt-0.5">
-        ADX {if adx_value(@regime),
+      <div class="text-xs text-gray-600 mt-0.5 flex items-center gap-0.5">
+        ADX <.tooltip text="Average Directional Index — a 0–100 strength meter for the current trend. Below 25 = calm sideways market. Above 25 = strong trend in motion." /> {if adx_value(@regime),
           do: :erlang.float_to_binary(adx_value(@regime) + 0.0, decimals: 1),
           else: "—"}
       </div>
@@ -104,7 +104,7 @@
     </div>
 
     <div class="bg-gray-800 rounded-lg border border-gray-700 p-3">
-      <div class="text-xs text-gray-500 uppercase tracking-wider">Risk Mult.</div>
+      <div class="text-xs text-gray-500 uppercase tracking-wider flex items-center gap-0.5">Risk Mult. <.tooltip text="A safety dial that shrinks trade sizes when the account is losing money. 1.0× = normal bets, 0.5× = half-size bets." /></div>
       <div class={[
         "text-xl font-bold mt-1",
         if((@risk_multiplier || 1.0) < 1.0, do: "text-yellow-400", else: "text-white")
@@ -117,7 +117,7 @@
     </div>
 
     <a href="/universe" class="bg-gray-800 rounded-lg border border-gray-700 border-dashed p-3 hover:bg-gray-750 hover:border-gray-500 transition-colors cursor-pointer block group">
-      <div class="text-xs text-gray-500 uppercase tracking-wider group-hover:text-gray-400 transition-colors">Universe</div>
+      <div class="text-xs text-gray-500 uppercase tracking-wider group-hover:text-gray-400 transition-colors flex items-center gap-0.5">Universe <.tooltip text="All the stocks and crypto the robot is approved to trade — its shopping list." /></div>
       <div class="text-xl font-bold text-white mt-1">{universe_count(@universe)}</div>
       <div class="text-xs text-gray-600 mt-0.5 group-hover:text-gray-500 transition-colors">symbols ↗</div>
     </a>
@@ -209,7 +209,7 @@
                   </div>
                   <% end %>
                   <div>
-                    <span class="text-gray-500">RSI-2:</span>
+                    <span class="text-gray-500 inline-flex items-center gap-0.5">RSI-2 <.tooltip text="Relative Strength Index (2-day) — a 0–100 speed gauge for recent price drops. Low values (under 10) mean the stock dropped fast and may bounce back up." />:</span>
                     <%= if current_rsi2 do %>
                       <span class="text-blue-400 ml-1 font-mono font-semibold">{format_float(current_rsi2)}</span>
                     <% else %>
@@ -259,8 +259,9 @@
       <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
         <% held_symbols = Map.keys(@redis_positions)
            visible_watchlist = Enum.reject(@watchlist, fn item -> item["symbol"] in held_symbols end) %>
-        <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
+        <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-1">
           Watchlist ({length(visible_watchlist)})
+          <.tooltip text="Stocks close to a buy signal that the robot is watching closely, ready to trade." />
         </h2>
         <%= if visible_watchlist == [] do %>
           <p class="text-sm text-gray-600 italic">
@@ -297,8 +298,9 @@
       </div>
       <%= if @cooldowns != [] do %>
         <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
-          <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
+          <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-1">
             Cooldowns ({length(@cooldowns)})
+            <.tooltip text="A waiting period before the robot can re-enter a stock after a bad exit. Prevents immediately chasing the same losing trade twice." />
           </h2>
           <div class="space-y-1.5">
             <%= for cd <- @cooldowns do %>
@@ -325,8 +327,9 @@
       <% end %>
       <%= if @drawdown_attribution != [] do %>
         <div class="bg-gray-800 rounded-lg border border-orange-900/50 p-4">
-          <h2 class="text-xs font-semibold text-orange-400 uppercase tracking-wider mb-3">
+          <h2 class="text-xs font-semibold text-orange-400 uppercase tracking-wider mb-3 flex items-center gap-1">
             Drawdown Attribution (since peak)
+            <.tooltip text="Which open positions are responsible for the losses since the account's peak value. A blame chart for the current drawdown." />
           </h2>
           <div class="space-y-1.5">
             <%= for row <- @drawdown_attribution do %>

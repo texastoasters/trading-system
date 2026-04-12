@@ -1,12 +1,12 @@
 # Handoff
 
 ## State
-PR #92 open for `feat/equity-curve-chart` (v0.20.0). CI coverage fix committed + pushed (14aef58). 277 tests pass, 100% coverage locally. Waiting on CI to go green.
+PR #93 open on `feat/tooltip-glossary`. Adds `tooltip/1` component to `CoreComponents` + ⓘ hover tooltips across dashboard, performance, and universe pages. 283 tests, 0 failures. v0.21.0.
 
 ## Next
-1. Merge PR #92 after CI passes, then tag v0.20.0
-2. Start brainstorming feature #8 (strategy attribution by exit type)
+1. Merge PR #93 after CI passes, then tag v0.21.0
+2. Brainstorm feature #8 (strategy attribution by exit type)
 
 ## Context
-- `daily_summary` hypertable doesn't exist in test DB — positive-path equity_curve/1 tests impossible until migration exists
-- Canvas coverage tests use `send(view.pid, {:set_equity_points, points})` injection pattern (not DB)
+- `daily_summary` hypertable doesn't exist in test DB — positive-path equity_curve tests impossible until migration exists
+- `tier_badge/1` is duplicated across dashboard_live.ex, performance_live.ex, universe_live.ex — pre-existing tech debt worth extracting to a shared helper eventually

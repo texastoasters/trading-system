@@ -117,4 +117,38 @@ defmodule DashboardWeb.CoreComponentsTest do
       assert html =~ "+50.00"
     end
   end
+
+  describe "tooltip/1" do
+    test "renders the i icon character" do
+      html = render_component(&CoreComponents.tooltip/1, text: "some explanation")
+      assert html =~ ">i<"
+    end
+
+    test "renders the tooltip text in the popup" do
+      html = render_component(&CoreComponents.tooltip/1, text: "Profit and Loss — money made or lost")
+      assert html =~ "Profit and Loss — money made or lost"
+    end
+
+    test "hidden by default via opacity-0" do
+      html = render_component(&CoreComponents.tooltip/1, text: "x")
+      assert html =~ "opacity-0"
+    end
+
+    test "group-hover makes popup visible on hover" do
+      html = render_component(&CoreComponents.tooltip/1, text: "x")
+      assert html =~ "group-hover:opacity-100"
+    end
+
+    test "defaults to above direction (bottom-full)" do
+      html = render_component(&CoreComponents.tooltip/1, text: "x")
+      assert html =~ "bottom-full"
+      refute html =~ "top-full"
+    end
+
+    test "below direction uses top-full positioning" do
+      html = render_component(&CoreComponents.tooltip/1, text: "x", direction: "below")
+      assert html =~ "top-full"
+      refute html =~ "bottom-full"
+    end
+  end
 end

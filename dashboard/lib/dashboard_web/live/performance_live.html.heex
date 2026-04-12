@@ -58,12 +58,12 @@
             <th class={["text-right pb-2 pr-3 cursor-pointer hover:text-gray-300 select-none",
                         if(@sort_col == :win_rate, do: "text-blue-400", else: "")]}
                 phx-click="sort" phx-value-col="win_rate">
-              Win%{sort_indicator(:win_rate, @sort_col, @sort_dir)}
+              Win%<.tooltip text="Percentage of completed trades that made money. 60% means 6 out of 10 trades were profitable." direction="below" />{sort_indicator(:win_rate, @sort_col, @sort_dir)}
             </th>
             <th class={["text-right pb-2 pr-3 cursor-pointer hover:text-gray-300 select-none",
                         if(@sort_col == :profit_factor, do: "text-blue-400", else: "")]}
                 phx-click="sort" phx-value-col="profit_factor">
-              PF{sort_indicator(:profit_factor, @sort_col, @sort_dir)}
+              PF<.tooltip text="Profit Factor — total winnings divided by total losses. 2.0 means you earn $2 for every $1 lost. Above 1.0 = profitable overall." direction="below" />{sort_indicator(:profit_factor, @sort_col, @sort_dir)}
             </th>
             <th class={["text-right pb-2 pr-3 cursor-pointer hover:text-gray-300 select-none",
                         if(@sort_col == :avg_win, do: "text-blue-400", else: "")]}
@@ -140,10 +140,10 @@
   <%= if @rows != [] do %>
     <div class="flex gap-6 text-xs text-gray-500 pt-1">
       <span>{@summary.count} instruments</span>
-      <span>Total realized:
+      <span class="inline-flex items-center gap-0.5">Total realized <.tooltip text="Sum of all closed trade profits and losses for the selected time period." />:
         <span class={pnl_class(@summary.total_pnl)}>{format_pnl(@summary.total_pnl)}</span>
       </span>
-      <span>Overall win rate:
+      <span class="inline-flex items-center gap-0.5">Overall win rate <.tooltip text="Percentage of completed trades that made money, across all instruments combined." />:
         <span class={win_rate_class(@summary.overall_win_rate)}>
           {format_win_rate(@summary.overall_win_rate)}
         </span>
