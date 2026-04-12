@@ -1891,7 +1891,7 @@ class TestExecuteBuyLogsTrade:
         assert kwargs.get("realized_pnl") is None
         assert kwargs.get("exit_reason") is None
 
-    def test_log_trade_uses_strategy_fallback_when_missing(self):
+    def test_log_trade_buy_asset_class_defaults_to_equity_when_missing(self):
         """order without 'asset_class' key → defaults to 'equity'."""
         r, _ = make_redis({})
         filled = MagicMock()

@@ -722,7 +722,7 @@ def execute_sell(r, trading_client, order):
             total_value=fill_price * quantity,
             order_id=str(alpaca_order.id),
             strategy=pos.get("strategy", "rsi2"),
-            asset_class=order.get("asset_class", "equity"),
+            asset_class="crypto" if is_crypto(symbol) else "equity",
             realized_pnl=round(pnl_dollar, 2),
             exit_reason=order.get("signal_type", "unknown"),
         )
