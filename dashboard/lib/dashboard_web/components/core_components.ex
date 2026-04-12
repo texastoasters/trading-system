@@ -114,13 +114,13 @@ defmodule DashboardWeb.CoreComponents do
   end
 
   @doc """
-  Equity curve canvas panel. Renders a Chart.js canvas with JSON-encoded points,
+  Equity curve SVG panel. Renders a server-side ContEx SVG line chart,
   or a no-data fallback if fewer than 2 data points.
 
   Attrs:
     - points: list of maps with :date, :ending_equity, :peak_equity, :drawdown_pct
     - range: current range string — "30d" | "90d" | "all"
-    - chart_id: unique DOM id for the canvas element
+    - chart_id: unique DOM id for the wrapper div
     - show_range_toggle: boolean — whether to render the 30D/90D/All toggle
     - range_event: phx-click event name for the toggle buttons (only used when show_range_toggle: true)
   """
@@ -131,6 +131,9 @@ defmodule DashboardWeb.CoreComponents do
   attr :range_event, :string, default: "set_equity_range"
 
   def equity_chart(assigns) do
+    svg = if length(assigns.points) > 1, do: build_equity_svg(assigns.points), else: nil
+    assigns = assign(assigns, :svg, svg)
+
     ~H"""
     <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
       <div class="flex items-center justify-between mb-3">
@@ -155,18 +158,51 @@ defmodule DashboardWeb.CoreComponents do
           </div>
         <% end %>
       </div>
-      <%= if length(@points) > 1 do %>
-        <canvas
-          id={@chart_id}
-          phx-hook="EquityChart"
-          data-points={Jason.encode!(@points)}
-          class="w-full"
-          style="height: 200px;"
-        ></canvas>
+      <%= if @svg do %>
+        <div id={@chart_id} class="w-full equity-chart">
+          {@svg}
+        </div>
       <% else %>
         <p class="text-gray-600 text-sm text-center py-8">No equity data yet.</p>
       <% end %>
     </div>
     """
   end
+
+  defp build_equity_svg(points) do
+    max_peak = points |> Enum.map(&to_float(&1.peak_equity)) |> Enum.max()
+    cb10 = max_peak * 0.90
+    cb15 = max_peak * 0.85
+    cb20 = max_peak * 0.80
+
+    data =
+      Enum.map(points, fn p ->
+        {
+          NaiveDateTime.new!(p.date, ~T[00:00:00]),
+          to_float(p.ending_equity),
+          to_float(p.peak_equity),
+          cb10,
+          cb15,
+          cb20
+        }
+      end)
+
+    dataset = Contex.Dataset.new(data, ["Date", "Equity", "Peak", "CB10", "CB15", "CB20"])
+
+    line_plot =
+      Contex.LinePlot.new(dataset,
+        mapping: %{x_col: "Date", y_cols: ["Equity", "Peak", "CB10", "CB15", "CB20"]},
+        colour_palette: ["3b82f6", "6b7280", "fbbf24", "f97316", "ef4444"],
+        smoothed: false
+      )
+
+    Contex.Plot.new(600, 200, line_plot)
+    |> Contex.Plot.to_svg()
+  end
+
+  defp to_float(v) when is_float(v), do: v
+  defp to_float(v) when is_integer(v), do: v * 1.0
+  defp to_float(%Decimal{} = v), do: Decimal.to_float(v)
+  # coveralls-ignore-next-line
+  defp to_float(_), do: 0.0
 end

@@ -56,6 +56,9 @@ defmodule Dashboard.MixProject do
       # JSON
       {:jason, "~> 1.4"},
 
+      # Server-side SVG charts (replaces Chart.js)
+      {:contex, "~> 0.5"},
+
       # Observability
       {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},

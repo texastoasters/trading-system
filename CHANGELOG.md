@@ -8,6 +8,27 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.22.0] — 2026-04-11
+
+### Changed
+- Replaced Chart.js with `contex` (pure Elixir → SVG) for equity curve charts
+  - Eliminates ResizeObserver loop / page unresponsiveness caused by Chart.js `responsive` mode in LiveView flex containers
+  - No JS hooks — chart rendered server-side on every LiveView patch, zero client-side JS
+  - Five series preserved: equity, peak, and three circuit-breaker threshold lines
+  - Dark-mode CSS overrides via `.equity-chart` wrapper class
+  - Removed `dashboard/assets/vendor/chart.js` (200KB bundle) and `EquityChart` JS hook
+
+---
+
+## [0.21.0] — 2026-04-11
+
+### Added
+- Hover tooltips (ⓘ) for financial/trading terms across dashboard, performance, and universe pages
+  - Reusable `tooltip/1` Phoenix Component with `above`/`below` direction support
+  - Plain-language explanations for: equity, drawdown, P&L, RSI-2, SMA-200, profit factor, win rate, ADX, regime, tiers, circuit breakers
+
+---
+
 ## [0.20.0] — 2026-04-11
 
 ### Added

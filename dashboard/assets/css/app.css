@@ -26,3 +26,19 @@
   opacity: 0.7;
   transition: opacity 0.2s;
 }
+
+/* ContEx SVG dark theme */
+.equity-chart svg {
+  width: 100%;
+  height: auto;
+  background: transparent;
+}
+.equity-chart svg text {
+  fill: #6b7280 !important;
+  font-size: 10px;
+  font-family: ui-monospace, monospace;
+}
+.equity-chart svg line,
+.equity-chart svg path.exc-gridline {
+  stroke: #374151 !important;
+}
