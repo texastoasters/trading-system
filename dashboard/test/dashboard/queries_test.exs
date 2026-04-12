@@ -187,4 +187,23 @@ defmodule Dashboard.QueriesTest do
       assert result == []
     end
   end
+
+  describe "equity_curve/1" do
+    test "returns [] when no summaries exist" do
+      assert Queries.equity_curve() == []
+    end
+
+    test "returns [] for 90d range" do
+      assert Queries.equity_curve(90) == []
+    end
+
+    test "returns [] for all range" do
+      assert Queries.equity_curve(:all) == []
+    end
+
+    test "equity_curve/1 is resilient to DB error" do
+      result = Queries.equity_curve(30)
+      assert is_list(result)
+    end
+  end
 end
