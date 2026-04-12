@@ -183,7 +183,7 @@ class TestFetchDailyBars:
         from screener import fetch_daily_bars
         result = fetch_daily_bars("SPY", stock_client, MagicMock())
         assert result is not None
-        assert all(k in result for k in ('close', 'high', 'low', 'dates'))
+        assert all(k in result for k in ('close', 'high', 'low', 'dates', 'volume'))
         assert len(result['close']) == 210
 
     def test_returns_none_on_api_exception(self):
