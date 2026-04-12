@@ -151,4 +151,69 @@ defmodule DashboardWeb.CoreComponentsTest do
       refute html =~ "bottom-full"
     end
   end
+
+  describe "equity_chart/1" do
+    @base_attrs [range: "30d", chart_id: "test-chart", show_range_toggle: false]
+
+    test "renders fallback when fewer than 2 points" do
+      html = render_component(&CoreComponents.equity_chart/1, [{:points, []} | @base_attrs])
+      assert html =~ "No equity data yet."
+      refute html =~ "<svg"
+    end
+
+    test "renders SVG when 2+ float points" do
+      points = [
+        %{date: ~D[2026-01-01], ending_equity: 4900.0, peak_equity: 5000.0, drawdown_pct: -2.0},
+        %{date: ~D[2026-01-02], ending_equity: 4950.0, peak_equity: 5000.0, drawdown_pct: -1.0}
+      ]
+      html = render_component(&CoreComponents.equity_chart/1, [{:points, points} | @base_attrs])
+      assert html =~ "<svg"
+      assert html =~ "test-chart"
+    end
+
+    test "renders SVG with integer equity values (to_float integer path)" do
+      points = [
+        %{date: ~D[2026-01-01], ending_equity: 4900, peak_equity: 5000, drawdown_pct: -2.0},
+        %{date: ~D[2026-01-02], ending_equity: 4950, peak_equity: 5000, drawdown_pct: -1.0}
+      ]
+      html = render_component(&CoreComponents.equity_chart/1, [{:points, points} | @base_attrs])
+      assert html =~ "<svg"
+    end
+
+    test "renders SVG with Decimal equity values (to_float Decimal path)" do
+      points = [
+        %{
+          date: ~D[2026-01-01],
+          ending_equity: Decimal.new("4900.00"),
+          peak_equity: Decimal.new("5000.00"),
+          drawdown_pct: Decimal.new("-2.00")
+        },
+        %{
+          date: ~D[2026-01-02],
+          ending_equity: Decimal.new("4950.00"),
+          peak_equity: Decimal.new("5000.00"),
+          drawdown_pct: Decimal.new("-1.00")
+        }
+      ]
+      html = render_component(&CoreComponents.equity_chart/1, [{:points, points} | @base_attrs])
+      assert html =~ "<svg"
+    end
+
+    test "renders range toggle when show_range_toggle is true" do
+      points = [
+        %{date: ~D[2026-01-01], ending_equity: 4900.0, peak_equity: 5000.0, drawdown_pct: -2.0},
+        %{date: ~D[2026-01-02], ending_equity: 4950.0, peak_equity: 5000.0, drawdown_pct: -1.0}
+      ]
+      html = render_component(&CoreComponents.equity_chart/1,
+        points: points,
+        range: "30d",
+        chart_id: "test-chart",
+        show_range_toggle: true,
+        range_event: "set_equity_range"
+      )
+      assert html =~ "30D"
+      assert html =~ "90D"
+      assert html =~ "ALL"
+    end
+  end
 end

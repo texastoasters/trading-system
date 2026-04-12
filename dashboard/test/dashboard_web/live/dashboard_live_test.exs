@@ -1264,7 +1264,7 @@ defmodule DashboardWeb.DashboardLiveTest do
       assert html =~ "No equity data yet."
     end
 
-    test "canvas renders when equity_points has 2+ points", %{conn: conn} do
+    test "chart renders when equity_points has 2+ points", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/")
 
       points = [
@@ -1275,7 +1275,7 @@ defmodule DashboardWeb.DashboardLiveTest do
       send(view.pid, {:set_equity_points, points})
       html = render(view)
       assert html =~ "equity-chart-dashboard"
-      assert html =~ "EquityChart"
+      assert html =~ "<svg"
     end
   end
 
