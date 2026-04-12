@@ -436,7 +436,8 @@ defmodule DashboardWeb.PerformanceLiveTest do
 
     test "handles empty attribution gracefully", %{conn: conn} do
       {:ok, _view, html} = live(conn, ~p"/performance")
-      assert html =~ "performance"
+      assert html =~ "Exit Attribution"
+      assert html =~ "No attribution data"
     end
 
     test "attribution assign present on mount", %{conn: conn} do

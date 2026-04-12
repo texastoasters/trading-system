@@ -245,7 +245,8 @@ defmodule DashboardWeb.PerformanceLive do
   end
 
   defp float_pnl_class(v) when is_number(v) and v >= 0, do: "text-green-400"
-  defp float_pnl_class(_), do: "text-red-400"
+  defp float_pnl_class(v) when is_number(v), do: "text-red-400"
+  defp float_pnl_class(_), do: "text-gray-400"
 
   defp exit_type_label("take_profit"), do: "RSI / Price breakout"
   defp exit_type_label("time_stop"), do: "Time stop"
