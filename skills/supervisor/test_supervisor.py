@@ -753,3 +753,40 @@ class TestRunEodReview:
             run_eod_review(r)
         # notify called at least once for capital constraint
         assert mock_notify.call_count >= 1
+
+
+# ── run_reconcile ─────────────────────────────────────────────
+
+class TestRunReconcile:
+    def test_runs_reconcile_fix_as_subprocess(self):
+        """Success path: subprocess called with correct args, no alert."""
+        r = MagicMock()
+        result = MagicMock(returncode=0)
+        with patch("supervisor.subprocess.run", return_value=result) as mock_run, \
+             patch("supervisor.critical_alert") as mock_alert:
+            from supervisor import run_reconcile
+            run_reconcile(r)
+        mock_run.assert_called_once()
+        call_args = mock_run.call_args[0][0]
+        assert call_args == ["python3", "scripts/reconcile.py", "--fix"]
+        mock_alert.assert_not_called()
+
+    def test_fires_critical_alert_on_nonzero_exit(self):
+        """Non-zero exit code → critical_alert with 'reconcile' in message."""
+        r = MagicMock()
+        result = MagicMock(returncode=1, stderr=b"connection refused")
+        with patch("supervisor.subprocess.run", return_value=result), \
+             patch("supervisor.critical_alert") as mock_alert:
+            from supervisor import run_reconcile
+            run_reconcile(r)
+        mock_alert.assert_called_once()
+        assert "reconcile" in mock_alert.call_args[0][0].lower()
+
+    def test_fires_critical_alert_on_exception(self):
+        """Subprocess exception (e.g. timeout) → critical_alert, no raise."""
+        r = MagicMock()
+        with patch("supervisor.subprocess.run", side_effect=Exception("timed out")), \
+             patch("supervisor.critical_alert") as mock_alert:
+            from supervisor import run_reconcile
+            run_reconcile(r)  # must not raise
+        mock_alert.assert_called_once()

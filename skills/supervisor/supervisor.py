@@ -769,6 +769,25 @@ def run_morning_briefing(r):
     })
 
 
+def run_reconcile(r):
+    """Run reconcile.py --fix as a subprocess. Called at 9:15 AM ET via cron."""
+    print("[Supervisor] Running scheduled reconcile...")
+    try:
+        result = subprocess.run(
+            ["python3", "scripts/reconcile.py", "--fix"],
+            capture_output=True,
+            timeout=60,
+            env={**os.environ, "PYTHONPATH": "scripts"},
+        )
+        if result.returncode != 0:
+            stderr = result.stderr.decode("utf-8", errors="replace")
+            critical_alert(
+                f"Scheduled reconcile failed (exit {result.returncode})\n{stderr[:500]}"
+            )
+    except Exception as exc:
+        critical_alert(f"Scheduled reconcile error: {exc}")
+
+
 # ── Main ────────────────────────────────────────────────────
 
 def main():  # pragma: no cover
@@ -780,6 +799,7 @@ def main():  # pragma: no cover
     parser.add_argument("--reset-daily", action="store_true", help="Reset daily counters")
     parser.add_argument("--briefing", action="store_true", help="Send morning briefing (9:20 AM ET)")
     parser.add_argument("--weekly", action="store_true", help="Send weekly summary (Friday 4:35 PM ET)")
+    parser.add_argument("--reconcile", action="store_true", help="Run reconcile --fix (9:15 AM ET)")
     args = parser.parse_args()
 
     r = get_redis()
@@ -787,6 +807,8 @@ def main():  # pragma: no cover
 
     if args.daemon:
         daemon_loop()
+    elif args.reconcile:
+        run_reconcile(r)
     elif args.briefing:
         run_morning_briefing(r)
     elif args.weekly:
