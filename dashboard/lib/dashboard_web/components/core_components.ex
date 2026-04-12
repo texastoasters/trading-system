@@ -82,6 +82,38 @@ defmodule DashboardWeb.CoreComponents do
   end
 
   @doc """
+  Renders an ⓘ info icon with a CSS-only hover tooltip explaining a term.
+
+  Use `direction="above"` (default) to show the popup above the icon — works
+  everywhere except inside `overflow-x-auto` table wrappers.
+  Use `direction="below"` for table column headers so the popup floats into
+  the table body area and is not clipped by the overflow container.
+  """
+  attr :text, :string, required: true
+  attr :direction, :string, default: "above"
+
+  def tooltip(assigns) do
+    popup_class =
+      if assigns.direction == "below",
+        do: "top-full mt-1",
+        else: "bottom-full mb-1.5"
+
+    assigns = assign(assigns, :popup_class, popup_class)
+
+    ~H"""
+    <span class="group relative inline-flex items-center align-middle ml-0.5">
+      <span class="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full border border-gray-500 text-gray-500 text-[9px] leading-none cursor-help hover:border-gray-300 hover:text-gray-300 transition-colors select-none font-normal not-italic normal-case">i</span>
+      <span class={[
+        "pointer-events-none absolute left-1/2 z-50 w-52 -translate-x-1/2 rounded border border-gray-600 bg-gray-900 p-2 text-xs font-normal text-gray-200 opacity-0 transition-opacity group-hover:opacity-100 normal-case tracking-normal whitespace-normal",
+        @popup_class
+      ]}>
+        {@text}
+      </span>
+    </span>
+    """
+  end
+
+  @doc """
   Equity curve canvas panel. Renders a Chart.js canvas with JSON-encoded points,
   or a no-data fallback if fewer than 2 data points.
 

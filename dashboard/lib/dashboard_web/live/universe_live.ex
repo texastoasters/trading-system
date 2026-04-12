@@ -92,6 +92,12 @@ defmodule DashboardWeb.UniverseLive do
   # coveralls-ignore-next-line
   defp tier_label(n), do: "Tier #{n}"
 
+  defp tier_tooltip(1), do: "Best-performing core instruments. Always active — even when the account is in a drawdown."
+  defp tier_tooltip(2), do: "Good performers, extended set. Paused automatically when the account has lost 10% or more from its peak."
+  defp tier_tooltip(3), do: "Satellite instruments. Only traded when Tier 1 and Tier 2 have no active positions."
+  # coveralls-ignore-next-line
+  defp tier_tooltip(_), do: ""
+
   defp status_pill(:held),          do: {"HELD",    "bg-orange-900/40 text-orange-300 border-orange-700"}
   defp status_pill(:strong_signal), do: {"STRONG",  "bg-green-900/40 text-green-300 border-green-700"}
   defp status_pill(:signal),        do: {"SIGNAL",  "bg-blue-900/40 text-blue-300 border-blue-700"}

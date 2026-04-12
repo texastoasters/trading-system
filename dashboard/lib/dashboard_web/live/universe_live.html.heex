@@ -23,7 +23,7 @@
     </div>
     <div class="flex items-center gap-1.5">
       <span class="px-1.5 py-0.5 rounded border font-medium bg-green-900/40 text-green-300 border-green-700">STRONG</span>
-      <span class="text-gray-500">RSI-2 &lt; 5, entry imminent</span>
+      <span class="text-gray-500 inline-flex items-center gap-0.5">RSI-2 &lt; 5, entry imminent <.tooltip text="RSI-2 is a 0–100 speed gauge for recent price moves. Below 5 means the stock dropped sharply and a bounce is likely imminent." /></span>
     </div>
     <div class="flex items-center gap-1.5">
       <span class="px-1.5 py-0.5 rounded border font-medium bg-blue-900/40 text-blue-300 border-blue-700">SIGNAL</span>
@@ -50,7 +50,7 @@
           <span class={["text-xs px-1.5 py-0.5 rounded border font-medium", tier_badge_class]}>
             {tier_label_str}
           </span>
-          <h2 class="text-sm font-semibold text-gray-300">{tier_label(tier_num)}</h2>
+          <h2 class="text-sm font-semibold text-gray-300 inline-flex items-center gap-1">{tier_label(tier_num)} <.tooltip text={tier_tooltip(tier_num)} /></h2>
           <span class="text-xs text-gray-600 ml-auto">{length(symbols)} symbols</span>
         </div>
 
@@ -60,10 +60,10 @@
               <tr class="text-xs text-gray-500 border-b border-gray-700/50">
                 <th class="text-left px-4 py-2 font-medium">Symbol</th>
                 <th class="text-left px-4 py-2 font-medium">Status</th>
-                <th class="text-right px-4 py-2 font-medium">RSI-2</th>
+                <th class="text-right px-4 py-2 font-medium">RSI-2 <.tooltip text="Relative Strength Index (2-day) — a 0–100 speed gauge for recent price drops. Below 10 = stock dropped fast and may bounce. The robot buys when RSI-2 is very low." direction="below" /></th>
                 <th class="text-right px-4 py-2 font-medium">Close</th>
-                <th class="text-right px-4 py-2 font-medium">SMA-200</th>
-                <th class="text-center px-4 py-2 font-medium">Above SMA</th>
+                <th class="text-right px-4 py-2 font-medium">SMA-200 <.tooltip text="Simple Moving Average of the last 200 trading days — a long-term trend line. The robot only buys stocks ABOVE this line to avoid catching a falling knife." direction="below" /></th>
+                <th class="text-center px-4 py-2 font-medium">Above SMA <.tooltip text="Is the stock's price currently above its 200-day trend line? The robot requires ✓ before entering any new trade." direction="below" /></th>
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-700/30">
