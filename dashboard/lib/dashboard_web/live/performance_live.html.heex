@@ -136,6 +136,41 @@
     </div>
   </div>
 
+  <%# Exit Attribution %>
+  <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+    <h2 class="text-sm font-semibold text-gray-300 mb-3">Exit Attribution</h2>
+    <%= if @attribution == [] do %>
+      <p class="text-xs text-gray-600 italic">No attribution data</p>
+    <% else %>
+      <div class="overflow-x-auto">
+        <table class="w-full text-xs">
+          <thead>
+            <tr class="text-gray-500 border-b border-gray-700">
+              <th class="text-left pb-2 pr-3">Exit type</th>
+              <th class="text-right pb-2 pr-3">Trades</th>
+              <th class="text-right pb-2 pr-3">Avg P&amp;L</th>
+              <th class="text-right pb-2">Total P&amp;L</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-700/30">
+            <%= for row <- @attribution do %>
+              <tr class="hover:bg-gray-700/20 transition-colors">
+                <td class="py-1.5 pr-3 text-gray-300">{exit_type_label(row.exit_reason)}</td>
+                <td class="py-1.5 pr-3 text-right font-mono text-gray-300">{row.count}</td>
+                <td class={"py-1.5 pr-3 text-right font-mono #{float_pnl_class(row.avg_pnl)}"}>
+                  {format_float_pnl(row.avg_pnl)}
+                </td>
+                <td class={"py-1.5 text-right font-mono #{float_pnl_class(row.total_pnl)}"}>
+                  {format_float_pnl(row.total_pnl)}
+                </td>
+              </tr>
+            <% end %>
+          </tbody>
+        </table>
+      </div>
+    <% end %>
+  </div>
+
   <%# Footer summary %>
   <%= if @rows != [] do %>
     <div class="flex gap-6 text-xs text-gray-500 pt-1">

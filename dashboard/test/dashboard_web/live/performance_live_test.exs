@@ -428,6 +428,86 @@ defmodule DashboardWeb.PerformanceLiveTest do
     end
   end
 
+  describe "exit attribution" do
+    test "renders attribution table section", %{conn: conn} do
+      {:ok, _view, html} = live(conn, ~p"/performance")
+      assert html =~ "Exit Attribution"
+    end
+
+    test "handles empty attribution gracefully", %{conn: conn} do
+      {:ok, _view, html} = live(conn, ~p"/performance")
+      assert html =~ "performance"
+    end
+
+    test "attribution assign present on mount", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/performance")
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert Map.has_key?(assigns, :attribution)
+      assert is_list(assigns.attribution)
+    end
+
+    test "attribution assign updates on set_range event", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/performance")
+      render_click(view, "set_range", %{"range" => "90d"})
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert Map.has_key?(assigns, :attribution)
+      assert is_list(assigns.attribution)
+    end
+
+    test "attribution assign updates on set_range all", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/performance")
+      render_click(view, "set_range", %{"range" => "all"})
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert is_list(assigns.attribution)
+    end
+
+    test "no attribution data message renders when attribution empty", %{conn: conn} do
+      {:ok, _view, html} = live(conn, ~p"/performance")
+      assert html =~ "No attribution data"
+    end
+
+    test "attribution rows render when data injected", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/performance")
+
+      send(view.pid, {:set_attribution, [
+        %{exit_reason: "take_profit", count: 12, avg_pnl: 1.8, total_pnl: 89.0},
+        %{exit_reason: "stop_loss", count: 3, avg_pnl: -2.1, total_pnl: -6.3}
+      ]})
+
+      html = render(view)
+      assert html =~ "RSI / Price breakout"
+      assert html =~ "Stop loss"
+      assert html =~ "+$89.00"
+      assert html =~ "-$6.30"
+    end
+
+    test "attribution display name mapping covers all exit types", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/performance")
+
+      send(view.pid, {:set_attribution, [
+        %{exit_reason: "take_profit", count: 1, avg_pnl: 1.0, total_pnl: 1.0},
+        %{exit_reason: "time_stop", count: 1, avg_pnl: 1.0, total_pnl: 1.0},
+        %{exit_reason: "stop_loss_auto", count: 1, avg_pnl: -1.0, total_pnl: -1.0},
+        %{exit_reason: "manual_liquidation", count: 1, avg_pnl: 0.5, total_pnl: 0.5},
+        %{exit_reason: "unknown", count: 1, avg_pnl: 0.0, total_pnl: 0.0}
+      ]})
+
+      html = render(view)
+      assert html =~ "RSI / Price breakout"
+      assert html =~ "Time stop"
+      assert html =~ "Stop loss"
+      assert html =~ "Manual"
+      assert html =~ "Other"
+    end
+
+    test "attribution refresh_db also updates attribution", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/performance")
+      send(view.pid, :refresh_db)
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert Map.has_key?(assigns, :attribution)
+    end
+  end
+
   describe "summary assign" do
     test "mount assigns summary with zero count", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/performance")
