@@ -116,7 +116,7 @@ def scan_instrument(symbol, data, regime_info):
 
     # Volume gate: skip thin-volume days (today < MIN_VOLUME_RATIO * 20-day avg)
     latest_volume = data['volume'][-1]
-    avg_volume_20d = float(np.mean(data['volume'][-20:]))
+    avg_volume_20d = float(np.mean(data['volume'][-21:-1]))
     if avg_volume_20d > 0 and latest_volume < config.MIN_VOLUME_RATIO * avg_volume_20d:
         return None  # thin-volume day — skip entry
 

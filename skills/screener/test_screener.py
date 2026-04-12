@@ -204,6 +204,18 @@ class TestScanInstrument:
         assert 'volume_ratio' in result
         assert result['volume_ratio'] == 1.0  # today == avg
 
+    def test_boundary_volume_ratio_at_threshold_passes(self):
+        # today = 500_000, avg_20d = 1_000_000 → ratio exactly 0.5
+        # gate uses strict < so 0.5 should PASS (not block)
+        data = make_price_data(close_val=110.0, volume_val=1_000_000.0)
+        data['volume'][-1] = 500_000.0   # today = exactly 50% of avg
+        with patch('screener.rsi', return_value=np.array([3.0])), \
+             patch('screener.sma', return_value=np.array([100.0])), \
+             patch('screener.atr', return_value=np.array([2.0])):
+            from screener import scan_instrument
+            result = scan_instrument("SPY", data, ranging_regime())
+        assert result is not None  # 0.5 is NOT < 0.5; should pass
+
     def test_volume_ratio_none_when_avg_volume_zero(self):
         data = make_price_data(close_val=110.0, volume_val=0.0)
         with patch('screener.rsi', return_value=np.array([3.0])), \
