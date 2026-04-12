@@ -41,11 +41,9 @@ _shutdown = False
 def get_db():  # pragma: no cover
     """Connect to TimescaleDB."""
     return psycopg2.connect(
-        host=os.environ.get("TIMESCALEDB_HOST", "localhost"),
-        port=int(os.environ.get("TIMESCALEDB_PORT", "5432")),
-        dbname=os.environ.get("TIMESCALEDB_DB", "trading"),
-        user=os.environ.get("TIMESCALEDB_USER", "trader"),
-        password=os.environ.get("TIMESCALEDB_PASSWORD", "changeme_in_env_file"),
+        host="localhost", port=5432,
+        dbname="trading", user="trader",
+        password=os.environ.get("TSDB_PASSWORD", "changeme_in_env_file"),
     )
 
 
