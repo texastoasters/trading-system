@@ -56,9 +56,9 @@ These are known issues documented in HANDOFF.md that can cause real harm.
 - [x] **Max daily loss limit** — Daily loss CB fires `critical_alert` + sets `daily_halt`; sells allowed through. PR #81.
 - [ ] **Position age alert** — If a position has been held >5 days without triggering time-stop (maybe stuck in a narrow range), send Telegram nudge for manual review.
 - [x] **Correlated regime adjustment** — DOWNTREND halves equity position sizes. Edge case where halving → 0 shares fixed (PR #58).
-- [ ] **Drawdown attribution lookback cap** — `peak_equity_date` is never bounded; a 4-month drawdown would cause the attribution query to scan the full period and produce an overwhelming table. Cap at 90 days regardless of actual peak date. Both `Queries.drawdown_attribution/2` and `get_drawdown_attribution()` in `config.py` need the cap.
-- [ ] **Scheduled reconcile** — `scripts/reconcile.py` (PR #59) exists but is manual-only. Run it at 9:15 AM ET daily via supervisor cron to catch overnight Alpaca state divergence automatically. Script already handles all edge cases; this is just wiring.
-- [ ] **Dashboard: trailing stop indicator on position cards** — `trailing=True` is set in Redis when a position upgrades (PR #86) but the position card shows no indicator. User cannot tell which positions have a trailing vs fixed stop.
+- [x] **Drawdown attribution lookback cap** — Capped at 90 days in both `config.py` (`ATTRIBUTION_MAX_LOOKBACK_DAYS`) and `Queries.drawdown_attribution/2`. PR #88.
+- [x] **Scheduled reconcile** — `supervisor.py --reconcile` calls `scripts/reconcile.py --fix`; cron at 9:15 AM ET Mon–Fri. PR #88.
+- [x] **Dashboard: trailing stop indicator on position cards** — Position cards show "Trail: X%" row (amber) when `trailing=True`. PR #88.
 
 ### Screener & Signal Quality
 - [ ] **Volume filter on entries** — Require minimum average daily volume for entry signals. Prevents entries on thin/illiquid days that can cause bad fills.
@@ -160,10 +160,10 @@ Remaining top-10 by impact:
 Ranked by impact on the running system. LLM-dependent items excluded — system currently operates without LLM calls.
 
 ### Safety / Correctness
-1. **Scheduled reconcile** — `reconcile.py` (PR #59) exists, is tested, just needs wiring into supervisor's 9:15 AM ET cron. Overnight Alpaca state drift (stop-loss orphaned, phantom Redis position) is a real silent failure mode. Near-zero implementation effort.
+1. ~~**Scheduled reconcile**~~ ✅ Done (PR #88)
 2. ~~**Alert on manual stop-loss cancellation**~~ ✅ Already implemented — `_check_cancelled_stops` polls stop status every daemon cycle and handles all cancellation paths with `critical_alert`.
-3. **Drawdown attribution lookback cap** — `peak_equity_date` is unbounded. A 4-month drawdown generates an enormous attribution table and a slow DB query. Cap both `Queries.drawdown_attribution/2` and `get_drawdown_attribution()` at 90 days regardless of actual peak date.
-4. **Dashboard: trailing stop indicator on position cards** — With PR #86 live, position cards show `stop_price` but no indication of whether the stop is fixed or trailing. Critical context when deciding whether to manually liquidate.
+3. ~~**Drawdown attribution lookback cap**~~ ✅ Done (PR #88)
+4. ~~**Dashboard: trailing stop indicator on position cards**~~ ✅ Done (PR #88)
 
 ### Operational Control
 5. **Dashboard: one-click pause** — Write `trading:system_status = paused` to Redis from the dashboard. Resume with one click. Currently requires SSH. Single most useful missing operational control.
