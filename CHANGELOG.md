@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.23.0] — 2026-04-11
+
+### Changed
+- Removed equity curve chart from main dashboard; chart remains on `/performance` page
+
+---
+
 ## [0.22.1] — 2026-04-11
 
 ### Added
