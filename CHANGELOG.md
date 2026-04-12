@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.23.1] — 2026-04-11
+
+### Fixed
+- Stat card grid wraps to 7 columns so all cards fit on one line at all viewports
+
+---
+
 ## [0.23.0] — 2026-04-11
 
 ### Changed
