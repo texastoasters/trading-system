@@ -1,14 +1,15 @@
 # Handoff
 
 ## State
-On `feat/contex-charts`. VERSION=0.23.1, CHANGELOG updated. Grid fix applied (grid-cols-7). 281 tests, 0 failures. No open PR — need to create one for this branch.
+Branch: feat/strategy-attribution-age-alert-paper-report
+All 10 tasks complete. HEAD: 9506a73 (v0.24.0 bump + wishlist update).
+295 Elixir tests, 122 Python supervisor tests, 116 executor tests — all pass.
 
 ## Next
-1. `cpr` — commit remaining changes + push + open PR for `feat/contex-charts`
-2. After merge: tag v0.23.1
-3. Brainstorm feature #8 (strategy attribution by exit type)
+Ready for cpr (commit + push + PR).
+PR title: "feat: strategy attribution, position age alert, paper report (v0.24.0) (#98)"
 
 ## Context
-- `feat/contex-charts` has all contex migration + legend + dashboard chart removal + grid fix
-- VERSION lives at repo root (not dashboard/); mix.exs stays at "1.0.0"
-- `daily_summary` hypertable missing in test DB — QueriesTest drawdown_attribution tests still skipped
+- Alpaca paper 100_000 starting balance hardcoded in supervisor (not config) — acceptable, Alpaca always starts at $100k.
+- trades hypertable doesn't exist in Elixir test DB (TimescaleDB, created by Python init scripts) — all DB-dependent query tests use empty-result/rescue path only. Same pattern as instrument_performance and equity_curve.
+- executor get_db() uses hardcoded host/port/db/user + TSDB_PASSWORD env var only (matches supervisor exactly).
