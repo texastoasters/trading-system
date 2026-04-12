@@ -8,6 +8,19 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.25.0] — 2026-04-12
+
+### Added
+- **Mobile-responsive dashboard** (wishlist) — all 4 pages (Dashboard, Trades, Universe, Performance) fully usable on mobile phones with full feature parity; pure Tailwind CSS, no JS, no conditional rendering
+  - Nav: `overflow-x-auto whitespace-nowrap` + `shrink-0` on links for horizontal scroll safety on narrow viewports
+  - Page padding: `px-3 sm:px-6` on all page wrappers — no clipped edges on mobile
+  - Dashboard stat grid: `grid-cols-2 sm:grid-cols-4 lg:grid-cols-7`; universe card `col-span-2 sm:col-span-1`; heartbeat grid `grid-cols-3 sm:grid-cols-5`
+  - Card-table pattern: Trades, Universe (3 tiers), Performance (instrument breakdown + exit attribution) — one markup set, renders as stacked cards on mobile and fixed-column CSS grid table on desktop (`sm:`)
+  - Touch targets: Pause/Liquidate buttons, pagination prev/next, range toggle all `min-h-[44px]` (Apple/Google HIG minimum)
+  - Daily Performance table: `overflow-x-auto` wrapper for horizontal scroll on mobile
+
+---
+
 ## [0.24.0] — 2026-04-12
 
 ### Added
