@@ -8,6 +8,20 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.24.0] — 2026-04-12
+
+### Added
+- **Executor DB writes** — executor now logs every confirmed trade fill to the `trades` TimescaleDB hypertable; previously trades only lived in Redis and Telegram
+- **Strategy attribution by exit type** (wishlist #8) — `exit_reason` column added to `trades` table; executor writes `take_profit`, `time_stop`, `stop_loss`, `stop_loss_auto`, `manual_liquidation`, or `unknown` for each sell; performance page shows exit attribution table grouped by exit type with count, avg P&L, and total P&L; supports 30/90/all day filters
+- **Position age alert** (wishlist #9) — supervisor health check sends Telegram nudge when any position is held ≥ 5 days (`RSI2_MAX_HOLD_DAYS`); Redis dedup key (`trading:age_alert:{symbol}`, 24h TTL) prevents repeat alerts
+- **Paper vs simulated equity report** (wishlist #10) — weekly summary now fetches Alpaca paper account balance and compares to `trading:simulated_equity`; reports simulated return %, Alpaca return %, and divergence; flags divergence > 5% as a potential sizing bug
+
+### Fixed
+- `get_db()` in executor now uses identical env var pattern as supervisor (`TSDB_PASSWORD` only; host/db/user hardcoded) — previously used `TIMESCALEDB_*` vars causing silent misconfiguration
+- `exit_type_attribution` days_back filter used `t.inserted_at` instead of `t.time` — would have silently returned `[]` for all filtered windows at runtime
+
+---
+
 ## [0.23.1] — 2026-04-11
 
 ### Fixed
