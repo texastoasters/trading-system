@@ -177,6 +177,12 @@
                     <span class="text-gray-500">Stop:</span>
                     <span class="text-gray-300 ml-1 font-mono">{format_price(pos["stop_price"])}</span>
                   </div>
+                  <%= if pos["trailing"] do %>
+                  <div>
+                    <span class="text-gray-500">Trail:</span>
+                    <span class="text-amber-400 ml-1 font-mono">{format_float(pos["trail_percent"])}%</span>
+                  </div>
+                  <% end %>
                   <div>
                     <span class="text-gray-500">RSI-2:</span>
                     <%= if current_rsi2 do %>
