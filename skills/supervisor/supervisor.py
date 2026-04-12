@@ -256,6 +256,21 @@ def run_health_check(r):
     # Circuit breaker check
     run_circuit_breakers(r)
 
+    # Position age alert
+    today = date.today()
+    for symbol, pos in positions.items():
+        entry_date = datetime.strptime(pos["entry_date"], "%Y-%m-%d").date()
+        hold_days = (today - entry_date).days
+        if hold_days >= config.RSI2_MAX_HOLD_DAYS:
+            dedup_key = Keys.age_alert(symbol)
+            if not r.exists(dedup_key):
+                notify(
+                    f"⏰ Position age alert: {symbol} held {hold_days} days "
+                    f"(entry: {pos.get('entry_price', '?')}, "
+                    f"unrealized: {pos.get('unrealized_pnl_pct', 0):.1f}%)"
+                )
+                r.setex(dedup_key, 86400, "1")
+
     if issues:
         print(f"\n  ⚠️  {len(issues)} issue(s) found")
     else:

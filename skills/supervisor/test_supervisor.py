@@ -610,6 +610,101 @@ class TestRunHealthCheck:
             run_health_check(r)
         mock_restart.assert_called_once_with(r)
 
+# ── TestPositionAgeAlert ──────────────────────────────────────
+
+class TestPositionAgeAlert:
+    def _make_hb_redis(self, positions_json="{}", dedup_exists=False):
+        from datetime import date
+        now = datetime.now()
+        base = {
+            Keys.SIMULATED_EQUITY: "5000.0",
+            Keys.DRAWDOWN: "0.0",
+            Keys.POSITIONS: positions_json,
+            Keys.PDT_COUNT: "0",
+            Keys.SYSTEM_STATUS: "active",
+            Keys.REGIME: json.dumps({"regime": "RANGING"}),
+            Keys.heartbeat("executor"): (now - timedelta(minutes=1)).isoformat(),
+            Keys.heartbeat("portfolio_manager"): (now - timedelta(minutes=1)).isoformat(),
+            Keys.heartbeat("watcher"): (now - timedelta(minutes=1)).isoformat(),
+            Keys.RISK_MULTIPLIER: "1.0",
+            Keys.PEAK_EQUITY: "5000.0",
+            Keys.DAILY_PNL: "0.0",
+            Keys.UNIVERSE: json.dumps(_config.DEFAULT_UNIVERSE),
+            "trading:restart_count": "0",
+        }
+        r = MagicMock()
+        r.get = lambda k: base.get(k)
+        r.set = MagicMock()
+        r.publish = MagicMock()
+        r.exists = MagicMock(return_value=1 if dedup_exists else 0)
+        r.setex = MagicMock()
+        return r
+
+    def _pos_json(self, symbol, hold_days, entry_price=100.0, unrealized_pnl_pct=2.5):
+        from datetime import date, timedelta as td
+        entry = (date.today() - td(days=hold_days)).isoformat()
+        return json.dumps({
+            symbol: {
+                "symbol": symbol,
+                "entry_date": entry,
+                "entry_price": entry_price,
+                "unrealized_pnl_pct": unrealized_pnl_pct,
+            }
+        })
+
+    def test_age_alert_fires_when_hold_days_at_threshold(self):
+        pos = self._pos_json("SPY", _config.RSI2_MAX_HOLD_DAYS)
+        r = self._make_hb_redis(positions_json=pos, dedup_exists=False)
+        with patch("supervisor.notify") as mock_notify, \
+             patch("supervisor.run_circuit_breakers"), \
+             patch("supervisor.critical_alert"):
+            from supervisor import run_health_check
+            run_health_check(r)
+        calls = [str(c) for c in mock_notify.call_args_list]
+        assert any("SPY" in c and str(_config.RSI2_MAX_HOLD_DAYS) in c for c in calls)
+        r.setex.assert_called_once_with(Keys.age_alert("SPY"), 86400, "1")
+
+    def test_age_alert_suppressed_when_dedup_key_present(self):
+        pos = self._pos_json("SPY", _config.RSI2_MAX_HOLD_DAYS)
+        r = self._make_hb_redis(positions_json=pos, dedup_exists=True)
+        with patch("supervisor.notify") as mock_notify, \
+             patch("supervisor.run_circuit_breakers"), \
+             patch("supervisor.critical_alert"):
+            from supervisor import run_health_check
+            run_health_check(r)
+        age_alert_calls = [
+            c for c in mock_notify.call_args_list
+            if "age alert" in str(c).lower() or "⏰" in str(c)
+        ]
+        assert len(age_alert_calls) == 0
+        r.setex.assert_not_called()
+
+    def test_age_alert_not_fired_when_hold_days_below_threshold(self):
+        pos = self._pos_json("SPY", _config.RSI2_MAX_HOLD_DAYS - 1)
+        r = self._make_hb_redis(positions_json=pos, dedup_exists=False)
+        with patch("supervisor.notify") as mock_notify, \
+             patch("supervisor.run_circuit_breakers"), \
+             patch("supervisor.critical_alert"):
+            from supervisor import run_health_check
+            run_health_check(r)
+        age_alert_calls = [
+            c for c in mock_notify.call_args_list
+            if "age alert" in str(c).lower() or "⏰" in str(c)
+        ]
+        assert len(age_alert_calls) == 0
+        r.setex.assert_not_called()
+
+    def test_dedup_key_set_with_24h_ttl(self):
+        pos = self._pos_json("QQQ", _config.RSI2_MAX_HOLD_DAYS + 1, entry_price=450.0, unrealized_pnl_pct=-1.2)
+        r = self._make_hb_redis(positions_json=pos, dedup_exists=False)
+        with patch("supervisor.notify"), \
+             patch("supervisor.run_circuit_breakers"), \
+             patch("supervisor.critical_alert"):
+            from supervisor import run_health_check
+            run_health_check(r)
+        r.setex.assert_called_once_with(Keys.age_alert("QQQ"), 86400, "1")
+
+
 # ── reset_daily ───────────────────────────────────────────────
 
 class TestResetDaily:
