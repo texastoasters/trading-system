@@ -569,5 +569,24 @@ defmodule DashboardWeb.PerformanceLiveTest do
       {:ok, _view, html} = live(conn, "/performance")
       assert html =~ "px-3 sm:px-6"
     end
+
+    test "instrument table has responsive card-table desktop header", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/performance")
+      assert html =~ "hidden sm:grid"
+    end
+
+    test "range toggle buttons have minimum 44px touch height", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/performance")
+      assert html =~ "min-h-[44px]"
+    end
+
+    test "attribution card-table shows mobile card with data", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/performance")
+      row = %{exit_reason: "take_profit", count: 5, avg_pnl: 12.5, total_pnl: 62.5}
+      send(view.pid, {:set_attribution, [row]})
+      html = render(view)
+      assert html =~ "bg-gray-800/20 border border-gray-700/50 rounded-lg p-3"
+      assert html =~ "RSI / Price breakout"
+    end
   end
 end

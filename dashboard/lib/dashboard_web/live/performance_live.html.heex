@@ -15,7 +15,7 @@
           phx-click="set_range"
           phx-value-range={r}
           class={[
-            "px-3 py-1.5 transition-colors",
+            "min-h-[44px] px-3 py-1.5 transition-colors",
             if(@range == r,
               do: "bg-blue-900/60 text-blue-300 border-r border-gray-700",
               else: "bg-transparent text-gray-500 border-r border-gray-700 hover:text-gray-300 last:border-r-0"
@@ -36,104 +36,106 @@
   />
 
   <%# Table %>
-  <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
-    <div class="overflow-x-auto">
-      <table class="w-full text-xs">
-        <thead>
-          <tr class="text-gray-500 border-b border-gray-700">
-            <th class="text-left pb-2 pr-3 cursor-pointer hover:text-gray-300 select-none"
-                phx-click="sort" phx-value-col="symbol">
-              Symbol{sort_indicator(:symbol, @sort_col, @sort_dir)}
-            </th>
-            <th class={["text-right pb-2 pr-3 cursor-pointer hover:text-gray-300 select-none",
-                        if(@sort_col == :total_pnl, do: "text-blue-400", else: "")]}
-                phx-click="sort" phx-value-col="total_pnl">
-              Total P&amp;L{sort_indicator(:total_pnl, @sort_col, @sort_dir)}
-            </th>
-            <th class={["text-right pb-2 pr-3 cursor-pointer hover:text-gray-300 select-none",
-                        if(@sort_col == :trade_count, do: "text-blue-400", else: "")]}
-                phx-click="sort" phx-value-col="trade_count">
-              Trades{sort_indicator(:trade_count, @sort_col, @sort_dir)}
-            </th>
-            <th class={["text-right pb-2 pr-3 cursor-pointer hover:text-gray-300 select-none",
-                        if(@sort_col == :win_rate, do: "text-blue-400", else: "")]}
-                phx-click="sort" phx-value-col="win_rate">
-              Win%<.tooltip text="Percentage of completed trades that made money. 60% means 6 out of 10 trades were profitable." direction="below" />{sort_indicator(:win_rate, @sort_col, @sort_dir)}
-            </th>
-            <th class={["text-right pb-2 pr-3 cursor-pointer hover:text-gray-300 select-none",
-                        if(@sort_col == :profit_factor, do: "text-blue-400", else: "")]}
-                phx-click="sort" phx-value-col="profit_factor">
-              PF<.tooltip text="Profit Factor — total winnings divided by total losses. 2.0 means you earn $2 for every $1 lost. Above 1.0 = profitable overall." direction="below" />{sort_indicator(:profit_factor, @sort_col, @sort_dir)}
-            </th>
-            <th class={["text-right pb-2 pr-3 cursor-pointer hover:text-gray-300 select-none",
-                        if(@sort_col == :avg_win, do: "text-blue-400", else: "")]}
-                phx-click="sort" phx-value-col="avg_win">
-              Avg Win{sort_indicator(:avg_win, @sort_col, @sort_dir)}
-            </th>
-            <th class={["text-right pb-2 pr-3 cursor-pointer hover:text-gray-300 select-none",
-                        if(@sort_col == :avg_loss, do: "text-blue-400", else: "")]}
-                phx-click="sort" phx-value-col="avg_loss">
-              Avg Loss{sort_indicator(:avg_loss, @sort_col, @sort_dir)}
-            </th>
-            <th class={["text-right pb-2 pr-3 cursor-pointer hover:text-gray-300 select-none",
-                        if(@sort_col == :last_trade, do: "text-blue-400", else: "")]}
-                phx-click="sort" phx-value-col="last_trade">
-              Last Trade{sort_indicator(:last_trade, @sort_col, @sort_dir)}
-            </th>
-            <th class="text-right pb-2 text-gray-600">Class</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-gray-700/30">
-          <%= if @rows == [] do %>
-            <tr>
-              <td colspan="9" class="py-8 text-center text-gray-600 italic">
-                no trades recorded yet
-              </td>
-            </tr>
-          <% else %>
-            <%= for row <- @rows do %>
-              <% tier = tier_for(row.symbol, @universe) %>
-              <% badge = tier_badge(tier) %>
-              <tr class="hover:bg-gray-700/20 transition-colors">
-                <td class="py-1.5 pr-3 font-mono font-semibold text-white">
-                  {row.symbol}
-                  <%= if badge do %>
-                    <% {label, classes} = badge %>
-                    <span class={"ml-1 text-[10px] px-1 py-0.5 rounded border #{classes}"}>
-                      {label}
-                    </span>
-                  <% end %>
-                </td>
-                <td class={"py-1.5 pr-3 text-right font-mono #{pnl_class(row.total_pnl)}"}>
-                  {format_pnl(row.total_pnl)}
-                </td>
-                <td class="py-1.5 pr-3 text-right text-gray-300 font-mono">
-                  {row.trade_count}
-                </td>
-                <td class={"py-1.5 pr-3 text-right font-mono #{win_rate_class(row.win_rate)}"}>
-                  {format_win_rate(row.win_rate)}
-                </td>
-                <td class={"py-1.5 pr-3 text-right font-mono #{pf_class(row.profit_factor)}"}>
-                  {format_pf(row.profit_factor)}
-                </td>
-                <td class="py-1.5 pr-3 text-right font-mono text-green-400">
-                  {format_pnl(row.avg_win)}
-                </td>
-                <td class="py-1.5 pr-3 text-right font-mono text-red-400">
-                  {format_pnl(row.avg_loss)}
-                </td>
-                <td class="py-1.5 pr-3 text-right text-gray-500">
-                  {format_last_trade(row.last_trade)}
-                </td>
-                <td class="py-1.5 text-right text-gray-600">
-                  {row.asset_class || "—"}
-                </td>
-              </tr>
-            <% end %>
-          <% end %>
-        </tbody>
-      </table>
+  <div class="rounded-lg border border-gray-700 overflow-hidden">
+
+    <%!-- Desktop header row (sort controls desktop-only — header hidden on mobile) --%>
+    <div class="hidden sm:grid sm:grid-cols-[5rem_5rem_4rem_3.5rem_3.5rem_4rem_4rem_5.5rem_3.5rem] px-3 py-2 border-b border-gray-700 bg-gray-800/50 text-xs text-gray-500 uppercase tracking-wider">
+      <span class="pr-3 cursor-pointer hover:text-gray-300 select-none" phx-click="sort" phx-value-col="symbol">
+        Symbol{sort_indicator(:symbol, @sort_col, @sort_dir)}
+      </span>
+      <span class={["pr-3 cursor-pointer hover:text-gray-300 select-none text-right",
+                    if(@sort_col == :total_pnl, do: "text-blue-400", else: "")]}
+            phx-click="sort" phx-value-col="total_pnl">
+        Total P&amp;L{sort_indicator(:total_pnl, @sort_col, @sort_dir)}
+      </span>
+      <span class={["pr-3 cursor-pointer hover:text-gray-300 select-none text-right",
+                    if(@sort_col == :trade_count, do: "text-blue-400", else: "")]}
+            phx-click="sort" phx-value-col="trade_count">
+        Trades{sort_indicator(:trade_count, @sort_col, @sort_dir)}
+      </span>
+      <span class={["pr-3 cursor-pointer hover:text-gray-300 select-none text-right",
+                    if(@sort_col == :win_rate, do: "text-blue-400", else: "")]}
+            phx-click="sort" phx-value-col="win_rate">
+        Win%{sort_indicator(:win_rate, @sort_col, @sort_dir)}
+      </span>
+      <span class={["pr-3 cursor-pointer hover:text-gray-300 select-none text-right",
+                    if(@sort_col == :profit_factor, do: "text-blue-400", else: "")]}
+            phx-click="sort" phx-value-col="profit_factor">
+        PF{sort_indicator(:profit_factor, @sort_col, @sort_dir)}
+      </span>
+      <span class={["pr-3 cursor-pointer hover:text-gray-300 select-none text-right",
+                    if(@sort_col == :avg_win, do: "text-blue-400", else: "")]}
+            phx-click="sort" phx-value-col="avg_win">
+        Avg Win{sort_indicator(:avg_win, @sort_col, @sort_dir)}
+      </span>
+      <span class={["pr-3 cursor-pointer hover:text-gray-300 select-none text-right",
+                    if(@sort_col == :avg_loss, do: "text-blue-400", else: "")]}
+            phx-click="sort" phx-value-col="avg_loss">
+        Avg Loss{sort_indicator(:avg_loss, @sort_col, @sort_dir)}
+      </span>
+      <span class={["pr-3 cursor-pointer hover:text-gray-300 select-none text-right",
+                    if(@sort_col == :last_trade, do: "text-blue-400", else: "")]}
+            phx-click="sort" phx-value-col="last_trade">
+        Last Trade{sort_indicator(:last_trade, @sort_col, @sort_dir)}
+      </span>
+      <span class="text-right text-gray-600">Class</span>
     </div>
+
+    <%= if @rows == [] do %>
+      <div class="bg-gray-800 py-8 text-center text-gray-600 italic text-xs">no trades recorded yet</div>
+    <% else %>
+      <%= for row <- @rows do %>
+        <% tier = tier_for(row.symbol, @universe)
+           badge = tier_badge(tier) %>
+        <div class="bg-gray-800/20 border border-gray-700/50 rounded-lg p-3 mb-1.5 last:mb-0
+                    sm:bg-transparent sm:border-0 sm:border-b sm:border-gray-700/50 sm:rounded-none
+                    sm:p-0 sm:px-3 sm:py-1.5 sm:mb-0 sm:last:border-0
+                    sm:grid sm:grid-cols-[5rem_5rem_4rem_3.5rem_3.5rem_4rem_4rem_5.5rem_3.5rem]
+                    sm:hover:bg-gray-800/30 sm:transition-colors">
+
+          <%!-- Mobile headline --%>
+          <div class="flex justify-between items-baseline mb-1.5 sm:hidden">
+            <span class="font-mono font-bold text-white">
+              {row.symbol}
+              <%= if badge do %>
+                <% {label, classes} = badge %>
+                <span class={"ml-1 text-[10px] px-1 py-0.5 rounded border #{classes}"}>{label}</span>
+              <% end %>
+            </span>
+            <span class={pnl_class(row.total_pnl)}>{format_pnl(row.total_pnl)}</span>
+          </div>
+
+          <%!-- Mobile label/value grid --%>
+          <div class="grid grid-cols-2 gap-x-3 gap-y-1 text-xs sm:hidden">
+            <span class="text-gray-500">Trades: <span class="text-gray-200 font-mono">{row.trade_count}</span></span>
+            <span class="text-gray-500">Win%: <span class={win_rate_class(row.win_rate)}>{format_win_rate(row.win_rate)}</span></span>
+            <span class="text-gray-500">PF: <span class={pf_class(row.profit_factor)}>{format_pf(row.profit_factor)}</span></span>
+            <span class="text-gray-500">Avg Win: <span class="text-green-400 font-mono">{format_pnl(row.avg_win)}</span></span>
+            <span class="text-gray-500">Avg Loss: <span class="text-red-400 font-mono">{format_pnl(row.avg_loss)}</span></span>
+            <span class="text-gray-500">Last Trade: <span class="text-gray-300">{format_last_trade(row.last_trade)}</span></span>
+            <span class="text-gray-500">Class: <span class="text-gray-400">{row.asset_class || "—"}</span></span>
+          </div>
+
+          <%!-- Desktop cells --%>
+          <span class="hidden sm:block font-mono font-semibold text-white pr-3">
+            {row.symbol}
+            <%= if badge do %>
+              <% {label, classes} = badge %>
+              <span class={"ml-1 text-[10px] px-1 py-0.5 rounded border #{classes}"}>{label}</span>
+            <% end %>
+          </span>
+          <span class={"hidden sm:block text-right font-mono pr-3 #{pnl_class(row.total_pnl)}"}>{format_pnl(row.total_pnl)}</span>
+          <span class="hidden sm:block text-right text-gray-300 font-mono pr-3">{row.trade_count}</span>
+          <span class={"hidden sm:block text-right font-mono pr-3 #{win_rate_class(row.win_rate)}"}>{format_win_rate(row.win_rate)}</span>
+          <span class={"hidden sm:block text-right font-mono pr-3 #{pf_class(row.profit_factor)}"}>{format_pf(row.profit_factor)}</span>
+          <span class="hidden sm:block text-right font-mono text-green-400 pr-3">{format_pnl(row.avg_win)}</span>
+          <span class="hidden sm:block text-right font-mono text-red-400 pr-3">{format_pnl(row.avg_loss)}</span>
+          <span class="hidden sm:block text-right text-gray-500 pr-3">{format_last_trade(row.last_trade)}</span>
+          <span class="hidden sm:block text-right text-gray-600">{row.asset_class || "—"}</span>
+        </div>
+      <% end %>
+    <% end %>
+
   </div>
 
   <%# Exit Attribution %>
@@ -142,31 +144,43 @@
     <%= if @attribution == [] do %>
       <p class="text-xs text-gray-600 italic">No attribution data</p>
     <% else %>
-      <div class="overflow-x-auto">
-        <table class="w-full text-xs">
-          <thead>
-            <tr class="text-gray-500 border-b border-gray-700">
-              <th class="text-left pb-2 pr-3">Exit type</th>
-              <th class="text-right pb-2 pr-3">Trades</th>
-              <th class="text-right pb-2 pr-3">Avg P&amp;L</th>
-              <th class="text-right pb-2">Total P&amp;L</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-gray-700/30">
-            <%= for row <- @attribution do %>
-              <tr class="hover:bg-gray-700/20 transition-colors">
-                <td class="py-1.5 pr-3 text-gray-300">{exit_type_label(row.exit_reason)}</td>
-                <td class="py-1.5 pr-3 text-right font-mono text-gray-300">{row.count}</td>
-                <td class={"py-1.5 pr-3 text-right font-mono #{float_pnl_class(row.avg_pnl)}"}>
-                  {format_float_pnl(row.avg_pnl)}
-                </td>
-                <td class={"py-1.5 text-right font-mono #{float_pnl_class(row.total_pnl)}"}>
-                  {format_float_pnl(row.total_pnl)}
-                </td>
-              </tr>
-            <% end %>
-          </tbody>
-        </table>
+      <div class="rounded-lg border border-gray-700 overflow-hidden">
+
+        <%!-- Desktop header row --%>
+        <div class="hidden sm:grid sm:grid-cols-[1fr_4rem_5rem_5rem] px-3 py-2 border-b border-gray-700 bg-gray-800/50 text-xs text-gray-500 uppercase tracking-wider">
+          <span class="pr-4">Exit Type</span>
+          <span class="pr-4 text-right">Trades</span>
+          <span class="pr-4 text-right">Avg P&amp;L</span>
+          <span class="text-right">Total P&amp;L</span>
+        </div>
+
+        <%= for row <- @attribution do %>
+          <div class="bg-gray-800/20 border border-gray-700/50 rounded-lg p-3 mb-1.5 last:mb-0
+                      sm:bg-transparent sm:border-0 sm:border-b sm:border-gray-700/50 sm:rounded-none
+                      sm:p-0 sm:px-3 sm:py-1.5 sm:mb-0 sm:last:border-0
+                      sm:grid sm:grid-cols-[1fr_4rem_5rem_5rem]
+                      sm:hover:bg-gray-800/30 sm:transition-colors">
+
+            <%!-- Mobile headline --%>
+            <div class="flex justify-between items-baseline mb-1.5 sm:hidden">
+              <span class="font-medium text-gray-200">{exit_type_label(row.exit_reason)}</span>
+              <span class={float_pnl_class(row.total_pnl)}>{format_float_pnl(row.total_pnl)}</span>
+            </div>
+
+            <%!-- Mobile label/value grid --%>
+            <div class="grid grid-cols-2 gap-x-3 gap-y-1 text-xs sm:hidden">
+              <span class="text-gray-500">Trades: <span class="text-gray-200 font-mono">{row.count}</span></span>
+              <span class="text-gray-500">Avg P&amp;L: <span class={float_pnl_class(row.avg_pnl)}>{format_float_pnl(row.avg_pnl)}</span></span>
+            </div>
+
+            <%!-- Desktop cells --%>
+            <span class="hidden sm:block text-gray-300 pr-4">{exit_type_label(row.exit_reason)}</span>
+            <span class="hidden sm:block text-right font-mono text-gray-300 pr-4">{row.count}</span>
+            <span class={"hidden sm:block text-right font-mono pr-4 #{float_pnl_class(row.avg_pnl)}"}>{format_float_pnl(row.avg_pnl)}</span>
+            <span class={"hidden sm:block text-right font-mono #{float_pnl_class(row.total_pnl)}"}>{format_float_pnl(row.total_pnl)}</span>
+          </div>
+        <% end %>
+
       </div>
     <% end %>
   </div>
