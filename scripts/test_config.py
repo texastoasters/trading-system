@@ -7,6 +7,7 @@ Run from repo root:
 import json
 import sys
 import os
+from datetime import date, timedelta
 from unittest.mock import MagicMock, patch, mock_open
 
 import pytest
@@ -394,3 +395,14 @@ class TestGetDrawdownAttribution:
         result = self.fn(r, conn)
         totals = [row["total_pnl"] for row in result]
         assert totals == sorted(totals)
+
+    def test_caps_peak_date_older_than_max_lookback(self):
+        """peak_date > 90 days ago is clamped to exactly 90 days ago."""
+        from config import get_drawdown_attribution, ATTRIBUTION_MAX_LOOKBACK_DAYS
+        old_date = (date.today() - timedelta(days=200)).isoformat()
+        r = self._r(peak_date=old_date)
+        conn, cur = _make_conn([])
+        get_drawdown_attribution(r, conn)
+        called_date = cur.execute.call_args[0][1][0]
+        max_allowed = date.today() - timedelta(days=ATTRIBUTION_MAX_LOOKBACK_DAYS)
+        assert called_date >= max_allowed
