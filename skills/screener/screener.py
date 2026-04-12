@@ -114,6 +114,12 @@ def scan_instrument(symbol, data, regime_info):
     if any(np.isnan(x) for x in [latest_rsi2, latest_sma200, latest_atr14]):
         return None
 
+    # Volume gate: skip thin-volume days (today < MIN_VOLUME_RATIO * 20-day avg)
+    latest_volume = data['volume'][-1]
+    avg_volume_20d = float(np.mean(data['volume'][-20:]))
+    if avg_volume_20d > 0 and latest_volume < config.MIN_VOLUME_RATIO * avg_volume_20d:
+        return None  # thin-volume day — skip entry
+
     # Determine entry threshold based on regime
     if regime_info["regime"] == "UPTREND":
         threshold = config.RSI2_ENTRY_AGGRESSIVE
@@ -146,6 +152,7 @@ def scan_instrument(symbol, data, regime_info):
         "above_sma": above_sma,
         "priority": priority,
         "entry_threshold": threshold,
+        "volume_ratio": round(latest_volume / avg_volume_20d, 2) if avg_volume_20d > 0 else None,
     }
 
 

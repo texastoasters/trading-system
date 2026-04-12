@@ -156,11 +156,63 @@ class TestScanInstrument:
         result = self._scan(rsi2_val=3.0, close_val=110.0, sma200_val=100.0)
         assert result is not None
         for field in ('symbol', 'rsi2', 'sma200', 'atr14', 'close', 'prev_high',
-                      'above_sma', 'priority', 'entry_threshold'):
+                      'above_sma', 'priority', 'entry_threshold', 'volume_ratio'):
             assert field in result
         assert result['symbol'] == 'SPY'
         assert result['above_sma'] is True
         assert result['tier'] is None  # filled by caller
+
+    def test_thin_volume_returns_none(self):
+        # today = 400_000, avg_20d = 1_000_000 → ratio 0.4 < 0.5 → blocked
+        data = make_price_data(close_val=110.0, volume_val=1_000_000.0)
+        data['volume'][-1] = 400_000.0  # today thin
+        with patch('screener.rsi', return_value=np.array([3.0])), \
+             patch('screener.sma', return_value=np.array([100.0])), \
+             patch('screener.atr', return_value=np.array([2.0])):
+            from screener import scan_instrument
+            result = scan_instrument("SPY", data, ranging_regime())
+        assert result is None
+
+    def test_normal_volume_passes(self):
+        # today = 1_000_000, avg_20d = 1_000_000 → ratio 1.0 ≥ 0.5 → passes
+        data = make_price_data(close_val=110.0, volume_val=1_000_000.0)
+        with patch('screener.rsi', return_value=np.array([3.0])), \
+             patch('screener.sma', return_value=np.array([100.0])), \
+             patch('screener.atr', return_value=np.array([2.0])):
+            from screener import scan_instrument
+            result = scan_instrument("SPY", data, ranging_regime())
+        assert result is not None
+
+    def test_zero_avg_volume_does_not_filter(self):
+        # all volume zeros → avg_volume_20d == 0 → guard skips filter
+        data = make_price_data(close_val=110.0, volume_val=0.0)
+        with patch('screener.rsi', return_value=np.array([3.0])), \
+             patch('screener.sma', return_value=np.array([100.0])), \
+             patch('screener.atr', return_value=np.array([2.0])):
+            from screener import scan_instrument
+            result = scan_instrument("SPY", data, ranging_regime())
+        assert result is not None
+
+    def test_result_includes_volume_ratio(self):
+        data = make_price_data(close_val=110.0, volume_val=1_000_000.0)
+        with patch('screener.rsi', return_value=np.array([3.0])), \
+             patch('screener.sma', return_value=np.array([100.0])), \
+             patch('screener.atr', return_value=np.array([2.0])):
+            from screener import scan_instrument
+            result = scan_instrument("SPY", data, ranging_regime())
+        assert result is not None
+        assert 'volume_ratio' in result
+        assert result['volume_ratio'] == 1.0  # today == avg
+
+    def test_volume_ratio_none_when_avg_volume_zero(self):
+        data = make_price_data(close_val=110.0, volume_val=0.0)
+        with patch('screener.rsi', return_value=np.array([3.0])), \
+             patch('screener.sma', return_value=np.array([100.0])), \
+             patch('screener.atr', return_value=np.array([2.0])):
+            from screener import scan_instrument
+            result = scan_instrument("SPY", data, ranging_regime())
+        assert result is not None
+        assert result['volume_ratio'] is None
 
 
 # ── fetch_daily_bars ──────────────────────────────────────────
