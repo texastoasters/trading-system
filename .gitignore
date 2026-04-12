@@ -33,6 +33,7 @@ dashboard/_build/
 mix.lock
 dashboard/mix.lock
 dashboard/erl_crash.dump
+dashboard/priv/static/assets/
 
 # test coverage
 .coverage

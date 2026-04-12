@@ -1,13 +1,13 @@
 # Handoff
 
 ## State
-Branch `feat/volume-filter` pushed. PR not yet created — run `cpr` or open manually from push URL. All housekeeping committed (68713ab): CHANGELOG merged, v0.17.0 inserted, docs/CHANGELOG.md deleted, VERSION=0.19.0, wishlist item 6 done.
+PR #92 open for `feat/equity-curve-chart` (v0.20.0) — equity curve chart on dashboard + performance page (wishlist item #7). 275 tests pass. Added `dashboard/priv/static/assets/` to `.gitignore` (was missing). Both need to be committed and pushed before merging.
 
 ## Next
-- Create PR for `feat/volume-filter` (cpr or gh pr create)
-- After merge: tag v0.19.0
-- Next wishlist items: 7 (equity curve chart), 8 (strategy attribution by exit type), 9 (position age alert)
+- Commit `.gitignore` + `.remember/remember.md` and push to `feat/equity-curve-chart`, then merge PR #92
+- After merge: tag v0.20.0
+- Start brainstorming feature #8 (strategy attribution by exit type)
 
 ## Context
-- `docs/CHANGELOG.md` deleted — root `CHANGELOG.md` is sole changelog going forward
-- v0.17.0 was missing from CHANGELOG; now inserted between v0.18.0 and v0.16.0
+- `daily_summary` hypertable does NOT exist in test DB — positive-path tests for `equity_curve/1` are commented out with explanation
+- Chart.js vendored at `dashboard/assets/vendor/chart.js` (4.4.7 UMD, 205KB) — no npm
