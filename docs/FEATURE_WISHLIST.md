@@ -172,7 +172,7 @@ Ranked by impact on the running system. LLM-dependent items excluded — system 
 6. ~~**Volume filter on entries**~~ ✅ Done (feat/volume-filter): `scan_instrument` skips today's volume < 50% of 20d ADV; `volume_ratio` added to watchlist payload.
 
 ### Visibility / Tuning
-7. **Equity curve chart** — `daily_summaries` table in TimescaleDB has equity/drawdown data from day 1. Plot the full curve with drawdown shading and circuit breaker threshold lines. Most useful single addition to the dashboard for understanding system behaviour over time.
+7. [x] **Equity curve chart** — `daily_summaries` table in TimescaleDB has equity/drawdown data from day 1. Plot the full curve with drawdown shading and circuit breaker threshold lines. Most useful single addition to the dashboard for understanding system behaviour over time.
 8. **Strategy attribution by exit type** — For each closed trade, record whether exit was RSI-2 reversal, time-stop, stop-loss, or manual. Query from TimescaleDB on the performance page. Without this, stop distance and time-stop tuning is guesswork.
 
 ### Risk

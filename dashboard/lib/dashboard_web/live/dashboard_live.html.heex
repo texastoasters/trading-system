@@ -123,6 +123,14 @@
     </a>
   </div>
 
+  <.equity_chart
+    points={@equity_points}
+    range={@equity_range}
+    chart_id="equity-chart-dashboard"
+    show_range_toggle={true}
+    range_event="set_equity_range"
+  />
+
   <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
     <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Agents</h2>
     <div class="grid grid-cols-5 gap-3">

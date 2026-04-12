@@ -55,11 +55,13 @@ defmodule DashboardWeb.DashboardLive do
       |> assign(:recent_trades, [])
       |> assign(:daily_summaries, [])
       |> assign(:drawdown_attribution, [])
+      |> assign(:equity_range, "30d")
+      |> assign(:equity_points, [])
 
     # Load DB data if connected (will be async after LV socket upgrade)
     socket =
       if connected?(socket) do
-        load_db_data(socket)
+        socket |> load_db_data() |> load_equity_data()
       else
         socket
       end
@@ -141,6 +143,19 @@ defmodule DashboardWeb.DashboardLive do
     end
   end
 
+  @impl true
+  def handle_event("set_equity_range", %{"range" => range}, socket)
+      when range in ["30d", "90d", "all"] do
+    days_back = range_to_days(range)
+
+    {:noreply,
+     socket
+     |> assign(:equity_range, range)
+     |> assign(:equity_points, Queries.equity_curve(days_back))}
+  end
+
+  def handle_event("set_equity_range", _params, socket), do: {:noreply, socket}
+
   def handle_info({:new_signal, signal}, socket) do
     signals = [signal | socket.assigns.live_signals] |> Enum.take(@max_signals)
     {:noreply, assign(socket, :live_signals, signals)}
@@ -152,7 +167,12 @@ defmodule DashboardWeb.DashboardLive do
 
   def handle_info(:refresh_db, socket) do
     Process.send_after(self(), :refresh_db, @db_refresh_ms)
-    {:noreply, load_db_data(socket)}
+    {:noreply, socket |> load_db_data() |> load_equity_data()}
+  end
+
+  # Test injection handler
+  def handle_info({:set_equity_points, points}, socket) do
+    {:noreply, assign(socket, :equity_points, points)}
   end
 
   defp load_db_data(socket) do
@@ -160,6 +180,17 @@ defmodule DashboardWeb.DashboardLive do
     |> assign(:recent_trades, Queries.recent_trades(15))
     |> assign(:daily_summaries, Queries.daily_summaries(7))
   end
+
+  defp load_equity_data(socket) do
+    days_back = range_to_days(socket.assigns.equity_range)
+    assign(socket, :equity_points, Queries.equity_curve(days_back))
+  end
+
+  defp range_to_days("30d"), do: 30
+  defp range_to_days("90d"), do: 90
+  defp range_to_days("all"), do: :all
+  # coveralls-ignore-next-line
+  defp range_to_days(_), do: 30
 
   # ── Helpers ──────────────────────────────────────────────────────────────────
 

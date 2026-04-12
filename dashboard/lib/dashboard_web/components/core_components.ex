@@ -80,4 +80,61 @@ defmodule DashboardWeb.CoreComponents do
     prefix = if Decimal.compare(d, Decimal.new("0")) == :gt, do: "+", else: ""
     "#{prefix}#{Decimal.round(d, 2)}"
   end
+
+  @doc """
+  Equity curve canvas panel. Renders a Chart.js canvas with JSON-encoded points,
+  or a no-data fallback if fewer than 2 data points.
+
+  Attrs:
+    - points: list of maps with :date, :ending_equity, :peak_equity, :drawdown_pct
+    - range: current range string — "30d" | "90d" | "all"
+    - chart_id: unique DOM id for the canvas element
+    - show_range_toggle: boolean — whether to render the 30D/90D/All toggle
+    - range_event: phx-click event name for the toggle buttons (only used when show_range_toggle: true)
+  """
+  attr :points, :list, required: true
+  attr :range, :string, required: true
+  attr :chart_id, :string, required: true
+  attr :show_range_toggle, :boolean, default: false
+  attr :range_event, :string, default: "set_equity_range"
+
+  def equity_chart(assigns) do
+    ~H"""
+    <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Equity Curve</h2>
+        <%= if @show_range_toggle do %>
+          <div class="flex rounded border border-gray-700 overflow-hidden text-xs">
+            <%= for r <- ["30d", "90d", "all"] do %>
+              <button
+                phx-click={@range_event}
+                phx-value-range={r}
+                class={[
+                  "px-3 py-1.5 transition-colors border-r border-gray-700 last:border-r-0",
+                  if(@range == r,
+                    do: "bg-blue-900/60 text-blue-300",
+                    else: "bg-transparent text-gray-500 hover:text-gray-300"
+                  )
+                ]}
+              >
+                {String.upcase(r)}
+              </button>
+            <% end %>
+          </div>
+        <% end %>
+      </div>
+      <%= if length(@points) > 1 do %>
+        <canvas
+          id={@chart_id}
+          phx-hook="EquityChart"
+          data-points={Jason.encode!(@points)}
+          class="w-full"
+          style="height: 200px;"
+        ></canvas>
+      <% else %>
+        <p class="text-gray-600 text-sm text-center py-8">No equity data yet.</p>
+      <% end %>
+    </div>
+    """
+  end
 end

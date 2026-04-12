@@ -40,6 +40,35 @@ defmodule Dashboard.Queries do
     end
   end
 
+  @doc "Equity curve data ordered ascending by date. range: integer days back | :all."
+  def equity_curve(range \\ 30) do
+    try do
+      base =
+        from s in DailySummary,
+          order_by: [asc: s.date],
+          select: %{
+            date: s.date,
+            ending_equity: s.ending_equity,
+            peak_equity: s.peak_equity,
+            drawdown_pct: s.drawdown_pct
+          }
+
+      query =
+        case range do
+          :all ->
+            base
+
+          n ->
+            cutoff = Date.add(Date.utc_today(), -n)
+            where(base, [s], s.date >= ^cutoff)
+        end
+
+      Repo.all(query)
+    rescue
+      _ -> []
+    end
+  end
+
   @doc "Currently open positions from the database."
   def open_positions do
     try do

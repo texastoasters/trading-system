@@ -1217,6 +1217,68 @@ defmodule DashboardWeb.DashboardLiveTest do
     end
   end
 
+  describe "equity chart" do
+    test "equity chart panel renders on mount", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/")
+      assert html =~ "Equity Curve"
+    end
+
+    test "initial equity_range assign is 30d", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.equity_range == "30d"
+    end
+
+    test "equity chart panel renders canvas or fallback on mount", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/")
+      # Either the canvas (has data) or the fallback text (no data) must be present
+      assert html =~ "equity-chart-dashboard" or html =~ "No equity data yet."
+    end
+
+    test "set_equity_range event updates equity_range assign", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+      render_click(view, "set_equity_range", %{"range" => "90d"})
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.equity_range == "90d"
+    end
+
+    test "set_equity_range to all updates equity_range assign", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+      render_click(view, "set_equity_range", %{"range" => "all"})
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.equity_range == "all"
+    end
+
+    test "set_equity_range ignores unknown range", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+      render_click(view, "set_equity_range", %{"range" => "7d"})
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.equity_range == "30d"
+    end
+
+    test "no-data fallback renders when equity_points empty", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+      # Force equity_points to [] to exercise the fallback unconditionally
+      send(view.pid, {:set_equity_points, []})
+      html = render(view)
+      assert html =~ "No equity data yet."
+    end
+
+    test "canvas renders when equity_points has 2+ points", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      points = [
+        %{date: ~D[2026-01-01], ending_equity: 4900.0, peak_equity: 5000.0, drawdown_pct: -2.0},
+        %{date: ~D[2026-01-02], ending_equity: 4950.0, peak_equity: 5000.0, drawdown_pct: -1.0}
+      ]
+
+      send(view.pid, {:set_equity_points, points})
+      html = render(view)
+      assert html =~ "equity-chart-dashboard"
+      assert html =~ "EquityChart"
+    end
+  end
+
   describe "format helpers with non-float inputs" do
     test "entry signal with integer rsi2 renders without crash", %{conn: conn} do
       {:ok, view, _} = live(conn, "/")
