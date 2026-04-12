@@ -33,7 +33,7 @@ These are known issues documented in HANDOFF.md that can cause real harm.
 - [x] **Morning briefing Telegram message** — At 9:20 AM ET (Mon-Fri), sends: regime+ADX, watchlist top 5, open positions, drawdown, system status. Cron at `20 9 * * 1-5`. PR #61.
 - [ ] **Drawdown progress bar in alerts** — When drawdown alerts fire, show a visual progress bar toward each threshold (10%/15%/20%) so severity is instantly clear.
 - [ ] **LLM cost tracking + daily alert** — `supervisor.py` has `llm_cost: 0.0 # TODO: track LLM costs` since day 1. Screener (news materiality), PM (high-stakes decisions), and supervisor (EOD review) all call Claude but never accumulate spend. Add a `trading:llm_cost_today` Redis key, increment it in each LLM caller, reset daily by supervisor. Then wire the existing alert threshold. Unblocks the alert and gives visibility into actual API spend.
-- [ ] **Alert on manual stop-loss cancellation** — If a stop-loss order status becomes "cancelled" unexpectedly (not by executor), fire a critical alert immediately.
+- [x] **Alert on manual stop-loss cancellation** — `_check_cancelled_stops` runs every executor daemon cycle. Cancelled stop + position exists → resubmits and fires `critical_alert`. Cancelled + position gone → cleans Redis and fires `critical_alert`. Resubmit failure → naked position `critical_alert`. All paths tested.
 
 ### Dashboard UX
 - [x] **Dashboard: trade history table** — Paginated table of all past trades with symbol, side, entry/exit price, P&L, exit reason, hold duration. Currently stored in TimescaleDB but not shown.
@@ -161,7 +161,7 @@ Ranked by impact on the running system. LLM-dependent items excluded — system 
 
 ### Safety / Correctness
 1. **Scheduled reconcile** — `reconcile.py` (PR #59) exists, is tested, just needs wiring into supervisor's 9:15 AM ET cron. Overnight Alpaca state drift (stop-loss orphaned, phantom Redis position) is a real silent failure mode. Near-zero implementation effort.
-2. **Alert on manual stop-loss cancellation** — Executor handles its own cancellations but if Alpaca cancels a stop externally (API issue, duplicate order detection, manual cancel in Alpaca UI), we're blind. Naked position risk. Subscribe to order events or poll stop status on each health check.
+2. ~~**Alert on manual stop-loss cancellation**~~ ✅ Already implemented — `_check_cancelled_stops` polls stop status every daemon cycle and handles all cancellation paths with `critical_alert`.
 3. **Drawdown attribution lookback cap** — `peak_equity_date` is unbounded. A 4-month drawdown generates an enormous attribution table and a slow DB query. Cap both `Queries.drawdown_attribution/2` and `get_drawdown_attribution()` at 90 days regardless of actual peak date.
 4. **Dashboard: trailing stop indicator on position cards** — With PR #86 live, position cards show `stop_price` but no indication of whether the stop is fixed or trailing. Critical context when deciding whether to manually liquidate.
 
