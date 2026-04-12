@@ -411,6 +411,20 @@ defmodule DashboardWeb.PerformanceLiveTest do
       {:ok, _view, html} = live(conn, "/performance")
       assert html =~ "equity-chart-performance" or html =~ "No equity data yet."
     end
+
+    test "canvas renders when equity_points has 2+ points", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/performance")
+
+      points = [
+        %{date: ~D[2026-01-01], ending_equity: 4900.0, peak_equity: 5000.0, drawdown_pct: -2.0},
+        %{date: ~D[2026-01-02], ending_equity: 4950.0, peak_equity: 5000.0, drawdown_pct: -1.0}
+      ]
+
+      send(view.pid, {:set_equity_points, points})
+      html = render(view)
+      assert html =~ "equity-chart-performance"
+      assert html =~ "EquityChart"
+    end
   end
 
   describe "summary assign" do

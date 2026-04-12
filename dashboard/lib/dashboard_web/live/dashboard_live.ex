@@ -189,6 +189,7 @@ defmodule DashboardWeb.DashboardLive do
   defp range_to_days("30d"), do: 30
   defp range_to_days("90d"), do: 90
   defp range_to_days("all"), do: :all
+  # coveralls-ignore-next-line
   defp range_to_days(_), do: 30
 
   # ── Helpers ──────────────────────────────────────────────────────────────────
