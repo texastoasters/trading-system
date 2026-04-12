@@ -226,6 +226,21 @@ class TestScanInstrument:
         assert result is not None
         assert result['volume_ratio'] is None
 
+    def test_volume_gate_uses_prior_20d_not_rolling(self):
+        # prior 20 bars = 1_000_000 each; today = 800_000
+        # prior-20d avg (correct [-21:-1]) = 1_000_000 → volume_ratio = 0.80
+        # rolling avg (wrong [-20:]) = (19*1M + 800k)/20 = 990_000 → volume_ratio = 0.81
+        # Assert 0.80 to verify prior-20d-only baseline
+        data = make_price_data(close_val=110.0, volume_val=1_000_000.0)
+        data['volume'][-1] = 800_000.0  # today below average but above threshold
+        with patch('screener.rsi', return_value=np.array([3.0])), \
+             patch('screener.sma', return_value=np.array([100.0])), \
+             patch('screener.atr', return_value=np.array([2.0])):
+            from screener import scan_instrument
+            result = scan_instrument("SPY", data, ranging_regime())
+        assert result is not None
+        assert result['volume_ratio'] == 0.8  # 800k / 1M (prior-20d avg, excludes today)
+
 
 # ── fetch_daily_bars ──────────────────────────────────────────
 
