@@ -8,66 +8,67 @@
     <span class="text-sm text-gray-500">{@total_count} total trades</span>
   </div>
 
-  <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
-    <div class="overflow-x-auto">
-      <table class="w-full text-xs">
-        <thead>
-          <tr class="text-gray-500 border-b border-gray-700">
-            <th class="text-left pb-2 pr-3">Time</th>
-            <th class="text-left pb-2 pr-3">Symbol</th>
-            <th class="text-left pb-2 pr-3">Side</th>
-            <th class="text-right pb-2 pr-3">Qty</th>
-            <th class="text-right pb-2 pr-3">Price</th>
-            <th class="text-right pb-2 pr-3">Value</th>
-            <th class="text-right pb-2 pr-3">P&L</th>
-            <th class="text-left pb-2 pr-3">Strategy</th>
-            <th class="text-left pb-2">Notes</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-gray-700/30">
-          <%= if @trades == [] do %>
-            <tr>
-              <td colspan="9" class="py-8 text-center text-gray-600 italic">No trades recorded yet</td>
-            </tr>
-          <% else %>
-            <%= for trade <- @trades do %>
-              <tr class="hover:bg-gray-700/20 transition-colors">
-                <td class="py-1.5 pr-3 text-gray-500 whitespace-nowrap">
-                  {Calendar.strftime(trade.time, "%b %d %-I:%M%p")}
-                </td>
-                <td class="py-1.5 pr-3 font-mono font-semibold text-white">
-                  {trade.symbol}
-                </td>
-                <td class={[
-                  "py-1.5 pr-3 font-medium uppercase",
-                  if(trade.side == "buy", do: "text-blue-400", else: "text-orange-400")
-                ]}>
-                  {trade.side}
-                </td>
-                <td class="py-1.5 pr-3 text-right text-gray-300 font-mono">
-                  {Decimal.round(trade.quantity, 4)}
-                </td>
-                <td class="py-1.5 pr-3 text-right text-gray-300 font-mono">
-                  ${Decimal.round(trade.price, 2)}
-                </td>
-                <td class="py-1.5 pr-3 text-right text-gray-300 font-mono">
-                  ${Decimal.round(trade.total_value, 2)}
-                </td>
-                <td class={["py-1.5 pr-3 text-right font-mono", pnl_class(trade.realized_pnl)]}>
-                  {format_signed(trade.realized_pnl)}
-                </td>
-                <td class="py-1.5 pr-3 text-gray-500 truncate max-w-24">
-                  {trade.strategy || "—"}
-                </td>
-                <td class="py-1.5 text-gray-500 truncate max-w-40">
-                  {trade.notes || "—"}
-                </td>
-              </tr>
-            <% end %>
-          <% end %>
-        </tbody>
-      </table>
+  <div class="rounded-lg border border-gray-700 overflow-hidden">
+
+    <%!-- Desktop header row --%>
+    <div class="hidden sm:grid sm:grid-cols-[7rem_4rem_3rem_3rem_4.5rem_4.5rem_4rem_4rem_1fr] px-3 py-2 border-b border-gray-700 bg-gray-800/50 text-xs text-gray-500 uppercase tracking-wider">
+      <span class="pr-4">Time</span>
+      <span class="pr-4">Symbol</span>
+      <span class="pr-4">Side</span>
+      <span class="pr-4">Qty</span>
+      <span class="pr-4">Price</span>
+      <span class="pr-4">Value</span>
+      <span class="pr-4">P&amp;L</span>
+      <span class="pr-4">Strategy</span>
+      <span>Notes</span>
     </div>
+
+    <%= if @trades == [] do %>
+      <div class="bg-gray-800 py-8 text-center text-gray-600 italic text-xs">No trades recorded yet</div>
+    <% else %>
+      <%= for trade <- @trades do %>
+        <div class="bg-gray-800/20 border border-gray-700/50 rounded-lg p-3 mb-1.5 last:mb-0
+                    sm:bg-transparent sm:border-0 sm:border-b sm:border-gray-700/50 sm:rounded-none
+                    sm:p-0 sm:px-3 sm:py-2 sm:mb-0 sm:last:border-0
+                    sm:grid sm:grid-cols-[7rem_4rem_3rem_3rem_4.5rem_4.5rem_4rem_4rem_1fr]
+                    sm:hover:bg-gray-800/30 sm:transition-colors">
+
+          <%!-- Mobile headline --%>
+          <div class="flex justify-between items-baseline mb-1.5 sm:hidden">
+            <span class="font-mono font-bold text-white">{trade.symbol}</span>
+            <span class={[
+              "text-sm font-medium uppercase",
+              if(trade.side == "buy", do: "text-blue-400", else: "text-orange-400")
+            ]}>
+              {trade.side}
+            </span>
+          </div>
+
+          <%!-- Mobile label/value grid --%>
+          <div class="grid grid-cols-2 gap-x-3 gap-y-1 text-xs sm:hidden">
+            <span class="text-gray-500">Time: <span class="text-gray-200">{Calendar.strftime(trade.time, "%b %d %-I:%M%p")}</span></span>
+            <span class="text-gray-500">Price: <span class="text-gray-200 font-mono">${Decimal.round(trade.price, 2)}</span></span>
+            <span class="text-gray-500">Value: <span class="text-gray-200 font-mono">${Decimal.round(trade.total_value, 2)}</span></span>
+            <span class="text-gray-500">P&amp;L: <span class={pnl_class(trade.realized_pnl)}>{format_signed(trade.realized_pnl)}</span></span>
+            <span class="text-gray-500">Qty: <span class="text-gray-200 font-mono">{Decimal.round(trade.quantity, 4)}</span></span>
+            <span class="text-gray-500">Strategy: <span class="text-gray-200">{trade.strategy || "—"}</span></span>
+            <span class="col-span-2 text-gray-500">Notes: <span class="text-gray-200">{trade.notes || "—"}</span></span>
+          </div>
+
+          <%!-- Desktop cells --%>
+          <span class="hidden sm:block text-gray-500 whitespace-nowrap pr-4">{Calendar.strftime(trade.time, "%b %d %-I:%M%p")}</span>
+          <span class="hidden sm:block font-mono font-semibold text-white pr-4">{trade.symbol}</span>
+          <span class={["hidden sm:block font-medium uppercase pr-4", if(trade.side == "buy", do: "text-blue-400", else: "text-orange-400")]}>{trade.side}</span>
+          <span class="hidden sm:block text-right text-gray-300 font-mono pr-4">{Decimal.round(trade.quantity, 4)}</span>
+          <span class="hidden sm:block text-right text-gray-300 font-mono pr-4">${Decimal.round(trade.price, 2)}</span>
+          <span class="hidden sm:block text-right text-gray-300 font-mono pr-4">${Decimal.round(trade.total_value, 2)}</span>
+          <span class={["hidden sm:block text-right font-mono pr-4", pnl_class(trade.realized_pnl)]}>{format_signed(trade.realized_pnl)}</span>
+          <span class="hidden sm:block text-gray-500 truncate pr-4">{trade.strategy || "—"}</span>
+          <span class="hidden sm:block text-gray-500 truncate">{trade.notes || "—"}</span>
+        </div>
+      <% end %>
+    <% end %>
+
   </div>
 
   <div class="flex items-center justify-between text-sm">
@@ -75,7 +76,7 @@
       phx-click="prev_page"
       disabled={@page == 1}
       class={[
-        "px-3 py-1.5 rounded border text-xs font-medium transition-colors",
+        "min-h-[44px] px-3 py-1.5 rounded border text-xs font-medium transition-colors",
         if(@page == 1,
           do: "border-gray-700 text-gray-600 cursor-not-allowed",
           else: "border-gray-600 text-gray-300 hover:bg-gray-700 hover:border-gray-500"
@@ -93,7 +94,7 @@
       phx-click="next_page"
       disabled={@page >= @last_page}
       class={[
-        "px-3 py-1.5 rounded border text-xs font-medium transition-colors",
+        "min-h-[44px] px-3 py-1.5 rounded border text-xs font-medium transition-colors",
         if(@page >= @last_page,
           do: "border-gray-700 text-gray-600 cursor-not-allowed",
           else: "border-gray-600 text-gray-300 hover:bg-gray-700 hover:border-gray-500"
