@@ -134,18 +134,6 @@ Phoenix 1.7 + LiveView. Reads from Redis + TimescaleDB. Runs on port 4000, acces
 
 **Executor is zero-LLM**: All safety validation in `executor.py` is deterministic code. Keep it that way.
 
-## Known Issues (from HANDOFF.md)
-
-1. **Bug 1** (`executor.py` `execute_sell`): Assumes sell orders fill immediately. If market is closed, order sits ACCEPTED; executor calculates fake P&L, removes position from Redis, cancels stop-loss — all before actual execution. Fix: check `filled_order.status == "filled"` before recording anything; don't cancel stop-loss until fill is confirmed.
-
-2. **Bug 2** (`executor.py` `execute_buy`/`execute_sell`): Accepts qty=0 orders from PM (can happen when regime reduction + small account + rounding produces 0 shares). Submits to Alpaca, which rejects, then logs a fake fill and saves a 0-quantity position to Redis. Fix: reject `quantity <= 0` at top of both functions.
-
-3. **Bug 3** (feedback loop): A qty=0 Redis position causes an infinite loop: watcher generates exit → PM approves → executor fails → watcher generates entry → repeat. Fix: PM should check for existing position before approving entry; executor should delete qty≤0 positions as cleanup.
-
-4. **Bug 4** (`executor.py`): Submits equity market orders after market close (4:15 PM ET screener cycle generates signals). Orders fill at next open at unknown price. Fix: check `tc.get_clock().is_open` before submitting equity orders.
-
-5. **Missing utility**: `scripts/reconcile.py` — compare Redis positions vs Alpaca positions, identify missing stop-losses, fix mismatches. Needed; will happen again.
-
 ## Instrument Universe
 
 Three performance tiers, revalidated monthly via backtesting:
