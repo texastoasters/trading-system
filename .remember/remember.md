@@ -1,25 +1,20 @@
-# Trading System — Session Memory
+# Handoff
+
+## State
+Branch `feat/volume-filter` — v0.19.0. Volume filter implemented, changelog merged, VERSION bumped, wishlist item 6 marked done. `docs/CHANGELOG.md` deleted (merged into root `CHANGELOG.md`). Tests: 30 PASS. PR pending.
 
 ## Version History
-- v0.18.0 (branch feat/one-click-pause, PR pending): One-click pause — dashboard pause/resume button, executor + supervisor support, blue badge
-- v0.17.0 (PR #88, merged 2026-04-12): Safety/correctness — scheduled reconcile, attribution lookback cap, trailing stop indicator, tier badge test fix
-- v0.16.0 (PR #87): Drawdown attribution — per-instrument P&L since peak in Telegram alerts + dashboard
-- v0.15.0 (PR #86): Trailing stop-loss — Alpaca native trailing stop after N% gain, per-tier
-- v0.14.0 (PR #85): Per-instrument P&L breakdown — /performance page
+- v0.19.0 (branch feat/volume-filter, PR pending): Volume filter — scan_instrument skips thin-volume days (today < 50% of 20d ADV); volume_ratio in result dict
+- v0.18.0 (PR #90): Dashboard one-click pause/resume; executor blocks buys when paused; status_badge blue for paused
+- v0.17.0 (PR #88): Scheduled reconcile, drawdown attribution lookback cap (90d), trailing stop indicator on position cards
+- v0.16.0 (PR #87): Drawdown attribution — per-instrument P&L since peak in Telegram + dashboard
+- v0.15.0 (PR #86): Trailing stop-loss — Alpaca native trailing stop after N% gain, per-tier config
 
-## Next Priority Wave (remaining after v0.18.0)
-See docs/FEATURE_WISHLIST.md. Open items 6–9 in the wave:
-6. Volume filter on entries
-7. Equity curve chart
-8. Strategy attribution by exit type
-9. Position age alert
+## Next Priority Wave — Remaining Items (7–9)
+- Item 7: Equity curve chart — query `daily_summaries` TimescaleDB, plot with drawdown shading + circuit breaker lines
+- Item 8: Strategy attribution by exit type — record RSI-2/time-stop/stop-loss/manual per trade; surface on /performance page
+- Item 9: Position age alert — Telegram nudge after 5 days held without time-stop trigger
 
-## Key Architecture Notes
-- `trading:peak_equity_date` Redis key: set by executor on new equity highs, supervisor on daily reset
-- Drawdown attribution: capped at 90 days. `ATTRIBUTION_MAX_LOOKBACK_DAYS = 90` in config.py.
-- `get_drawdown_attribution(r, conn)` in config.py: merges realized (TimescaleDB) + unrealized (Redis)
-- Dashboard attribution panel: conditional, hidden when empty, sorted worst-first
-- ExCoveralls ignore: use `# coveralls-ignore-start` / `# coveralls-ignore-stop` (NOT `-end`, NOT `-next-line`)
-- Supervisor cron jobs: --briefing (9:20 AM), --reset-daily (9:25 AM), --eod (4:15 PM), --weekly (4:35 PM Fri), --reconcile (9:15 AM)
-- Tier badge tests: assert/refute border-yellow-700 (T1), border-blue-700 (T2), border-gray-600 (T3) — NOT "T1"/"T2"/"T3" strings (appear in base64 session attr)
-- Pause: `trading:system_status = "paused"` blocks buys. Supervisor preserves it (guard: `not in ("active", "paused")`). Drawdown CBs ≥5% still overwrite. Status badge: blue.
+## Context
+- cpr from feat/volume-filter will create new PR (no open PR yet for this branch)
+- `docs/CHANGELOG.md` removed — root `CHANGELOG.md` is sole changelog
