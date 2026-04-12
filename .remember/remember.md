@@ -1,25 +1,13 @@
-# Trading System — Session Memory
+# Handoff
 
-## Version History
-- v0.18.0 (branch feat/one-click-pause, PR pending): One-click pause — dashboard pause/resume button, executor + supervisor support, blue badge
-- v0.17.0 (PR #88, merged 2026-04-12): Safety/correctness — scheduled reconcile, attribution lookback cap, trailing stop indicator, tier badge test fix
-- v0.16.0 (PR #87): Drawdown attribution — per-instrument P&L since peak in Telegram alerts + dashboard
-- v0.15.0 (PR #86): Trailing stop-loss — Alpaca native trailing stop after N% gain, per-tier
-- v0.14.0 (PR #85): Per-instrument P&L breakdown — /performance page
+## State
+Branch `feat/volume-filter` pushed. PR not yet created — run `cpr` or open manually from push URL. All housekeeping committed (68713ab): CHANGELOG merged, v0.17.0 inserted, docs/CHANGELOG.md deleted, VERSION=0.19.0, wishlist item 6 done.
 
-## Next Priority Wave (remaining after v0.18.0)
-See docs/FEATURE_WISHLIST.md. Open items 6–9 in the wave:
-6. Volume filter on entries
-7. Equity curve chart
-8. Strategy attribution by exit type
-9. Position age alert
+## Next
+- Create PR for `feat/volume-filter` (cpr or gh pr create)
+- After merge: tag v0.19.0
+- Next wishlist items: 7 (equity curve chart), 8 (strategy attribution by exit type), 9 (position age alert)
 
-## Key Architecture Notes
-- `trading:peak_equity_date` Redis key: set by executor on new equity highs, supervisor on daily reset
-- Drawdown attribution: capped at 90 days. `ATTRIBUTION_MAX_LOOKBACK_DAYS = 90` in config.py.
-- `get_drawdown_attribution(r, conn)` in config.py: merges realized (TimescaleDB) + unrealized (Redis)
-- Dashboard attribution panel: conditional, hidden when empty, sorted worst-first
-- ExCoveralls ignore: use `# coveralls-ignore-start` / `# coveralls-ignore-stop` (NOT `-end`, NOT `-next-line`)
-- Supervisor cron jobs: --briefing (9:20 AM), --reset-daily (9:25 AM), --eod (4:15 PM), --weekly (4:35 PM Fri), --reconcile (9:15 AM)
-- Tier badge tests: assert/refute border-yellow-700 (T1), border-blue-700 (T2), border-gray-600 (T3) — NOT "T1"/"T2"/"T3" strings (appear in base64 session attr)
-- Pause: `trading:system_status = "paused"` blocks buys. Supervisor preserves it (guard: `not in ("active", "paused")`). Drawdown CBs ≥5% still overwrite. Status badge: blue.
+## Context
+- `docs/CHANGELOG.md` deleted — root `CHANGELOG.md` is sole changelog going forward
+- v0.17.0 was missing from CHANGELOG; now inserted between v0.18.0 and v0.16.0

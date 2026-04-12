@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## v0.19.0 — 2026-04-11
+
+### Added
+- **Volume filter on entries**: `scan_instrument` skips instruments where today's volume < 50% of the prior 20-day average daily volume (ADV). Prevents entries on holiday half-sessions and anomalously thin-volume days. `volume_ratio` added to watchlist payload for observability. Works for all instruments including BTC/USD — no special-casing needed.
+
+---
+
 ## v0.18.0 — 2026-04-11
 
 ### Added
@@ -15,6 +22,17 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 - Executor blocks buy orders when `system_status = "paused"`.
 - Supervisor preserves `"paused"` through 15-min health-check cycles; drawdown circuit breakers (≥5%) still take priority and overwrite it.
 - `status_badge` renders blue for `"paused"` status, visually distinct from yellow `"caution"` (drawdown-triggered).
+
+---
+
+## v0.17.0 — 2026-04-11
+
+### Added
+- **Scheduled reconcile**: `supervisor.py --reconcile` runs `scripts/reconcile.py --fix` at 9:15 AM ET Mon–Fri via cron. Catches overnight Redis↔Alpaca state drift automatically. Fires `critical_alert` on non-zero exit.
+- **Dashboard trailing stop indicator**: position cards show a "Trail: X%" row (amber) when a position has been upgraded to an Alpaca trailing stop.
+
+### Fixed
+- **Drawdown attribution lookback cap**: `get_drawdown_attribution()` (Python) and `Queries.drawdown_attribution/2` (Elixir) cap `peak_equity_date` lookback at 90 days. Prevents unbounded DB scans during prolonged drawdowns.
 
 ---
 

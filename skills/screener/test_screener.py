@@ -30,7 +30,7 @@ from config import Keys
 
 # ── Helpers ──────────────────────────────────────────────────
 
-def make_price_data(n=250, close_val=100.0):
+def make_price_data(n=250, close_val=100.0, volume_val=1_000_000.0):
     """Minimal price data arrays."""
     close = np.ones(n) * close_val
     return {
@@ -38,6 +38,7 @@ def make_price_data(n=250, close_val=100.0):
         'close': close,
         'high': close * 1.01,
         'low': close * 0.99,
+        'volume': np.ones(n) * volume_val,
     }
 
 
@@ -49,12 +50,13 @@ def uptrend_regime():
     return {"regime": "UPTREND", "adx": 30.0, "plus_di": 25.0, "minus_di": 15.0}
 
 
-def make_bar(close=100.0, high=101.0, low=99.0):
+def make_bar(close=100.0, high=101.0, low=99.0, volume=1000.0):
     bar = MagicMock()
     bar.timestamp.strftime.return_value = "2024-01-01"
     bar.close = close
     bar.high = high
     bar.low = low
+    bar.volume = volume
     return bar
 
 
@@ -154,11 +156,90 @@ class TestScanInstrument:
         result = self._scan(rsi2_val=3.0, close_val=110.0, sma200_val=100.0)
         assert result is not None
         for field in ('symbol', 'rsi2', 'sma200', 'atr14', 'close', 'prev_high',
-                      'above_sma', 'priority', 'entry_threshold'):
+                      'above_sma', 'priority', 'entry_threshold', 'volume_ratio'):
             assert field in result
         assert result['symbol'] == 'SPY'
         assert result['above_sma'] is True
         assert result['tier'] is None  # filled by caller
+
+    def test_thin_volume_returns_none(self):
+        # today = 400_000, avg_20d = 1_000_000 → ratio 0.4 < 0.5 → blocked
+        data = make_price_data(close_val=110.0, volume_val=1_000_000.0)
+        data['volume'][-1] = 400_000.0  # today thin
+        with patch('screener.rsi', return_value=np.array([3.0])), \
+             patch('screener.sma', return_value=np.array([100.0])), \
+             patch('screener.atr', return_value=np.array([2.0])):
+            from screener import scan_instrument
+            result = scan_instrument("SPY", data, ranging_regime())
+        assert result is None
+
+    def test_normal_volume_passes(self):
+        # today = 1_000_000, avg_20d = 1_000_000 → ratio 1.0 ≥ 0.5 → passes
+        data = make_price_data(close_val=110.0, volume_val=1_000_000.0)
+        with patch('screener.rsi', return_value=np.array([3.0])), \
+             patch('screener.sma', return_value=np.array([100.0])), \
+             patch('screener.atr', return_value=np.array([2.0])):
+            from screener import scan_instrument
+            result = scan_instrument("SPY", data, ranging_regime())
+        assert result is not None
+
+    def test_zero_avg_volume_does_not_filter(self):
+        # all volume zeros → avg_volume_20d == 0 → guard skips filter
+        data = make_price_data(close_val=110.0, volume_val=0.0)
+        with patch('screener.rsi', return_value=np.array([3.0])), \
+             patch('screener.sma', return_value=np.array([100.0])), \
+             patch('screener.atr', return_value=np.array([2.0])):
+            from screener import scan_instrument
+            result = scan_instrument("SPY", data, ranging_regime())
+        assert result is not None
+
+    def test_result_includes_volume_ratio(self):
+        data = make_price_data(close_val=110.0, volume_val=1_000_000.0)
+        with patch('screener.rsi', return_value=np.array([3.0])), \
+             patch('screener.sma', return_value=np.array([100.0])), \
+             patch('screener.atr', return_value=np.array([2.0])):
+            from screener import scan_instrument
+            result = scan_instrument("SPY", data, ranging_regime())
+        assert result is not None
+        assert 'volume_ratio' in result
+        assert result['volume_ratio'] == 1.0  # today == avg
+
+    def test_boundary_volume_ratio_at_threshold_passes(self):
+        # today = 500_000, avg_20d = 1_000_000 → ratio exactly 0.5
+        # gate uses strict < so 0.5 should PASS (not block)
+        data = make_price_data(close_val=110.0, volume_val=1_000_000.0)
+        data['volume'][-1] = 500_000.0   # today = exactly 50% of avg
+        with patch('screener.rsi', return_value=np.array([3.0])), \
+             patch('screener.sma', return_value=np.array([100.0])), \
+             patch('screener.atr', return_value=np.array([2.0])):
+            from screener import scan_instrument
+            result = scan_instrument("SPY", data, ranging_regime())
+        assert result is not None  # 0.5 is NOT < 0.5; should pass
+
+    def test_volume_ratio_none_when_avg_volume_zero(self):
+        data = make_price_data(close_val=110.0, volume_val=0.0)
+        with patch('screener.rsi', return_value=np.array([3.0])), \
+             patch('screener.sma', return_value=np.array([100.0])), \
+             patch('screener.atr', return_value=np.array([2.0])):
+            from screener import scan_instrument
+            result = scan_instrument("SPY", data, ranging_regime())
+        assert result is not None
+        assert result['volume_ratio'] is None
+
+    def test_volume_gate_uses_prior_20d_not_rolling(self):
+        # prior 20 bars = 1_000_000 each; today = 800_000
+        # prior-20d avg (correct [-21:-1]) = 1_000_000 → volume_ratio = 0.80
+        # rolling avg (wrong [-20:]) = (19*1M + 800k)/20 = 990_000 → volume_ratio = 0.81
+        # Assert 0.80 to verify prior-20d-only baseline
+        data = make_price_data(close_val=110.0, volume_val=1_000_000.0)
+        data['volume'][-1] = 800_000.0  # today below average but above threshold
+        with patch('screener.rsi', return_value=np.array([3.0])), \
+             patch('screener.sma', return_value=np.array([100.0])), \
+             patch('screener.atr', return_value=np.array([2.0])):
+            from screener import scan_instrument
+            result = scan_instrument("SPY", data, ranging_regime())
+        assert result is not None
+        assert result['volume_ratio'] == 0.8  # 800k / 1M (prior-20d avg, excludes today)
 
 
 # ── fetch_daily_bars ──────────────────────────────────────────
@@ -181,7 +262,7 @@ class TestFetchDailyBars:
         from screener import fetch_daily_bars
         result = fetch_daily_bars("SPY", stock_client, MagicMock())
         assert result is not None
-        assert all(k in result for k in ('close', 'high', 'low', 'dates'))
+        assert all(k in result for k in ('close', 'high', 'low', 'dates', 'volume'))
         assert len(result['close']) == 210
 
     def test_returns_none_on_api_exception(self):
@@ -203,6 +284,18 @@ class TestFetchDailyBars:
         assert result is not None
         assert crypto_client.get_crypto_bars.called
         assert not stock_client.get_stock_bars.called
+
+    def test_returns_volume_array_for_equity(self):
+        bars = [make_bar(close=100.0 + i) for i in range(210)]
+        stock_client = MagicMock()
+        stock_client.get_stock_bars.return_value = {"SPY": bars}
+
+        from screener import fetch_daily_bars
+        result = fetch_daily_bars("SPY", stock_client, MagicMock())
+        assert result is not None
+        assert 'volume' in result
+        assert len(result['volume']) == 210
+        assert result['volume'][0] == 1000.0  # make_bar default volume
 
 
 # ── run_scan ──────────────────────────────────────────────────
