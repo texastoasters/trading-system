@@ -21,6 +21,7 @@ defmodule DashboardWeb.Router do
     live "/universe", UniverseLive, :index
     live "/trades", TradesLive, :index
     live "/performance", PerformanceLive, :index
+    live "/logs", LogsLive, :index
   end
 
   # Health check endpoint — used by Docker healthcheck

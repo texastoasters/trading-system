@@ -28,6 +28,7 @@ PID_DIR="${TRADING_DIR}/pids"
 ENV_FILE="${HOME}/.trading_env"
 
 AGENTS=("executor" "portfolio_manager" "watcher")
+DOCKER_CONTAINERS=("trading_redis:redis" "trading_timescaledb:timescaledb" "trading_dashboard:dashboard")
 
 # Colors for output
 RED='\033[0;31m'
@@ -42,6 +43,94 @@ log_info()  { echo -e "${GREEN}[INFO]${NC}  $1"; }
 log_warn()  { echo -e "${YELLOW}[WARN]${NC}  $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 log_step()  { echo -e "${BLUE}[STEP]${NC}  $1"; }
+
+# ── Docker Log Redirectors ───────────────────────────────────
+
+start_docker_log_redirectors() {
+    log_step "Starting docker log redirectors..."
+    for entry in "${DOCKER_CONTAINERS[@]}"; do
+        local container="${entry%%:*}"
+        local name="${entry##*:}"
+        local log_file="${LOG_DIR}/docker_${name}.log"
+        local pid_file="${PID_DIR}/docker_${name}.pid"
+
+        # Kill stale redirector if running
+        if [ -f "$pid_file" ]; then
+            local stale_pid
+            stale_pid=$(cat "$pid_file" 2>/dev/null) && kill "$stale_pid" 2>/dev/null || true
+            rm -f "$pid_file"
+        fi
+
+        if docker container inspect "$container" > /dev/null 2>&1; then
+            nohup docker logs --follow --since "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$container" >> "$log_file" 2>&1 &
+            echo $! > "$pid_file"
+            log_info "docker log redirector: ${container} → docker_${name}.log"
+        else
+            log_warn "Container ${container} not running — skipping log redirector"
+        fi
+    done
+}
+
+stop_docker_log_redirectors() {
+    for entry in "${DOCKER_CONTAINERS[@]}"; do
+        local name="${entry##*:}"
+        local pid_file="${PID_DIR}/docker_${name}.pid"
+        if [ -f "$pid_file" ]; then
+            local stale_pid
+            stale_pid=$(cat "$pid_file" 2>/dev/null) && kill "$stale_pid" 2>/dev/null || true
+            rm -f "$pid_file"
+            log_info "stopped docker log redirector: docker_${name}.log"
+        fi
+    done
+}
+
+# ── Log Tailing ──────────────────────────────────────────────
+
+tail_logs() {
+    local DATE_SUFFIX
+    DATE_SUFFIX=$(date '+%Y-%m-%d')
+
+    local log_executor="${LOG_DIR}/executor_${DATE_SUFFIX}.log"
+    local log_pm="${LOG_DIR}/portfolio_manager_${DATE_SUFFIX}.log"
+    local log_watcher="${LOG_DIR}/watcher_${DATE_SUFFIX}.log"
+    local log_screener="${LOG_DIR}/screener.log"
+    local log_supervisor="${LOG_DIR}/supervisor.log"
+
+    if command -v tmux &>/dev/null; then
+        tmux kill-session -t trading-logs 2>/dev/null || true
+        tmux new-session -d -s trading-logs -x 220 -y 50
+
+        # Window 1: daemon agents
+        tmux send-keys -t trading-logs \
+            "tail -f '${log_executor}' 2>/dev/null | sed 's/^/[executor] /'" Enter
+        tmux split-window -v -t trading-logs
+        tmux send-keys -t trading-logs \
+            "tail -f '${log_pm}' 2>/dev/null | sed 's/^/[portfolio_manager] /'" Enter
+        tmux split-window -v -t trading-logs
+        tmux send-keys -t trading-logs \
+            "tail -f '${log_watcher}' 2>/dev/null | sed 's/^/[watcher] /'" Enter
+
+        # Window 2: cron agents
+        tmux new-window -t trading-logs
+        tmux send-keys -t trading-logs \
+            "tail -f '${log_screener}' 2>/dev/null | sed 's/^/[screener] /'" Enter
+        tmux split-window -h -t trading-logs
+        tmux send-keys -t trading-logs \
+            "tail -f '${log_supervisor}' 2>/dev/null | sed 's/^/[supervisor] /'" Enter
+
+        tmux select-window -t trading-logs:0
+        log_info "tmux session 'trading-logs' created. Attaching..."
+        tmux attach-session -t trading-logs
+    else
+        log_info "tmux not found — combined tail:"
+        tail -f \
+            "${log_executor}" \
+            "${log_pm}" \
+            "${log_watcher}" \
+            "${log_screener}" \
+            "${log_supervisor}" 2>/dev/null
+    fi
+}
 
 check_env() {
     if [ ! -f "$ENV_FILE" ]; then
@@ -127,8 +216,8 @@ start_system() {
     # Create directories
     mkdir -p "$LOG_DIR" "$PID_DIR"
 
-    # Rotate logs (keep last 7 days)
-    find "$LOG_DIR" -name "*.log" -mtime +7 -delete 2>/dev/null || true
+    # Rotate logs (keep last 30 days)
+    find "$LOG_DIR" -name "*.log*" -mtime +30 -delete 2>/dev/null || true
 
     DATE_SUFFIX=$(date '+%Y-%m-%d')
 
@@ -182,7 +271,9 @@ start_system() {
     echo "════════════════════════════════════════════════════════"
     log_info "Daemon agents started. Logs in ${LOG_DIR}/"
     echo ""
-    echo "  Monitor logs:    tail -f ${LOG_DIR}/*_${DATE_SUFFIX}.log"
+    start_docker_log_redirectors
+    echo ""
+    echo "  Monitor logs:    $0 --logs"
     echo "  Check status:    $0 --status"
     echo "  Stop system:     $0 --stop"
     echo "════════════════════════════════════════════════════════"
@@ -228,6 +319,7 @@ stop_system() {
 
     echo ""
     log_info "Daemon agents stopped"
+    stop_docker_log_redirectors
 
     # Note: server-side stop-losses on Alpaca remain active
     echo ""
@@ -309,13 +401,17 @@ case "${1:-start}" in
         sleep 2
         start_system
         ;;
+    --logs|-logs|logs)
+        tail_logs
+        ;;
     --help|-help|-h)
-        echo "Usage: $0 [--start|--stop|--status|--restart|--help]"
+        echo "Usage: $0 [--start|--stop|--status|--restart|--logs|--help]"
         echo ""
         echo "  --start     Start daemon agents (default)"
         echo "  --stop      Stop daemon agents gracefully"
         echo "  --status    Show agent status and system state"
         echo "  --restart   Stop then start"
+        echo "  --logs      Tail agent logs (tmux if available, else combined tail)"
         echo "  --help      Show this help"
         ;;
     *)

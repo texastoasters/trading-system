@@ -1,0 +1,80 @@
+<div class="flex flex-col p-4 gap-4" style="height: calc(100vh - 40px);">
+
+  <%!-- Header --%>
+  <div class="flex items-center justify-between">
+    <h1 class="text-lg font-semibold text-gray-200">Logs</h1>
+    <button
+      phx-click="clear"
+      class="px-3 py-1 text-xs bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200 rounded border border-gray-700 transition-colors"
+    >
+      Clear
+    </button>
+  </div>
+
+  <%!-- Tab bar --%>
+  <div class="flex gap-1 border-b border-gray-800">
+    <%= for {tab_id, label} <- [{:agents, "Agents"}, {:docker, "Docker"}, {:vps, "VPS"}] do %>
+      <button
+        phx-click="set_tab"
+        phx-value-tab={tab_id}
+        class={[
+          "px-4 py-2 text-xs font-medium transition-colors",
+          if(@tab == tab_id,
+            do: "border-b-2 border-blue-500 text-blue-400 -mb-px",
+            else: "text-gray-500 hover:text-gray-300"
+          )
+        ]}
+      >
+        <%= label %>
+      </button>
+    <% end %>
+  </div>
+
+  <%!-- Source toggles for active tab --%>
+  <div class="flex flex-wrap gap-2">
+    <%= for source_id <- source_tabs()[@tab] do %>
+      <% meta = source_meta()[source_id] %>
+      <% active = MapSet.member?(@active_sources, source_id) %>
+      <button
+        phx-click="toggle_source"
+        phx-value-source={source_id}
+        class={[
+          "px-3 py-1 text-xs font-mono rounded border transition-colors",
+          if(active,
+            do: "bg-gray-800 border-gray-600 text-gray-200",
+            else: "bg-transparent border-gray-800 text-gray-600 hover:border-gray-600 hover:text-gray-400"
+          )
+        ]}
+      >
+        <%= meta.label %> <%= if active, do: "●", else: "○" %>
+      </button>
+    <% end %>
+  </div>
+
+  <%!-- Combined log output --%>
+  <div
+    id="log-output"
+    class="flex-1 overflow-y-auto overflow-x-auto bg-gray-950 rounded font-mono text-xs p-3 min-h-0"
+    phx-hook="ScrollBottom"
+  >
+    <%= if @log_lines == [] do %>
+      <p class="text-gray-700">
+        <%= if MapSet.size(@active_sources) == 0 do %>
+          No logs selected. Toggle sources above to start tailing.
+        <% else %>
+          Buffer cleared — waiting for new lines…
+        <% end %>
+      </p>
+    <% else %>
+      <%= for line <- @log_lines do %>
+        <div class="flex gap-2 leading-5 hover:bg-gray-900 px-1 rounded">
+          <span class={["shrink-0 w-36 truncate", color_class(line.color)]}>
+            [<%= line.label %>]
+          </span>
+          <span class="text-gray-300 break-all"><%= line.line %></span>
+        </div>
+      <% end %>
+    <% end %>
+  </div>
+
+</div>

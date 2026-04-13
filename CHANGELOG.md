@@ -8,6 +8,20 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.26.0] — 2026-04-12
+
+### Added
+- **Live log tailing dashboard page** (wishlist #1) — new `/logs` page with GenServer + PubSub architecture; 9 sources across three tabs (Agents, Docker, VPS); all sources off by default with per-source toggles; combined interleaved output with color-coded fixed-width service name prefix; 500-line ring buffer with auto-scroll; Clear button
+  - `Dashboard.LogTailer` GenServer: byte-offset polling (1s interval via `Process.send_after`), EOF-seek on init (no history dump on connect), rotation detection (offset > file size → reset), date-suffix resolution for daemon agent logs (midnight-safe)
+  - `DashboardWeb.LogsLive`: MapSet active_sources, tab switching, PubSub subscription on mount
+  - `ScrollBottom` JS hook wired in `app.js` (mounted + updated)
+  - Log dir mounted read-only at `/app/logs` in dashboard container; host `/var/log` at `/var/log/host` for VPS syslog tab
+- **Docker log file redirectors** — `start_trading_system.sh` starts `docker logs --follow --since <now>` background processes for `trading_redis`, `trading_timescaledb`, `trading_dashboard`; redirects to `logs/docker_*.log`; PID files tracked for clean stop
+- **`--logs` shell flag** (wishlist #1) — `./start_trading_system.sh --logs` opens tmux session `trading-logs` with panes for each log source (falls back to `tail -f` if no tmux)
+- **Log rotation** (wishlist #5) — `scripts/logrotate.conf` with daily rotation, 30-day retention, gzip, `copytruncate` (no SIGHUP needed), `delaycompress`; two stanzas: static-name files (with `dateext`) and date-suffixed files (without); log cleanup extended from 7 to 30 days in start script
+
+---
+
 ## [0.25.0] — 2026-04-12
 
 ### Added
