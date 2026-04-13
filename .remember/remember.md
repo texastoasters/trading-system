@@ -1,7 +1,12 @@
 # Handoff
 
 ## State
-`feat/mobile-responsive-dashboard` complete. PR #99 open. 313 tests passing. All 6 tasks done + post-review fix (daily performance `overflow-x-auto`).
+feat/log-tailing → PR #100 open. v0.26.0. 331 tests, 100% coverage. All wishlist items #1 + #5 done.
 
 ## Next
-Review + merge PR #99. After merge: tag v0.25.0, update FEATURE_WISHLIST.md if mobile-responsive was listed there.
+1. Merge PR #100 after review
+2. Tag v0.26.0 after merge
+3. On VPS: `sudo cp scripts/logrotate.conf /etc/logrotate.d/trading-system` to activate log rotation
+
+## Context
+logrotate.conf has two stanzas (static-name files get dateext, date-suffixed daemon logs don't — avoids double-dated filenames). docker log redirectors use `--since <now>` to skip history replay on restart.
