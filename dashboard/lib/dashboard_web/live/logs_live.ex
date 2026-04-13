@@ -21,6 +21,9 @@ defmodule DashboardWeb.LogsLive do
     "vps_syslog"         => %{label: "syslog",             color: "white"}
   }
 
+  def source_tabs, do: @source_tabs
+  def source_meta, do: @source_meta
+
   @impl true
   def mount(_params, _session, socket) do
     if connected?(socket) do
@@ -32,10 +35,7 @@ defmodule DashboardWeb.LogsLive do
      |> assign(:page_title, "Logs")
      |> assign(:tab, :agents)
      |> assign(:active_sources, MapSet.new())
-     |> assign(:log_lines, [])
-     |> assign(:line_count, 0)
-     |> assign(:source_tabs, @source_tabs)
-     |> assign(:source_meta, @source_meta)}
+     |> assign(:log_lines, [])}
   end
 
   @impl true
@@ -57,7 +57,7 @@ defmodule DashboardWeb.LogsLive do
 
   @impl true
   def handle_event("clear", _params, socket) do
-    {:noreply, socket |> assign(:log_lines, []) |> assign(:line_count, 0)}
+    {:noreply, assign(socket, :log_lines, [])}
   end
 
   @impl true
@@ -69,22 +69,21 @@ defmodule DashboardWeb.LogsLive do
       {:noreply, socket}
     else
       current = socket.assigns.log_lines
-      count = socket.assigns.line_count
       combined = current ++ filtered
-      total = count + length(filtered)
 
-      {trimmed, new_count} =
-        if total > @max_lines do
-          drop = total - @max_lines
-          {Enum.drop(combined, drop), @max_lines}
+      trimmed =
+        if length(combined) > @max_lines do
+          drop = length(combined) - @max_lines
+          Enum.drop(combined, drop)
         else
-          {combined, total}
+          combined
         end
 
-      {:noreply, socket |> assign(:log_lines, trimmed) |> assign(:line_count, new_count)}
+      {:noreply, assign(socket, :log_lines, trimmed)}
     end
   end
 
+  @impl true
   def handle_info(_, socket), do: {:noreply, socket}
 
   defp color_class("blue"),   do: "text-blue-400"

@@ -32,8 +32,8 @@
 
   <%!-- Source toggles for active tab --%>
   <div class="flex flex-wrap gap-2">
-    <%= for source_id <- @source_tabs[@tab] do %>
-      <% meta = @source_meta[source_id] %>
+    <%= for source_id <- source_tabs()[@tab] do %>
+      <% meta = source_meta()[source_id] %>
       <% active = MapSet.member?(@active_sources, source_id) %>
       <button
         phx-click="toggle_source"
@@ -58,7 +58,13 @@
     phx-hook="ScrollBottom"
   >
     <%= if @log_lines == [] do %>
-      <p class="text-gray-700">No logs selected. Toggle sources above to start tailing.</p>
+      <p class="text-gray-700">
+        <%= if MapSet.size(@active_sources) == 0 do %>
+          No logs selected. Toggle sources above to start tailing.
+        <% else %>
+          Buffer cleared — waiting for new lines…
+        <% end %>
+      </p>
     <% else %>
       <%= for line <- @log_lines do %>
         <div class="flex gap-2 leading-5 hover:bg-gray-900 px-1 rounded">

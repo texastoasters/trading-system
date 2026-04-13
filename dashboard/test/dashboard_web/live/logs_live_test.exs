@@ -96,7 +96,7 @@ defmodule DashboardWeb.LogsLiveTest do
   end
 
   describe "clear" do
-    test "clear empties log buffer and restores empty-state message", %{conn: conn} do
+    test "clear empties log buffer; shows 'Buffer cleared' when sources active", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/logs")
 
       view |> element("button[phx-value-source=executor]") |> render_click()
@@ -108,6 +108,19 @@ defmodule DashboardWeb.LogsLiveTest do
 
       assert render(view) =~ "some line"
 
+      view |> element("button", "Clear") |> render_click()
+      html = render(view)
+      refute html =~ "some line"
+      assert html =~ "Buffer cleared"
+    end
+
+    test "clear with no active sources shows 'No logs selected'", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/logs")
+
+      # No sources activated — empty state from the start
+      assert render(view) =~ "No logs selected"
+
+      # Clear button should still show "No logs selected" (no active sources)
       view |> element("button", "Clear") |> render_click()
       assert render(view) =~ "No logs selected"
     end
