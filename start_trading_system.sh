@@ -62,7 +62,7 @@ start_docker_log_redirectors() {
         fi
 
         if docker container inspect "$container" > /dev/null 2>&1; then
-            nohup docker logs --follow --since "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$container" >> "$log_file" 2>&1 &
+            nohup sudo docker logs --follow --since "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$container" >> "$log_file" 2>&1 &
             echo $! > "$pid_file"
             log_info "docker log redirector: ${container} → docker_${name}.log"
         else
@@ -77,7 +77,7 @@ stop_docker_log_redirectors() {
         local pid_file="${PID_DIR}/docker_${name}.pid"
         if [ -f "$pid_file" ]; then
             local stale_pid
-            stale_pid=$(cat "$pid_file" 2>/dev/null) && kill "$stale_pid" 2>/dev/null || true
+            stale_pid=$(cat "$pid_file" 2>/dev/null) && sudo kill "$stale_pid" 2>/dev/null || true
             rm -f "$pid_file"
             log_info "stopped docker log redirector: docker_${name}.log"
         fi
