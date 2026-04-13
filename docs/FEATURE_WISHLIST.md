@@ -172,12 +172,41 @@ Ranked by impact on the running system. LLM-dependent items excluded — system 
 6. ~~**Volume filter on entries**~~ ✅ Done (feat/volume-filter): `scan_instrument` skips today's volume < 50% of 20d ADV; `volume_ratio` added to watchlist payload.
 
 ### Visibility / Tuning
-7. [x] **Equity curve chart** — `daily_summaries` table in TimescaleDB has equity/drawdown data from day 1. Plot the full curve with drawdown shading and circuit breaker threshold lines. Most useful single addition to the dashboard for understanding system behaviour over time.
+7. [ ] **Equity curve chart** — Was added (PR #92) then removed from both main and performance pages (PRs #96, #97) when switching to ContEx charts. Still needs reimplementation on `/performance`.
 8. ~~**Strategy attribution by exit type**~~ ✅ Done (PR #98): executor writes `exit_reason` on every trade; performance page shows attribution table with count, avg P&L, total P&L per exit type; 30/90/all day filters.
 
 ### Risk
 9. ~~**Position age alert**~~ ✅ Done (PR #98): supervisor health check alerts via Telegram when any position held ≥ 5 days; Redis dedup prevents repeat nudges.
 10. ~~**Paper trading report vs Alpaca balance**~~ ✅ Done (PR #98): weekly summary fetches Alpaca paper balance, computes divergence from simulated equity, flags > 5% divergence.
+
+---
+
+---
+
+## 📋 Next Priority Wave (as of 2026-04-12)
+
+Note: equity curve chart ([x] in prior wave) was incorrect — it was added (PR #92) then fully removed (PRs #96, #97). Still open.
+
+### Log Tailing — Two Remaining Quick Wins (bundle as one ticket)
+1. **Dashboard: per-agent log tail** — Live-scrolling last N lines of each agent's log file via Phoenix LiveView. Reads log files server-side and streams to browser. Removes need to SSH + `tail -f`. (Quick Win)
+   **`start_trading_system.sh --logs`** — tmux split-pane layout tailing all agent logs. Simpler fallback for terminal users. Both in one PR.
+
+### Alerting
+2. **LLM cost tracking + daily alert** — `supervisor.py` has `llm_cost: 0.0 # TODO` since day 1. Add `trading:llm_cost_today` Redis key; increment in screener (news materiality), PM (high-stakes), supervisor (EOD). Reset daily. Wires existing alert threshold. Unblocks the feature and gives API spend visibility.
+3. **Drawdown progress bar in alerts** — When drawdown alerts fire, show visual progress bar toward 10%/15%/20% thresholds. Low effort, high clarity on severity.
+
+### Operations
+4. **Environment validation script** — Single command on system start: checks all env vars, Redis reachable, Alpaca API valid, Telegram token works, TimescaleDB up. Catches misconfiguration before first trade of the day.
+5. **Log rotation and archiving** — Agent logs on VPS will eventually fill disk. Rotate daily, compress, 30-day retention. Logrotate config or a simple cron script.
+6. **Economic calendar auto-refresh** — `economic_calendar.json` is "updated annually" — human-memory dependency. Script to generate next year's FOMC/CPI/NFP dates (all publicly scheduled) and patch the JSON. Run as cron every December.
+
+### Visibility
+7. **Dashboard: simulated equity history chart** — Sparkline of `trading:simulated_equity` over time (today + rolling). Data already in Redis and `daily_summaries`. Even a simple ContEx sparkline adds significant monitoring value.
+8. **Config hot-reload** — Change RSI thresholds, position limits, and tier assignments in Redis without restarting daemons. Supervisor already manages Redis state; this extends that pattern.
+
+### Signal Quality
+9. **Signal heatmap** — Grid of all instruments × days showing RSI-2 value, color-coded. Makes oversold clusters and correlated signals immediately visible. Dashboard page or panel.
+10. **RSI-2 divergence detection** — Flag when price makes new low but RSI-2 makes higher low (bullish divergence). Stronger entry signal than raw threshold alone. Screener change only.
 
 ---
 
