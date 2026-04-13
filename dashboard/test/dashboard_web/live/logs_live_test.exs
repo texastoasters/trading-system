@@ -126,6 +126,16 @@ defmodule DashboardWeb.LogsLiveTest do
     end
   end
 
+  describe "handle_info catch-all" do
+    test "ignores unknown PubSub messages without crashing", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/logs")
+
+      send(view.pid, :unexpected_message)
+      # View still renders without error
+      assert render(view) =~ "No logs selected"
+    end
+  end
+
   describe "ring buffer" do
     test "caps buffer at 500 lines, dropping oldest", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/logs")

@@ -123,23 +123,18 @@ defmodule Dashboard.LogTailer do
 
       {:ok, _} ->
         case File.open(path, [:read, :binary]) do
-          {:ok, file} ->
-            :file.position(file, offset)
-
-            case IO.read(file, :eof) do
-              {:error, _} ->
-                File.close(file)
-                {:skip, offset}
-
-              content when is_binary(content) ->
-                File.close(file)
-                new_offset = offset + byte_size(content)
-                lines = content |> String.split("\n") |> Enum.reject(&(&1 == ""))
-                {:ok, lines, new_offset}
-            end
-
           {:error, _} ->
             {:skip, offset}
+
+          {:ok, file} ->
+            :file.position(file, offset)
+            # IO.read/2 on a successfully opened regular file always returns a
+            # binary (empty string at EOF) — no error case needed here.
+            content = IO.read(file, :eof)
+            File.close(file)
+            new_offset = offset + byte_size(content)
+            lines = content |> String.split("\n") |> Enum.reject(&(&1 == ""))
+            {:ok, lines, new_offset}
         end
     end
   end

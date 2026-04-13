@@ -106,4 +106,21 @@ defmodule Dashboard.LogTailerTest do
     assert "screener" in sources
     assert "supervisor" in sources
   end
+
+  test "handles file becoming unreadable between stat and open", %{log_dir: log_dir} do
+    file = Path.join(log_dir, "screener.log")
+    File.write!(file, "existing\n")
+
+    pid = start_tailer(log_dir)
+    Phoenix.PubSub.subscribe(Dashboard.PubSub, "logs")
+
+    File.write!(file, "new line\n", [:append])
+    File.chmod!(file, 0o000)
+
+    send(pid, :poll)
+    refute_receive {:log_lines, _}, 300
+
+    # Restore so cleanup can delete the tmp dir
+    File.chmod!(file, 0o644)
+  end
 end

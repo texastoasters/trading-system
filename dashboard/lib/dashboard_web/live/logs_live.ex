@@ -86,14 +86,17 @@ defmodule DashboardWeb.LogsLive do
   @impl true
   def handle_info(_, socket), do: {:noreply, socket}
 
-  defp color_class("blue"),   do: "text-blue-400"
-  defp color_class("green"),  do: "text-green-400"
-  defp color_class("yellow"), do: "text-yellow-400"
-  defp color_class("purple"), do: "text-purple-400"
-  defp color_class("cyan"),   do: "text-cyan-400"
-  defp color_class("red"),    do: "text-red-400"
-  defp color_class("orange"), do: "text-orange-400"
-  defp color_class("gray"),   do: "text-gray-400"
-  defp color_class("white"),  do: "text-white"
-  defp color_class(_),        do: "text-gray-400"
+  defp color_class(color) do
+    %{
+      "blue"   => "text-blue-400",
+      "green"  => "text-green-400",
+      "yellow" => "text-yellow-400",
+      "purple" => "text-purple-400",
+      "cyan"   => "text-cyan-400",
+      "red"    => "text-red-400",
+      "orange" => "text-orange-400",
+      "gray"   => "text-gray-400",
+      "white"  => "text-white"
+    }[color] || "text-gray-400"
+  end
 end
