@@ -56,12 +56,13 @@ start_docker_log_redirectors() {
 
         # Kill stale redirector if running
         if [ -f "$pid_file" ]; then
-            kill "$(cat "$pid_file")" 2>/dev/null || true
+            local stale_pid
+            stale_pid=$(cat "$pid_file" 2>/dev/null) && kill "$stale_pid" 2>/dev/null || true
             rm -f "$pid_file"
         fi
 
         if docker container inspect "$container" > /dev/null 2>&1; then
-            nohup docker logs --follow "$container" >> "$log_file" 2>&1 &
+            nohup docker logs --follow --since "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$container" >> "$log_file" 2>&1 &
             echo $! > "$pid_file"
             log_info "docker log redirector: ${container} → docker_${name}.log"
         else
@@ -75,7 +76,8 @@ stop_docker_log_redirectors() {
         local name="${entry##*:}"
         local pid_file="${PID_DIR}/docker_${name}.pid"
         if [ -f "$pid_file" ]; then
-            kill "$(cat "$pid_file")" 2>/dev/null || true
+            local stale_pid
+            stale_pid=$(cat "$pid_file" 2>/dev/null) && kill "$stale_pid" 2>/dev/null || true
             rm -f "$pid_file"
             log_info "stopped docker log redirector: docker_${name}.log"
         fi
@@ -88,37 +90,33 @@ tail_logs() {
     local DATE_SUFFIX
     DATE_SUFFIX=$(date '+%Y-%m-%d')
 
-    declare -A log_files=(
-        ["executor"]="${LOG_DIR}/executor_${DATE_SUFFIX}.log"
-        ["portfolio_manager"]="${LOG_DIR}/portfolio_manager_${DATE_SUFFIX}.log"
-        ["watcher"]="${LOG_DIR}/watcher_${DATE_SUFFIX}.log"
-        ["screener"]="${LOG_DIR}/screener.log"
-        ["supervisor"]="${LOG_DIR}/supervisor.log"
-    )
+    local log_executor="${LOG_DIR}/executor_${DATE_SUFFIX}.log"
+    local log_pm="${LOG_DIR}/portfolio_manager_${DATE_SUFFIX}.log"
+    local log_watcher="${LOG_DIR}/watcher_${DATE_SUFFIX}.log"
+    local log_screener="${LOG_DIR}/screener.log"
+    local log_supervisor="${LOG_DIR}/supervisor.log"
 
     if command -v tmux &>/dev/null; then
-        # Kill existing session if stale
         tmux kill-session -t trading-logs 2>/dev/null || true
-
         tmux new-session -d -s trading-logs -x 220 -y 50
 
-        # Window 1: daemon agents (3-pane split)
+        # Window 1: daemon agents
         tmux send-keys -t trading-logs \
-            "tail -f '${log_files[executor]}' 2>/dev/null | sed 's/^/[executor] /'" Enter
+            "tail -f '${log_executor}' 2>/dev/null | sed 's/^/[executor] /'" Enter
         tmux split-window -v -t trading-logs
         tmux send-keys -t trading-logs \
-            "tail -f '${log_files[portfolio_manager]}' 2>/dev/null | sed 's/^/[portfolio_manager] /'" Enter
+            "tail -f '${log_pm}' 2>/dev/null | sed 's/^/[portfolio_manager] /'" Enter
         tmux split-window -v -t trading-logs
         tmux send-keys -t trading-logs \
-            "tail -f '${log_files[watcher]}' 2>/dev/null | sed 's/^/[watcher] /'" Enter
+            "tail -f '${log_watcher}' 2>/dev/null | sed 's/^/[watcher] /'" Enter
 
         # Window 2: cron agents
         tmux new-window -t trading-logs
         tmux send-keys -t trading-logs \
-            "tail -f '${log_files[screener]}' 2>/dev/null | sed 's/^/[screener] /'" Enter
+            "tail -f '${log_screener}' 2>/dev/null | sed 's/^/[screener] /'" Enter
         tmux split-window -h -t trading-logs
         tmux send-keys -t trading-logs \
-            "tail -f '${log_files[supervisor]}' 2>/dev/null | sed 's/^/[supervisor] /'" Enter
+            "tail -f '${log_supervisor}' 2>/dev/null | sed 's/^/[supervisor] /'" Enter
 
         tmux select-window -t trading-logs:0
         log_info "tmux session 'trading-logs' created. Attaching..."
@@ -126,11 +124,11 @@ tail_logs() {
     else
         log_info "tmux not found — combined tail:"
         tail -f \
-            "${log_files[executor]}" \
-            "${log_files[portfolio_manager]}" \
-            "${log_files[watcher]}" \
-            "${log_files[screener]}" \
-            "${log_files[supervisor]}" 2>/dev/null
+            "${log_executor}" \
+            "${log_pm}" \
+            "${log_watcher}" \
+            "${log_screener}" \
+            "${log_supervisor}" 2>/dev/null
     fi
 }
 

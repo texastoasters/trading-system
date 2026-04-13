@@ -80,7 +80,7 @@ services:
       timescaledb:
         condition: service_healthy
     volumes:
-      - ${HOME}/trading-system/logs:/app/logs:ro
+      - /home/linuxuser/trading-system/logs:/app/logs:ro
       - /var/log:/var/log/host:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
