@@ -172,7 +172,7 @@ check_infrastructure() {
     if redis-cli ping > /dev/null 2>&1; then
         log_info "Redis: running"
     else
-        log_error "Redis not reachable. Run: cd ~/trading-system && docker compose up -d"
+        log_error "Redis not reachable. Run: cd ~/trading-system && sudo docker compose up -d"
         exit 1
     fi
 
