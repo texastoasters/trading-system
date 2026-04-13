@@ -40,8 +40,8 @@ defmodule Dashboard.LogTailer do
         {id, Map.put(source, :offset, offset)}
       end)
 
-    :timer.send_interval(poll_interval, :poll)
-    {:ok, %{sources: sources}}
+    Process.send_after(self(), :poll, poll_interval)
+    {:ok, %{sources: sources, poll_interval: poll_interval}}
   end
 
   @impl true
@@ -57,17 +57,20 @@ defmodule Dashboard.LogTailer do
                 %{source: id, label: source.label, color: source.color, line: line}
               end)
 
-            {Map.put(acc_sources, id, %{source | offset: new_offset}), acc_lines ++ tagged}
+            {Map.put(acc_sources, id, %{source | offset: new_offset}), [tagged | acc_lines]}
 
           {:skip, new_offset} ->
             {Map.put(acc_sources, id, %{source | offset: new_offset}), acc_lines}
         end
       end)
 
+    all_lines = List.flatten(all_lines)
+
     if all_lines != [] do
       PubSub.broadcast(@pubsub, @topic, {:log_lines, all_lines})
     end
 
+    Process.send_after(self(), :poll, state.poll_interval)
     {:noreply, %{state | sources: new_sources}}
   end
 
@@ -83,6 +86,8 @@ defmodule Dashboard.LogTailer do
         %{label: "portfolio_manager", color: "green", type: :dated, dir: log_dir, name: "portfolio_manager"},
       "watcher" =>
         %{label: "watcher", color: "yellow", type: :dated, dir: log_dir, name: "watcher"},
+      # Cron agents write to a single named file (not date-suffixed) because their
+      # crontab entries redirect to a fixed path (e.g. >> screener.log 2>&1).
       "screener" =>
         %{label: "screener", color: "purple", type: :static, path: Path.join(log_dir, "screener.log")},
       "supervisor" =>
@@ -120,11 +125,18 @@ defmodule Dashboard.LogTailer do
         case File.open(path, [:read, :binary]) do
           {:ok, file} ->
             :file.position(file, offset)
-            content = IO.read(file, :eof)
-            File.close(file)
-            new_offset = offset + byte_size(content)
-            lines = content |> String.split("\n") |> Enum.reject(&(&1 == ""))
-            {:ok, lines, new_offset}
+
+            case IO.read(file, :eof) do
+              {:error, _} ->
+                File.close(file)
+                {:skip, offset}
+
+              content when is_binary(content) ->
+                File.close(file)
+                new_offset = offset + byte_size(content)
+                lines = content |> String.split("\n") |> Enum.reject(&(&1 == ""))
+                {:ok, lines, new_offset}
+            end
 
           {:error, _} ->
             {:skip, offset}
