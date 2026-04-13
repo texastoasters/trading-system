@@ -61,7 +61,7 @@ start_docker_log_redirectors() {
             rm -f "$pid_file"
         fi
 
-        if docker container inspect "$container" > /dev/null 2>&1; then
+        if sudo docker container inspect "$container" > /dev/null 2>&1; then
             nohup sudo docker logs --follow --since "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$container" >> "$log_file" 2>&1 &
             echo $! > "$pid_file"
             log_info "docker log redirector: ${container} → docker_${name}.log"
