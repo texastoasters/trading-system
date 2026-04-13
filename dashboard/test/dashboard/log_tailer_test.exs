@@ -12,7 +12,7 @@ defmodule Dashboard.LogTailerTest do
 
   defp start_tailer(log_dir) do
     start_supervised!(
-      {LogTailer, log_dir: log_dir, syslog_path: "/nonexistent", poll_interval: 100_000}
+      {LogTailer, log_dir: log_dir, syslog_path: "/nonexistent", poll_interval: 100_000, name: nil}
     )
   end
 
