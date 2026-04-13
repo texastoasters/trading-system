@@ -10,9 +10,8 @@ let csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("
 let Hooks = {}
 
 Hooks.ScrollBottom = {
-  updated() {
-    this.el.scrollTop = this.el.scrollHeight
-  }
+  mounted() { this.el.scrollTop = this.el.scrollHeight },
+  updated() { this.el.scrollTop = this.el.scrollHeight }
 }
 
 let liveSocket = new LiveSocket("/live", Socket, {

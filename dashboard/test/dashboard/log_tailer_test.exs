@@ -12,6 +12,7 @@ defmodule Dashboard.LogTailerTest do
 
   defp start_tailer(log_dir) do
     start_supervised!(
+      # name: nil prevents conflict with the supervisor-started named Dashboard.LogTailer
       {LogTailer, log_dir: log_dir, syslog_path: "/nonexistent", poll_interval: 100_000, name: nil}
     )
   end

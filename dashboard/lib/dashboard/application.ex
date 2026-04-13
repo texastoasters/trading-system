@@ -34,7 +34,7 @@ defmodule Dashboard.Application do
       # Background GenServers
       Dashboard.RedisPoller,
       Dashboard.RedisSubscriber,
-      Dashboard.LogTailer,
+      Supervisor.child_spec(Dashboard.LogTailer, restart: :temporary),
       # MarketClock is :temporary — Alpaca API failures must not crash the app
       Supervisor.child_spec(Dashboard.MarketClock, restart: :temporary),
 
