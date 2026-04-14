@@ -112,7 +112,7 @@ docker compose logs dashboard
 redis-cli ping
 ```
 
-Redis runs on port 6379, TimescaleDB on port 5432. The database schema is automatically created on first startup via `init-db/001_create_schema.sql`.
+Redis runs on port 6379, TimescaleDB on port 5432. The database schema is managed by Ecto migrations in `dashboard/priv/repo/migrations/`. Migrations run automatically each time the dashboard container starts — no manual SQL required.
 
 ### Tailscale Setup
 
@@ -228,9 +228,7 @@ python3 scripts/discover_universe.py --max-candidates 50
 ├── README.md                        # This file
 ├── AGENTS.md                        # Agent architecture documentation
 ├── start_trading_system.sh          # Startup/stop/status/restart
-├── docker-compose.yml               # Redis + TimescaleDB
-├── init-db/
-│   └── 001_create_schema.sql        # Database schema
+├── docker-compose.yml               # Redis + TimescaleDB + dashboard
 ├── scripts/
 │   ├── config.py                    # Shared config, Redis keys, defaults
 │   ├── indicators.py                # Technical indicators library
@@ -256,6 +254,12 @@ python3 scripts/discover_universe.py --max-candidates 50
 │   └── supervisor/
 │       ├── supervisor.py            # Supervisor Agent
 │       └── SKILL.md
+├── dashboard/                       # Phoenix LiveView dashboard
+│   ├── Dockerfile                   # Multi-stage build; auto-migrates on start
+│   ├── lib/dashboard/release.ex     # Release task: runs Ecto migrations
+│   └── priv/repo/migrations/        # Database schema (Ecto-managed)
+│       ├── 20260414000001_create_base_schema.exs
+│       └── 20260414000002_add_exit_reason_to_trades.exs
 └── docs/
     ├── agentic_day_trading_system_report_v2.md
     ├── phase1_market_microstructure_constraints.md

@@ -8,6 +8,17 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.26.1] — 2026-04-14
+
+### Fixed
+- **Trade logging silent failures** — `exit_reason` column was missing from the production `trades` table; the `init-db/` ALTER TABLE script never ran on existing Docker volumes, causing the executor to silently drop every trade log with `column "exit_reason" of relation "trades" does not exist`
+
+### Changed
+- **Database schema now managed by Ecto migrations** — replaced `init-db/` SQL scripts with versioned migrations in `dashboard/priv/repo/migrations/`. The dashboard container runs `Dashboard.Release.migrate()` before starting, so schema changes ship atomically with code and are applied on every deploy. `init-db/` directory removed.
+- **README updated** — Docker Services and File Structure sections reflect the new migration-based setup
+
+---
+
 ## [0.26.0] — 2026-04-12
 
 ### Added
