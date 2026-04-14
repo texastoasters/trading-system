@@ -76,5 +76,6 @@ ENV MIX_ENV=prod
 
 EXPOSE 4000
 
-# Bin entrypoint — reads PHX_HOST, SECRET_KEY_BASE, DATABASE_URL, REDIS_URL from env
-CMD ["bin/dashboard", "start"]
+# Run migrations then start the server. `exec` replaces the shell as PID 1 so
+# SIGTERM from Docker is forwarded correctly to the Erlang runtime.
+CMD ["/bin/sh", "-c", "bin/dashboard eval 'Dashboard.Release.migrate()' && exec bin/dashboard start"]
