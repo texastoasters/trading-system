@@ -99,6 +99,8 @@ defmodule DashboardWeb.UniverseLiveTest do
       }
 
       send(view.pid, {:state_update, state})
+      # Tier 3 starts collapsed by default — expand it before asserting symbols
+      render_click(view, "toggle_section", %{"id" => "tier3"})
       html = render(view)
       # All three tier labels should appear
       assert html =~ "Tier 1 — Core"
