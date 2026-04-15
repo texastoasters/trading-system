@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.26.4] — 2026-04-14
+
+### Fixed
+- **False watcher crash alerts at market open** — supervisor used a 5-minute stale threshold for all daemon agents, but the watcher legitimately sleeps 30 minutes between off-hours cycles. At 9:30 AM ET the supervisor's health check fired while the watcher was mid-sleep from a ~9:15 AM cycle, triggering a false "heartbeat 15min old" critical alert and an unnecessary service restart. Added `DAEMON_STALE_THRESHOLDS` to `config.py` with per-agent values (executor/PM: 5 min, watcher: 35 min).
+
+---
+
 ## [0.26.3] — 2026-04-14
 
 ### Fixed
