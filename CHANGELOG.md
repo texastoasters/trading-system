@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.27.1] — 2026-04-15
+
+### Fixed
+- **Duplicate stop resubmit when operator manually replaces a cancelled stop** — `_check_cancelled_stops` would attempt to place a new stop-loss even when the operator had already manually placed a replacement on Alpaca. Alpaca rejected the duplicate with `40310000 insufficient qty available (held_for_orders: 1)`, firing a spurious "Stop-loss failed" critical alert and leaving Redis with a stale stop order ID. Fixed by adding `_find_active_stop_order`, which queries Alpaca for any existing active sell-side stop on the symbol before resubmitting. If one is found it is adopted — Redis `stop_order_id` and `stop_price` are updated to match — and no new order is placed.
+
+---
+
 ## [0.27.0] — 2026-04-14
 
 ### Added
