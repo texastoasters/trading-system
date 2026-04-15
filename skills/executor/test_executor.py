@@ -1486,6 +1486,7 @@ class TestCheckTrailingUpgrades:
         r, store = make_redis({"SPY": pos})
 
         tc = MagicMock()
+        tc.get_clock.return_value = make_clock(is_open=True)
         tc.get_all_positions.return_value = [self._make_alpaca_pos("SPY", "526.0")]
         new_stop = MagicMock()
         new_stop.id = "trail-001"
@@ -1506,6 +1507,42 @@ class TestCheckTrailingUpgrades:
         assert saved["SPY"]["trailing"] is True
         assert saved["SPY"]["trail_percent"] == cfg.TRAILING_TRAIL_PCT[1]
         assert saved["SPY"]["stop_order_id"] == "trail-001"
+
+    def test_skips_when_market_is_closed(self):
+        """get_clock().is_open=False → no cancel, no submit, Redis unchanged."""
+        pos = make_position(symbol="SPY", qty=10, entry=500.0, stop=490.0,
+                            stop_order_id="old-stop")
+        pos["tier"] = 1
+        r, store = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        tc.get_clock.return_value = make_clock(is_open=False)
+        tc.get_all_positions.return_value = [self._make_alpaca_pos("SPY", "526.0")]
+
+        from executor import _check_trailing_upgrades
+        _check_trailing_upgrades(tc, r)
+
+        tc.cancel_order_by_id.assert_not_called()
+        tc.submit_order.assert_not_called()
+        saved = json.loads(store["trading:positions"])
+        assert not saved["SPY"].get("trailing")
+
+    def test_skips_when_clock_api_fails(self):
+        """get_clock() raises → skip safely, no cancel, no submit."""
+        pos = make_position(symbol="SPY", qty=10, entry=500.0, stop=490.0,
+                            stop_order_id="old-stop")
+        pos["tier"] = 1
+        r, _ = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        tc.get_clock.side_effect = RuntimeError("API down")
+        tc.get_all_positions.return_value = [self._make_alpaca_pos("SPY", "526.0")]
+
+        from executor import _check_trailing_upgrades
+        _check_trailing_upgrades(tc, r)
+
+        tc.cancel_order_by_id.assert_not_called()
+        tc.submit_order.assert_not_called()
 
     def test_skips_when_gain_below_threshold(self):
         """T1 threshold=5.0%; gain=2.0% → no upgrade."""

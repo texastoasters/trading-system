@@ -305,7 +305,18 @@ def _check_trailing_upgrades(trading_client, r):
     - If gain >= TRAILING_TRIGGER_PCT[tier], cancels fixed stop and submits trailing stop
     - Updates Redis: trailing=True, trail_percent, stop_order_id
     - On any error: bails safely (no naked position window)
+
+    Only runs during market hours. After-hours cancel requests stay pending until open,
+    which causes a race where the new stop is rejected ("insufficient qty available")
+    before the old cancel settles.
     """
+    try:
+        if not trading_client.get_clock().is_open:
+            return
+    except Exception as exc:
+        print(f"  [Executor] _check_trailing_upgrades: could not fetch market clock: {exc} — skipping")
+        return
+
     positions = json.loads(r.get(Keys.POSITIONS) or "{}")
     if not positions:
         return
