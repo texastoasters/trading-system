@@ -827,14 +827,59 @@ defmodule DashboardWeb.DashboardLiveTest do
     end
   end
 
-  describe "handle_event liquidate" do
-    test "liquidate event publishes order and shows flash on success", %{conn: conn} do
-      {:ok, view, _} = live(conn, "/")
-      html = render_click(view, "liquidate", %{"symbol" => "SPY"})
-      assert html =~ "SPY"
+  describe "liquidate modal" do
+    defp position_state do
+      pos = %{
+        "symbol" => "SPY",
+        "quantity" => 5,
+        "entry_price" => 500.0,
+        "current_price" => 505.0,
+        "stop_price" => 490.0,
+        "trailing" => false,
+        "side" => "long",
+        "tier" => 1
+      }
+
+      %{"trading:positions" => %{"SPY" => pos}}
     end
 
-    test "liquidate event shows error flash when Redix command fails", %{conn: conn} do
+    test "liquidate button click shows confirmation modal", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:state_update, position_state()})
+      render(view)
+
+      view |> element("[phx-click=show_liquidate_confirm][phx-value-symbol=SPY]") |> render_click()
+
+      html = render(view)
+      assert html =~ "Liquidate SPY"
+      assert html =~ "market sell order"
+    end
+
+    test "cancel modal closes without sending order", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:state_update, position_state()})
+      render(view)
+
+      view |> element("[phx-click=show_liquidate_confirm][phx-value-symbol=SPY]") |> render_click()
+      view |> element("[phx-click=cancel_modal]") |> render_click()
+
+      html = render(view)
+      refute html =~ "market sell order"
+    end
+
+    test "confirm liquidate sends approved order to Redis", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      send(view.pid, {:state_update, position_state()})
+      render(view)
+
+      view |> element("[phx-click=show_liquidate_confirm][phx-value-symbol=SPY]") |> render_click()
+      view |> element("[phx-click=confirm_liquidate]") |> render_click()
+
+      html = render(view)
+      assert html =~ "Liquidation order sent"
+    end
+
+    test "confirm liquidate shows error flash when Redix command fails", %{conn: conn} do
       real_redix = Process.whereis(:redix)
       Process.unregister(:redix)
       {:ok, stub} = Dashboard.FakeRedix.start_link()
@@ -848,7 +893,13 @@ defmodule DashboardWeb.DashboardLiveTest do
       end)
 
       {:ok, view, _} = live(conn, "/")
-      html = render_click(view, "liquidate", %{"symbol" => "SPY"})
+      send(view.pid, {:state_update, position_state()})
+      render(view)
+
+      view |> element("[phx-click=show_liquidate_confirm][phx-value-symbol=SPY]") |> render_click()
+      view |> element("[phx-click=confirm_liquidate]") |> render_click()
+
+      html = render(view)
       assert html =~ "Failed to send liquidation order"
     end
   end

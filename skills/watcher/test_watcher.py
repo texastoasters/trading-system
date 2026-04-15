@@ -535,6 +535,48 @@ class TestGenerateEntrySignals:
             signals = generate_entry_signals(r, MagicMock(), MagicMock())
         assert signals[0]["atr_multiplier"] == config.ATR_STOP_MULTIPLIER
 
+    def test_generate_entry_signals_skips_blacklisted_symbol(self):
+        """Entry signal not generated for a symbol in trading:universe blacklisted dict."""
+        universe = {
+            "tier1": [], "tier2": [], "tier3": ["IWM"],
+            "blacklisted": {"IWM": {"since": "2026-04-14", "former_tier": "tier3"}}
+        }
+        watchlist = [
+            {
+                "symbol": "IWM",
+                "priority": "strong_signal",
+                "tier": 3,
+                "rsi2": 3.0,
+                "close": 200.0,
+                "sma200": 195.0,
+                "above_sma": True,
+                "atr14": 2.0,
+                "prev_high": 202.0,
+                "entry_threshold": 10,
+            }
+        ]
+
+        r = MagicMock()
+        def redis_get(key):
+            if key == "trading:watchlist":
+                return json.dumps(watchlist)
+            if key == "trading:universe":
+                return json.dumps(universe)
+            if key == "trading:regime":
+                return json.dumps({"regime": "RANGING", "adx": 20})
+            if key == "trading:positions":
+                return json.dumps({})
+            return None
+        r.get.side_effect = redis_get
+        r.exists.return_value = True
+
+        with patch("watcher.is_market_hours", return_value=True), \
+             patch("watcher.check_whipsaw", return_value=False):
+            from watcher import generate_entry_signals
+            signals = generate_entry_signals(r, MagicMock(), MagicMock())
+
+        assert signals == [], f"Expected no signals, got: {signals}"
+
 
 # ── generate_exit_signals ─────────────────────────────────────
 

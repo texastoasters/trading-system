@@ -99,6 +99,8 @@ defmodule DashboardWeb.UniverseLiveTest do
       }
 
       send(view.pid, {:state_update, state})
+      # Tier 3 starts collapsed by default — expand it before asserting symbols
+      render_click(view, "toggle_section", %{"id" => "tier3"})
       html = render(view)
       # All three tier labels should appear
       assert html =~ "Tier 1 — Core"
@@ -548,6 +550,219 @@ defmodule DashboardWeb.UniverseLiveTest do
       html = render(view)
       # Integer close hits format_price catch-all: "$#{v}" = "$500"
       assert html =~ "$500"
+    end
+  end
+
+  describe "blacklist assigns" do
+    test "blacklisted symbols parsed from universe on state_update", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/universe")
+
+      state = %{
+        "trading:universe" => %{
+          "tier1" => ["SPY"], "tier2" => [], "tier3" => ["IWM"],
+          "blacklisted" => %{"IWM" => %{"since" => "2026-04-14", "former_tier" => "tier3"}}
+        },
+        "trading:watchlist" => [],
+        "trading:positions" => %{}
+      }
+
+      send(view.pid, {:state_update, state})
+      render(view)
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.blacklisted == %{"IWM" => %{"since" => "2026-04-14", "former_tier" => "tier3"}}
+    end
+
+    test "blacklisted assign is empty map when universe has no blacklisted key", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/universe")
+
+      state = %{
+        "trading:universe" => %{"tier1" => ["SPY"], "tier2" => [], "tier3" => []},
+        "trading:watchlist" => [],
+        "trading:positions" => %{}
+      }
+
+      send(view.pid, {:state_update, state})
+      render(view)
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.blacklisted == %{}
+    end
+  end
+
+  describe "collapsed sections" do
+    test "tier3 starts collapsed by default", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/universe")
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.collapsed["tier3"] == true
+      assert assigns.collapsed["tier1"] == false
+    end
+
+    test "toggle_section flips collapsed state for tier1", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/universe")
+
+      state = %{
+        "trading:universe" => %{"tier1" => ["SPY"], "tier2" => [], "tier3" => []},
+        "trading:watchlist" => [],
+        "trading:positions" => %{}
+      }
+      send(view.pid, {:state_update, state})
+      render(view)
+
+      render_hook(view, "toggle_section", %{"id" => "tier1"})
+
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.collapsed["tier1"] == true
+    end
+
+    test "toggle_section expands collapsed tier3", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/universe")
+
+      state = %{
+        "trading:universe" => %{"tier1" => [], "tier2" => [], "tier3" => ["IWM"]},
+        "trading:watchlist" => [],
+        "trading:positions" => %{}
+      }
+      send(view.pid, {:state_update, state})
+      render(view)
+
+      render_hook(view, "toggle_section", %{"id" => "tier3"})
+
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.collapsed["tier3"] == false
+    end
+  end
+
+  describe "blacklist events" do
+    test "confirm_blacklist shows success flash when symbol found in Redis universe", %{conn: conn} do
+      universe = %{"tier1" => [], "tier2" => [], "tier3" => ["IWM"], "blacklisted" => %{}}
+      Redix.command(:redix, ["SET", "trading:universe", Jason.encode!(universe)])
+
+      on_exit(fn -> Redix.command(:redix, ["DEL", "trading:universe"]) end)
+
+      {:ok, view, _} = live(conn, "/universe")
+
+      send(view.pid, {:state_update, %{
+        "trading:universe" => universe,
+        "trading:watchlist" => [],
+        "trading:positions" => %{}
+      }})
+
+      render(view)
+      render_hook(view, "show_blacklist_confirm", %{"symbol" => "IWM"})
+      render_hook(view, "confirm_blacklist", %{})
+
+      flash_values = :sys.get_state(view.pid).socket.assigns.flash |> Map.values()
+      assert Enum.any?(flash_values, &String.contains?(&1, "blacklisted"))
+    end
+
+    test "confirm_unblacklist shows error flash when Redis is unavailable", %{conn: conn} do
+      real_redix = Process.whereis(:redix)
+      Process.unregister(:redix)
+      {:ok, stub} = Dashboard.FakeRedix.start_link()
+      Process.register(stub, :redix)
+
+      on_exit(fn ->
+        try do Process.unregister(:redix) rescue _ -> :ok end
+        if real_redix && Process.alive?(real_redix) do
+          Process.register(real_redix, :redix)
+        end
+      end)
+
+      {:ok, view, _} = live(conn, "/universe")
+      render_hook(view, "confirm_unblacklist", %{"symbol" => "OKE"})
+
+      flash_values = :sys.get_state(view.pid).socket.assigns.flash |> Map.values()
+      assert Enum.any?(flash_values, &String.contains?(&1, "restore failed"))
+    end
+
+    test "confirm_unblacklist restores symbol when found in blacklisted dict in Redis", %{conn: conn} do
+      universe = %{
+        "tier1" => [], "tier2" => [], "tier3" => [],
+        "blacklisted" => %{"OKE" => %{"since" => "2026-04-14", "former_tier" => "tier3"}}
+      }
+      Redix.command(:redix, ["SET", "trading:universe", Jason.encode!(universe)])
+
+      on_exit(fn -> Redix.command(:redix, ["DEL", "trading:universe"]) end)
+
+      {:ok, view, _} = live(conn, "/universe")
+      render_hook(view, "confirm_unblacklist", %{"symbol" => "OKE"})
+
+      flash_values = :sys.get_state(view.pid).socket.assigns.flash |> Map.values()
+      assert Enum.any?(flash_values, &String.contains?(&1, "OKE"))
+    end
+
+    test "show_blacklist_confirm sets confirm_modal assign", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/universe")
+
+      state = %{
+        "trading:universe" => %{"tier1" => [], "tier2" => [], "tier3" => ["IWM"], "blacklisted" => %{}},
+        "trading:watchlist" => [],
+        "trading:positions" => %{}
+      }
+      send(view.pid, {:state_update, state})
+      render(view)
+
+      render_hook(view, "show_blacklist_confirm", %{"symbol" => "IWM"})
+
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.confirm_modal == %{action: :blacklist, symbol: "IWM"}
+    end
+
+    test "cancel_modal clears confirm_modal", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/universe")
+
+      state = %{
+        "trading:universe" => %{"tier1" => [], "tier2" => [], "tier3" => ["IWM"], "blacklisted" => %{}},
+        "trading:watchlist" => [],
+        "trading:positions" => %{}
+      }
+      send(view.pid, {:state_update, state})
+      render(view)
+
+      render_hook(view, "show_blacklist_confirm", %{"symbol" => "IWM"})
+      render_hook(view, "cancel_modal", %{})
+
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.confirm_modal == nil
+    end
+
+    test "confirm_blacklist sets flash on success", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/universe")
+
+      state = %{
+        "trading:universe" => %{"tier1" => [], "tier2" => [], "tier3" => ["IWM"], "blacklisted" => %{}},
+        "trading:watchlist" => [],
+        "trading:positions" => %{}
+      }
+      send(view.pid, {:state_update, state})
+      render(view)
+
+      render_hook(view, "show_blacklist_confirm", %{"symbol" => "IWM"})
+      render_hook(view, "confirm_blacklist", %{})
+
+      assigns = :sys.get_state(view.pid).socket.assigns
+      flash_values = Map.values(assigns.flash)
+      assert Enum.any?(flash_values, &String.contains?(&1, "blacklist"))
+    end
+
+    test "confirm_unblacklist sets flash on success", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/universe")
+
+      state = %{
+        "trading:universe" => %{
+          "tier1" => [], "tier2" => [], "tier3" => [],
+          "blacklisted" => %{"OKE" => %{"since" => "2026-04-14", "former_tier" => "tier3"}}
+        },
+        "trading:watchlist" => [],
+        "trading:positions" => %{}
+      }
+      send(view.pid, {:state_update, state})
+      render(view)
+
+      render_hook(view, "confirm_unblacklist", %{"symbol" => "OKE"})
+
+      assigns = :sys.get_state(view.pid).socket.assigns
+      flash_values = Map.values(assigns.flash)
+      assert Enum.any?(flash_values, &String.contains?(&1, "OKE"))
     end
   end
 
