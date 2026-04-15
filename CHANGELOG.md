@@ -8,6 +8,15 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.27.0] — 2026-04-14
+
+### Added
+- **Drawdown progress bar in alerts** — `drawdown_alert()` now includes a 20-character ASCII bar (`▓`/`░`) scaled 0–20% (HALT threshold), plus the next unbreached threshold and distance remaining (e.g. `Next: DEFENSIVE at 10% — 1.5% away`). Makes severity instantly readable at a glance without opening the dashboard.
+- **`scripts/validate_env.py`** — Fast preflight validation script. Checks all required env vars, Redis connectivity, Alpaca paper API, Telegram bot token, and TimescaleDB in under 5 seconds. Exits 0 if all pass, 1 on any failure. No test orders submitted. Run before first trade of the day or after credential changes.
+- **`scripts/refresh_economic_calendar.py`** — Eliminates the annual human-memory dependency on `economic_calendar.json`. Auto-computes NFP dates (first-Friday-of-month heuristic); accepts `--fomc` and `--cpi` for official dates published by the Fed and BLS. Patches the JSON in-place, preserves other years, sorts output by date. Run each December once official calendars are published.
+
+---
+
 ## [0.26.4] — 2026-04-14
 
 ### Fixed
