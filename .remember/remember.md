@@ -1,10 +1,10 @@
 # Handoff
 
 ## State
-Task 2 DONE. Added blacklist guard to watcher generate_entry_signals. Committed b41bb0b. All 566 tests pass (565 orig + 1 new). 100% coverage maintained on watcher.py.
+Symbol blacklist feature complete. All 6 tasks done. 566 Python + 349 Elixir tests passing. Wishlist updated. Ready for cpr.
 
 ## Next
-Task 3: Create universe_manager.py (orchestrates Redis updates + supervisor callbacks).
+Run `cpr` from worktree to push branch and open PR. Then run `superpowers:finishing-a-development-branch`.
 
 ## Context
-Watcher now reads trading:universe once before loop, extracts blacklisted_symbols set, skips any symbol in blacklisted after open_positions check. Test verifies IWM blacklisted → no entry signal. universe.py: blacklist_symbol removes from tier, adds to blacklisted dict, publishes sell signal. unblacklist_symbol restores to former_tier, idempotent.
+Worktree: `/Users/texastoast/local_repos/trading-system/.worktrees/feat/symbol-blacklist`, branch `feat/symbol-blacklist`. Flash NOT in app.html.heex layout — tests use `:sys.get_state(view.pid).socket.assigns.flash`.
