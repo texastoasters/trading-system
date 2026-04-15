@@ -720,7 +720,6 @@ def execute_sell(r, trading_client, order):
                 trading_client.cancel_order_by_id(stop_order_id)
                 stop_cancelled = True
                 print(f"  [Executor] Cancelled stop-loss {stop_order_id} for {symbol}")
-                time.sleep(1)  # let cancellation settle before submitting sell
             except Exception as cancel_err:
                 # Check if Alpaca already filled the stop (position closed server-side).
                 # If so, reconcile Redis and return — no market sell needed.
@@ -733,6 +732,16 @@ def execute_sell(r, trading_client, order):
                     pass
                 # Stop not filled or unreachable — proceed with market sell attempt.
                 print(f"  [Executor] ⚠️ Could not cancel stop-loss for {symbol}: {cancel_err}")
+
+        # Wait for Alpaca to release the held_for_orders lock before selling.
+        # Without confirmation the market sell will be rejected (code 40310000).
+        if stop_cancelled and not _wait_for_order_cancelled(trading_client, stop_order_id):
+            critical_alert(
+                f"Stop cancel timeout for {symbol} — could not confirm cancel of "
+                f"{stop_order_id}. Deferring sell to avoid held_for_orders rejection. "
+                f"Position may be unprotected; next health check will restore stop."
+            )
+            return False
 
         # Step 2: Submit the market sell
         req = MarketOrderRequest(

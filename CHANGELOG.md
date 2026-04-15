@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.27.2] — 2026-04-15
+
+### Fixed
+- **held_for_orders race condition in execute_sell** — after cancelling the stop-loss, `execute_sell` used `time.sleep(1)` before submitting the market sell. Under brief Alpaca cancel latency the qty was still `held_for_orders`, causing the sell to be rejected with `40310000` and the subsequent stop-loss restore to fail with the same error. Replaced `time.sleep(1)` with `_wait_for_order_cancelled` (10s timeout, 0.5s poll) — the same pattern used by `_check_trailing_upgrades` since v0.26.3. If confirmation times out, a critical alert fires and the sell is deferred rather than hitting the held_for_orders wall.
+
+---
+
 ## [0.27.1] — 2026-04-15
 
 ### Fixed

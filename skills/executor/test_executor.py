@@ -547,8 +547,10 @@ class TestExecuteSell:
         trading_client.submit_order.side_effect = submit_order
         trading_client.get_order_by_id.side_effect = Exception("API timeout")
 
-        from executor import execute_sell
-        result = execute_sell(r, trading_client, make_sell_signal())
+        with patch("executor._wait_for_order_cancelled", return_value=True), \
+             patch("time.sleep"):
+            from executor import execute_sell
+            result = execute_sell(r, trading_client, make_sell_signal())
 
         assert result is False
         trading_client.cancel_order_by_id.assert_called_once_with("stop-456")
@@ -572,7 +574,8 @@ class TestExecuteSell:
         trading_client.submit_order.return_value = make_order(status="accepted")
         trading_client.get_order_by_id.return_value = filled_order
 
-        with patch("time.sleep"), patch("notify.exit_alert"):
+        with patch("time.sleep"), patch("notify.exit_alert"), \
+             patch("executor._wait_for_order_cancelled", return_value=True):
             from executor import execute_sell
             result = execute_sell(r, trading_client, make_sell_signal())
 
@@ -620,7 +623,8 @@ class TestExecuteSell:
         trading_client.submit_order.side_effect = submit_order
         trading_client.get_order_by_id.return_value = pending_order
 
-        with patch("time.sleep"):
+        with patch("time.sleep"), \
+             patch("executor._wait_for_order_cancelled", return_value=True):
             from executor import execute_sell
             result = execute_sell(r, trading_client, make_sell_signal())
 
@@ -680,7 +684,8 @@ class TestExecuteSell:
         tc.submit_order.return_value = submitted
         tc.get_order_by_id.return_value = filled
 
-        with patch("time.sleep"), patch("notify.exit_alert"):
+        with patch("time.sleep"), patch("notify.exit_alert"), \
+             patch("executor._wait_for_order_cancelled", return_value=True):
             from executor import execute_sell
             result = execute_sell(r, tc, make_sell_signal(symbol="BTC/USD"))
         assert result is True
@@ -705,7 +710,8 @@ class TestExecuteSell:
 
         signal = make_sell_signal(signal_type="manual_liquidation")
 
-        with patch("time.sleep"), patch("notify.exit_alert"):
+        with patch("time.sleep"), patch("notify.exit_alert"), \
+             patch("executor._wait_for_order_cancelled", return_value=True):
             from executor import execute_sell
             result = execute_sell(r, tc, signal)
 
@@ -729,7 +735,8 @@ class TestExecuteSell:
         tc.submit_order.return_value = submitted
         tc.get_order_by_id.return_value = filled
 
-        with patch("time.sleep"), patch("notify.exit_alert"):
+        with patch("time.sleep"), patch("notify.exit_alert"), \
+             patch("executor._wait_for_order_cancelled", return_value=True):
             from executor import execute_sell
             result = execute_sell(r, tc, make_sell_signal())
         # Should succeed; hold_days falls back to 0
@@ -755,8 +762,10 @@ class TestExecuteSell:
         tc.cancel_order_by_id.return_value = None
         tc.submit_order.side_effect = submit_side
 
-        from executor import execute_sell
-        result = execute_sell(r, tc, make_sell_signal())
+        with patch("executor._wait_for_order_cancelled", return_value=True), \
+             patch("time.sleep"), patch("executor.critical_alert"):
+            from executor import execute_sell
+            result = execute_sell(r, tc, make_sell_signal())
         assert result is False
 
     def test_sell_cancel_exception_during_timeout_recovery(self):
@@ -788,7 +797,8 @@ class TestExecuteSell:
         # First 5 calls return pending (poll loop), then next call raises (get_order_by_id in cancel block)
         tc.get_order_by_id.side_effect = [pending] * 5 + [Exception("not found")]
 
-        with patch("time.sleep"):
+        with patch("time.sleep"), \
+             patch("executor._wait_for_order_cancelled", return_value=True):
             from executor import execute_sell
             result = execute_sell(r, tc, make_sell_signal())
         assert result is False
@@ -896,6 +906,26 @@ class TestExecuteSell:
             execute_sell(r, tc, make_sell_signal())
 
         r.delete.assert_called_once_with("trading:exit_signaled:SPY")
+
+    def test_stop_cancel_confirmation_timeout_bails_and_alerts(self):
+        """Cancel sent but _wait_for_order_cancelled times out → no sell submitted,
+        critical alert fired, returns False."""
+        pos = make_position(stop_order_id="stop-456")
+        r, store = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        tc.get_clock.return_value = make_clock(is_open=True)
+
+        with patch("executor._wait_for_order_cancelled", return_value=False), \
+             patch("executor.critical_alert") as mock_alert:
+            from executor import execute_sell
+            result = execute_sell(r, tc, make_sell_signal())
+
+        assert result is False
+        tc.submit_order.assert_not_called()
+        mock_alert.assert_called_once()
+        assert "OKE" not in mock_alert.call_args[0][0]  # alert contains SPY
+        assert "SPY" in mock_alert.call_args[0][0]
 
 
 # ── TestCancelExistingOrders ─────────────────────────────────
@@ -2160,6 +2190,7 @@ class TestExecuteSellLogsTrade:
         r, store, tc, signal, pos = self._setup_successful_sell()
 
         with patch("time.sleep"), patch("notify.exit_alert"), \
+             patch("executor._wait_for_order_cancelled", return_value=True), \
              patch("executor._log_trade") as mock_log:
             from executor import execute_sell
             result = execute_sell(r, tc, signal)
@@ -2175,6 +2206,7 @@ class TestExecuteSellLogsTrade:
         r, store, tc, signal, pos = self._setup_successful_sell(signal_type="time_stop")
 
         with patch("time.sleep"), patch("notify.exit_alert"), \
+             patch("executor._wait_for_order_cancelled", return_value=True), \
              patch("executor._log_trade") as mock_log:
             from executor import execute_sell
             execute_sell(r, tc, signal)
@@ -2204,6 +2236,7 @@ class TestExecuteSellLogsTrade:
         signal = {"symbol": "SPY", "side": "sell"}
 
         with patch("time.sleep"), patch("notify.exit_alert"), \
+             patch("executor._wait_for_order_cancelled", return_value=True), \
              patch("executor._log_trade") as mock_log:
             from executor import execute_sell
             execute_sell(r, tc, signal)
@@ -2219,6 +2252,7 @@ class TestExecuteSellLogsTrade:
         # pnl = (510 - 500) * 10 = 100
 
         with patch("time.sleep"), patch("notify.exit_alert"), \
+             patch("executor._wait_for_order_cancelled", return_value=True), \
              patch("executor._log_trade") as mock_log:
             from executor import execute_sell
             execute_sell(r, tc, signal)
@@ -2245,6 +2279,7 @@ class TestExecuteSellLogsTrade:
         tc.get_order_by_id.return_value = filled
 
         with patch("time.sleep"), patch("notify.exit_alert"), \
+             patch("executor._wait_for_order_cancelled", return_value=True), \
              patch("executor._log_trade") as mock_log:
             from executor import execute_sell
             execute_sell(r, tc, make_sell_signal())
