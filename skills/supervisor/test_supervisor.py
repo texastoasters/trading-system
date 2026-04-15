@@ -634,8 +634,21 @@ class TestRunHealthCheck:
             run_health_check(r)
         mock_notify.assert_called_once()
 
+    def test_watcher_30min_heartbeat_is_not_stale(self):
+        """Watcher at 30 min old is within its off-hours sleep window — no alert, no restart."""
+        r = self._make_hb_redis(watcher_age_min=30)
+        with patch("supervisor.notify"), \
+             patch("supervisor.run_circuit_breakers"), \
+             patch("supervisor.critical_alert") as mock_alert, \
+             patch("supervisor.attempt_service_restart") as mock_restart:
+            from supervisor import run_health_check
+            issues = run_health_check(r)
+        assert not any("watcher" in i for i in issues)
+        mock_alert.assert_not_called()
+        mock_restart.assert_not_called()
+
     def test_stale_watcher_triggers_restart_attempt(self):
-        r = self._make_hb_redis(watcher_age_min=10)
+        r = self._make_hb_redis(watcher_age_min=40)
         with patch("supervisor.notify"), \
              patch("supervisor.run_circuit_breakers"), \
              patch("supervisor.critical_alert"), \

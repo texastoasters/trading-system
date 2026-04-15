@@ -196,14 +196,16 @@ def run_health_check(r):
     issues = []
     daemon_stale = False
 
-    # Daemon agent heartbeats — should always be running, flag if stale > 5 min
-    # executor, portfolio_manager, watcher are all started by the systemd service
+    # Daemon agent heartbeats — flag if stale beyond per-agent threshold.
+    # executor, portfolio_manager, watcher are all started by the systemd service.
+    # Watcher has a higher threshold (35 min) because it sleeps 30 min between off-hours cycles.
     for agent in ["executor", "portfolio_manager", "watcher"]:
+        threshold = config.DAEMON_STALE_THRESHOLDS.get(agent, 5)
         hb = r.get(Keys.heartbeat(agent))
         if hb:
             last = datetime.fromisoformat(hb)
             age_min = (datetime.now() - last).total_seconds() / 60
-            if age_min > 5:
+            if age_min > threshold:
                 issues.append(f"{agent}: heartbeat {age_min:.0f}min old (daemon may have crashed)")
                 print(f"  ⚠️  {agent}: last heartbeat {age_min:.0f} min ago — daemon may have crashed")
                 critical_alert(f"🚨 {agent} heartbeat {age_min:.0f}min old — daemon may have crashed")

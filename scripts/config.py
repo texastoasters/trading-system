@@ -177,6 +177,17 @@ TRAILING_TRAIL_PCT = {
 # NOTE: both dicts only contain tiers 1, 2, 3. Callers must guard against
 # unknown tier values (e.g. use pos.get("tier", 3)) before indexing.
 
+# ── Daemon Heartbeat Stale Thresholds ──────────────────────
+# Maximum acceptable heartbeat age (minutes) before the supervisor declares a daemon crashed.
+# Executor and PM use a tight Redis pub/sub loop (heartbeat every ~60s) → 5 min is sufficient.
+# Watcher sleeps 30 min between cycles off-hours → threshold must exceed 30 min or the
+# supervisor fires a false alarm at market open when the off-hours sleep overlaps the check.
+DAEMON_STALE_THRESHOLDS = {
+    "executor": 5,
+    "portfolio_manager": 5,
+    "watcher": 35,
+}
+
 # ── Default Universe (before Supervisor populates Redis) ────
 
 DEFAULT_UNIVERSE = {
