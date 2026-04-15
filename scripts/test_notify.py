@@ -303,6 +303,61 @@ class TestDrawdownAlert:
         assert "unrealized" in out.lower()
 
 
+# ── _drawdown_progress_bar ───────────────────────────────────
+
+class TestDrawdownProgressBar:
+    def test_at_zero_bar_empty_next_caution(self):
+        result = notify._drawdown_progress_bar(0.0)
+        assert "░" * 20 in result
+        assert "CAUTION" in result
+        assert "5.0% away" in result
+
+    def test_at_caution_bar_quarter_filled_next_defensive(self):
+        result = notify._drawdown_progress_bar(5.0)
+        assert "▓" * 5 in result
+        assert "░" * 15 in result
+        assert "DEFENSIVE" in result
+        assert "5.0% away" in result
+
+    def test_at_defensive_next_critical(self):
+        result = notify._drawdown_progress_bar(10.0)
+        assert "▓" * 10 in result
+        assert "░" * 10 in result
+        assert "CRITICAL" in result
+
+    def test_at_critical_next_halt(self):
+        result = notify._drawdown_progress_bar(15.0)
+        assert "▓" * 15 in result
+        assert "░" * 5 in result
+        assert "HALT" in result
+        assert "away" in result
+
+    def test_at_halt_bar_full_breach_message(self):
+        result = notify._drawdown_progress_bar(20.0)
+        assert "▓" * 20 in result
+        assert "away" not in result
+        assert "blocked" in result.lower() or "breached" in result.lower()
+
+    def test_above_halt_bar_clamped_to_full(self):
+        result = notify._drawdown_progress_bar(25.0)
+        assert "▓" * 20 in result
+        assert "▓" * 21 not in result
+
+    def test_fractional_pct_shown_in_output(self):
+        result = notify._drawdown_progress_bar(8.5)
+        assert "8.5%" in result
+
+    def test_drawdown_alert_includes_bar_chars(self, capsys):
+        notify.drawdown_alert(8.5, "Halved position sizes")
+        out = capsys.readouterr().out
+        assert "▓" in out or "░" in out
+
+    def test_drawdown_alert_includes_next_threshold(self, capsys):
+        notify.drawdown_alert(8.5, "Halved position sizes")
+        out = capsys.readouterr().out
+        assert "DEFENSIVE" in out
+
+
 # ── universe_update ──────────────────────────────────────────
 
 class TestUniverseUpdate:
