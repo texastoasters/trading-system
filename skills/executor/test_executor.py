@@ -1500,6 +1500,44 @@ class TestCheckCancelledStops:
 
         mock_alert.assert_called()
 
+    def test_cancelled_stop_adopts_existing_trailing_stop_on_alpaca(self):
+        """Cancelled stop + active trailing stop on Alpaca → adopt it, set trailing=True."""
+        pos = make_position(symbol="SPY", qty=10, stop=490.0, stop_order_id="old-stop")
+        r, store = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        tc.get_order_by_id.return_value = self._make_stop_order(status="cancelled")
+        tc.get_all_positions.return_value = [self._make_alpaca_position("SPY")]
+
+        manual_trail = MagicMock()
+        manual_trail.id = "manual-trail-xyz"
+        manual_trail.side = "sell"
+        manual_trail.type = "trailing_stop"
+        tc.get_orders.return_value = [manual_trail]
+
+        with patch("executor.critical_alert"), \
+             patch("executor.submit_stop_loss") as mock_submit, \
+             patch("executor.submit_trailing_stop") as mock_trail:
+            from executor import _check_cancelled_stops
+            _check_cancelled_stops(tc, r)
+
+        mock_submit.assert_not_called()
+        mock_trail.assert_not_called()
+
+        saved = json.loads(store["trading:positions"])
+        assert saved["SPY"]["stop_order_id"] == "manual-trail-xyz"
+        assert saved["SPY"]["trailing"] is True
+
+    def test_find_active_stop_order_returns_none_on_api_error(self):
+        """_find_active_stop_order swallows exceptions and returns None."""
+        tc = MagicMock()
+        tc.get_orders.side_effect = RuntimeError("network timeout")
+
+        from executor import _find_active_stop_order
+        result = _find_active_stop_order(tc, "SPY")
+
+        assert result is None
+
 
 # ── TestReconcileStopFilledFillPrice ─────────────────────────
 
