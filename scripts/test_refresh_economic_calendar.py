@@ -4,8 +4,10 @@ Tests for refresh_economic_calendar.py — 100% coverage target.
 Run from repo root:
     PYTHONPATH=scripts pytest scripts/test_refresh_economic_calendar.py -v
 """
+import json
 import sys
 from datetime import date
+from pathlib import Path
 
 import pytest
 
@@ -160,3 +162,57 @@ class TestMergeEntries:
         new_entries = [{"date": "2027-01-08", "event": "NFP"}]
         result = refresh_economic_calendar.merge_entries([], new_entries, 2027)
         assert result == new_entries
+
+
+# ── main ─────────────────────────────────────────────────────
+
+class TestMain:
+    def test_auto_nfp_no_existing_file(self, tmp_path, monkeypatch, capsys):
+        cal_path = str(tmp_path / "calendar.json")
+        monkeypatch.setattr(refresh_economic_calendar, "CALENDAR_PATH", cal_path)
+        ret = refresh_economic_calendar.main(["--year", "2027"])
+        assert ret == 0
+        data = json.loads(Path(cal_path).read_text())
+        assert len(data) == 12
+        assert all(e["event"] == "NFP" for e in data)
+
+    def test_existing_calendar_preserved(self, tmp_path, monkeypatch, capsys):
+        cal_path = str(tmp_path / "calendar.json")
+        Path(cal_path).write_text(json.dumps([{"date": "2026-01-07", "event": "NFP"}]))
+        monkeypatch.setattr(refresh_economic_calendar, "CALENDAR_PATH", cal_path)
+        refresh_economic_calendar.main(["--year", "2027"])
+        data = json.loads(Path(cal_path).read_text())
+        assert any(e["date"] == "2026-01-07" for e in data)
+
+    def test_custom_nfp_replaces_auto(self, tmp_path, monkeypatch, capsys):
+        cal_path = str(tmp_path / "calendar.json")
+        monkeypatch.setattr(refresh_economic_calendar, "CALENDAR_PATH", cal_path)
+        ret = refresh_economic_calendar.main(["--year", "2027", "--nfp", "2027-01-08"])
+        assert ret == 0
+        data = json.loads(Path(cal_path).read_text())
+        assert {"date": "2027-01-08", "event": "NFP"} in data
+
+    def test_fomc_and_cpi_included(self, tmp_path, monkeypatch, capsys):
+        cal_path = str(tmp_path / "calendar.json")
+        monkeypatch.setattr(refresh_economic_calendar, "CALENDAR_PATH", cal_path)
+        refresh_economic_calendar.main([
+            "--year", "2027",
+            "--fomc", "2027-01-28",
+            "--cpi", "2027-01-15",
+        ])
+        data = json.loads(Path(cal_path).read_text())
+        events = {(e["date"], e["event"]) for e in data}
+        assert ("2027-01-28", "FOMC") in events
+        assert ("2027-01-15", "CPI") in events
+
+    def test_auto_nfp_prints_bls_warning(self, tmp_path, monkeypatch, capsys):
+        cal_path = str(tmp_path / "calendar.json")
+        monkeypatch.setattr(refresh_economic_calendar, "CALENDAR_PATH", cal_path)
+        refresh_economic_calendar.main(["--year", "2027"])
+        assert "BLS" in capsys.readouterr().out
+
+    def test_prints_ok_summary(self, tmp_path, monkeypatch, capsys):
+        cal_path = str(tmp_path / "calendar.json")
+        monkeypatch.setattr(refresh_economic_calendar, "CALENDAR_PATH", cal_path)
+        refresh_economic_calendar.main(["--year", "2027"])
+        assert "[OK]" in capsys.readouterr().out

@@ -165,6 +165,27 @@ class TestCheckTimescaleDB:
 
 # ── main ─────────────────────────────────────────────────────
 
+class TestImportFallbacks:
+    def test_redis_lib_none_when_redis_not_installed(self):
+        import importlib
+        saved_redis = sys.modules.get("redis")
+        saved_ve = sys.modules.get("validate_env")
+        sys.modules["redis"] = None  # triggers ImportError on `import redis`
+        sys.modules.pop("validate_env", None)
+        try:
+            import validate_env as ve_fresh
+            assert ve_fresh.redis_lib is None
+        finally:
+            if saved_redis is not None:
+                sys.modules["redis"] = saved_redis
+            else:
+                sys.modules.pop("redis", None)
+            if saved_ve is not None:
+                sys.modules["validate_env"] = saved_ve
+            else:
+                sys.modules.pop("validate_env", None)
+
+
 class TestMain:
     def _patch_all(self, results: dict):
         defaults = {

@@ -31,6 +31,22 @@ defmodule Dashboard.QueriesTest do
     end
   end
 
+  describe "paginated_trades/2" do
+    test "returns [] when trades table absent or empty" do
+      assert Queries.paginated_trades() == []
+    end
+
+    test "accepts page and per_page arguments" do
+      assert Queries.paginated_trades(2, 10) == []
+    end
+  end
+
+  describe "trade_count/0" do
+    test "returns 0 when trades table absent or empty" do
+      assert Queries.trade_count() == 0
+    end
+  end
+
   describe "win_loss_stats/1" do
     test "returns nil or aggregate map (table may not exist in test env)" do
       result = Queries.win_loss_stats()
@@ -86,6 +102,7 @@ defmodule Dashboard.QueriesTest do
       assert is_nil(Queries.win_loss_stats()) or is_map(Queries.win_loss_stats())
     end
   end
+
 
   describe "instrument_performance/1" do
     test "returns [] when no trades exist (DB error or empty table)" do
