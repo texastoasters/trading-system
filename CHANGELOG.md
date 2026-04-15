@@ -8,6 +8,16 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.28.0] — 2026-04-15
+
+### Added
+- **Symbol blacklist** — operator-driven mechanism to permanently exclude a symbol from trading. Blacklisting removes the symbol from its tier, queues a sell of any open position via `trading:approved_orders`, and prevents re-entry until removed. Accessible from the Universe page (`/universe`).
+- **Universe page redesign** — collapsible tier sections (Tier 3 collapsed by default), per-symbol Blacklist button with confirmation modal, Blacklisted section showing struck-through symbols with date, former-tier badge, pending-sell badge (while position still open), and Remove button.
+- **Liquidate confirmation modal** — replaced `data-confirm` browser dialog on Liquidate buttons (main dashboard) with a LiveView modal matching the blacklist modal pattern.
+- **Watcher blacklist guard** — `generate_entry_signals` skips any symbol present in `trading:universe["blacklisted"]`, preventing stale watchlist entries from generating new signals after blacklisting.
+
+---
+
 ## [0.27.2] — 2026-04-15
 
 ### Fixed

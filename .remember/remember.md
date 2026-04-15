@@ -1,10 +1,10 @@
 # Handoff
 
 ## State
-Symbol blacklist feature complete. All 6 tasks done. 566 Python + 349 Elixir tests passing. Wishlist updated. Ready for cpr.
+v0.28.0. Symbol blacklist feature complete + 100% coverage restored. PR #115 open on `feat/symbol-blacklist`. All commits pushed.
 
 ## Next
-Run `cpr` from worktree to push branch and open PR. Then run `superpowers:finishing-a-development-branch`.
+Merge PR #115, tag v0.28.0 after merge.
 
 ## Context
-Worktree: `/Users/texastoast/local_repos/trading-system/.worktrees/feat/symbol-blacklist`, branch `feat/symbol-blacklist`. Flash NOT in app.html.heex layout — tests use `:sys.get_state(view.pid).socket.assigns.flash`.
+Worktree: `/Users/texastoast/local_repos/trading-system/.worktrees/feat/symbol-blacklist`. Coverage gap was universe_live Redis paths — fixed by pre-populating Redis in tests and FakeRedix swap for error path.
