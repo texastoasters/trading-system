@@ -204,6 +204,28 @@ def _wait_for_order_cancelled(trading_client, order_id, timeout_seconds=10):
     return False
 
 
+_STOP_ORDER_TYPES = frozenset({"stop", "stop_limit", "trailing_stop"})
+
+
+def _find_active_stop_order(trading_client, symbol):
+    """Return the first active sell-side stop order for symbol on Alpaca, or None.
+
+    Used to detect manually-placed replacement stops so they can be adopted
+    rather than triggering a duplicate resubmit.
+    """
+    try:
+        req = GetOrdersRequest(status=QueryOrderStatus.OPEN, symbols=[symbol])
+        orders = trading_client.get_orders(req)
+        for o in orders:
+            side_val = getattr(o.side, "value", str(o.side)).lower()
+            order_type = getattr(o.type, "value", str(o.type)).lower()
+            if side_val == "sell" and order_type in _STOP_ORDER_TYPES:
+                return o
+    except Exception as exc:
+        print(f"  [Executor] _find_active_stop_order: could not query orders for {symbol}: {exc}")
+    return None
+
+
 def _check_cancelled_stops(trading_client, r):
     """Check all open positions for unexpectedly cancelled stop orders.
 
@@ -260,7 +282,27 @@ def _check_cancelled_stops(trading_client, r):
                 r.set(Keys.POSITIONS, json.dumps(positions))
                 continue
 
-            # Position still exists — resubmit stop (trailing or fixed GTC)
+            # Position still exists — check if a replacement stop already exists
+            # (e.g. placed manually) before resubmitting to avoid duplicates.
+            existing = _find_active_stop_order(trading_client, symbol)
+            if existing:
+                pos["stop_order_id"] = str(existing.id)
+                order_type = getattr(existing.type, "value", str(existing.type)).lower()
+                if order_type in ("stop", "stop_limit"):
+                    pos["stop_price"] = float(existing.stop_price)
+                elif order_type == "trailing_stop":
+                    pos["trailing"] = True
+                positions[symbol] = pos
+                r.set(Keys.POSITIONS, json.dumps(positions))
+                critical_alert(
+                    f"STOP ADOPTED: {symbol}\n"
+                    f"Old stop {stop_id} was cancelled. Found existing stop {existing.id} on Alpaca.\n"
+                    f"Adopted as protection. Verify stop price matches your intent."
+                )
+                print(f"  [Executor] ✅ {symbol}: adopted existing stop {existing.id}")
+                continue
+
+            # No active stop found — resubmit one (trailing or fixed GTC)
             print(f"  [Executor] ⚠️  {symbol}: stop {stop_id} cancelled — resubmitting")
             if pos.get("trailing"):
                 new_stop_id = submit_trailing_stop(

@@ -1468,6 +1468,38 @@ class TestCheckCancelledStops:
         saved = json.loads(store["trading:positions"])
         assert saved["SPY"]["stop_order_id"] == "new-fixed-001"
 
+    def test_cancelled_stop_adopts_existing_active_stop_on_alpaca(self):
+        """Cancelled stop + active stop already on Alpaca (e.g. manually placed) →
+        adopt it: update Redis with its ID + price, no new order submitted."""
+        pos = make_position(symbol="SPY", qty=10, stop=490.0, stop_order_id="old-stop")
+        r, store = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        tc.get_order_by_id.return_value = self._make_stop_order(status="cancelled")
+        tc.get_all_positions.return_value = [self._make_alpaca_position("SPY")]
+
+        manual_stop = MagicMock()
+        manual_stop.id = "manual-stop-abc"
+        manual_stop.side = "sell"
+        manual_stop.type = "stop"
+        manual_stop.stop_price = 488.0
+        tc.get_orders.return_value = [manual_stop]
+
+        with patch("executor.critical_alert") as mock_alert, \
+             patch("executor.submit_stop_loss") as mock_submit, \
+             patch("executor.submit_trailing_stop") as mock_trail:
+            from executor import _check_cancelled_stops
+            _check_cancelled_stops(tc, r)
+
+        mock_submit.assert_not_called()
+        mock_trail.assert_not_called()
+
+        saved = json.loads(store["trading:positions"])
+        assert saved["SPY"]["stop_order_id"] == "manual-stop-abc"
+        assert saved["SPY"]["stop_price"] == pytest.approx(488.0)
+
+        mock_alert.assert_called()
+
 
 # ── TestReconcileStopFilledFillPrice ─────────────────────────
 
