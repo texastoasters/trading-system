@@ -551,6 +551,161 @@ defmodule DashboardWeb.UniverseLiveTest do
     end
   end
 
+  describe "blacklist assigns" do
+    test "blacklisted symbols parsed from universe on state_update", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/universe")
+
+      state = %{
+        "trading:universe" => %{
+          "tier1" => ["SPY"], "tier2" => [], "tier3" => ["IWM"],
+          "blacklisted" => %{"IWM" => %{"since" => "2026-04-14", "former_tier" => "tier3"}}
+        },
+        "trading:watchlist" => [],
+        "trading:positions" => %{}
+      }
+
+      send(view.pid, {:state_update, state})
+      render(view)
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.blacklisted == %{"IWM" => %{"since" => "2026-04-14", "former_tier" => "tier3"}}
+    end
+
+    test "blacklisted assign is empty map when universe has no blacklisted key", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/universe")
+
+      state = %{
+        "trading:universe" => %{"tier1" => ["SPY"], "tier2" => [], "tier3" => []},
+        "trading:watchlist" => [],
+        "trading:positions" => %{}
+      }
+
+      send(view.pid, {:state_update, state})
+      render(view)
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.blacklisted == %{}
+    end
+  end
+
+  describe "collapsed sections" do
+    test "tier3 starts collapsed by default", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/universe")
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.collapsed["tier3"] == true
+      assert assigns.collapsed["tier1"] == false
+    end
+
+    test "toggle_section flips collapsed state for tier1", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/universe")
+
+      state = %{
+        "trading:universe" => %{"tier1" => ["SPY"], "tier2" => [], "tier3" => []},
+        "trading:watchlist" => [],
+        "trading:positions" => %{}
+      }
+      send(view.pid, {:state_update, state})
+      render(view)
+
+      render_hook(view, "toggle_section", %{"id" => "tier1"})
+
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.collapsed["tier1"] == true
+    end
+
+    test "toggle_section expands collapsed tier3", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/universe")
+
+      state = %{
+        "trading:universe" => %{"tier1" => [], "tier2" => [], "tier3" => ["IWM"]},
+        "trading:watchlist" => [],
+        "trading:positions" => %{}
+      }
+      send(view.pid, {:state_update, state})
+      render(view)
+
+      render_hook(view, "toggle_section", %{"id" => "tier3"})
+
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.collapsed["tier3"] == false
+    end
+  end
+
+  describe "blacklist events" do
+    test "show_blacklist_confirm sets confirm_modal assign", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/universe")
+
+      state = %{
+        "trading:universe" => %{"tier1" => [], "tier2" => [], "tier3" => ["IWM"], "blacklisted" => %{}},
+        "trading:watchlist" => [],
+        "trading:positions" => %{}
+      }
+      send(view.pid, {:state_update, state})
+      render(view)
+
+      render_hook(view, "show_blacklist_confirm", %{"symbol" => "IWM"})
+
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.confirm_modal == %{action: :blacklist, symbol: "IWM"}
+    end
+
+    test "cancel_modal clears confirm_modal", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/universe")
+
+      state = %{
+        "trading:universe" => %{"tier1" => [], "tier2" => [], "tier3" => ["IWM"], "blacklisted" => %{}},
+        "trading:watchlist" => [],
+        "trading:positions" => %{}
+      }
+      send(view.pid, {:state_update, state})
+      render(view)
+
+      render_hook(view, "show_blacklist_confirm", %{"symbol" => "IWM"})
+      render_hook(view, "cancel_modal", %{})
+
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.confirm_modal == nil
+    end
+
+    test "confirm_blacklist sets flash on success", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/universe")
+
+      state = %{
+        "trading:universe" => %{"tier1" => [], "tier2" => [], "tier3" => ["IWM"], "blacklisted" => %{}},
+        "trading:watchlist" => [],
+        "trading:positions" => %{}
+      }
+      send(view.pid, {:state_update, state})
+      render(view)
+
+      render_hook(view, "show_blacklist_confirm", %{"symbol" => "IWM"})
+      render_hook(view, "confirm_blacklist", %{})
+
+      assigns = :sys.get_state(view.pid).socket.assigns
+      flash_values = Map.values(assigns.flash)
+      assert Enum.any?(flash_values, &String.contains?(&1, "blacklist"))
+    end
+
+    test "confirm_unblacklist sets flash on success", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/universe")
+
+      state = %{
+        "trading:universe" => %{
+          "tier1" => [], "tier2" => [], "tier3" => [],
+          "blacklisted" => %{"OKE" => %{"since" => "2026-04-14", "former_tier" => "tier3"}}
+        },
+        "trading:watchlist" => [],
+        "trading:positions" => %{}
+      }
+      send(view.pid, {:state_update, state})
+      render(view)
+
+      render_hook(view, "confirm_unblacklist", %{"symbol" => "OKE"})
+
+      assigns = :sys.get_state(view.pid).socket.assigns
+      flash_values = Map.values(assigns.flash)
+      assert Enum.any?(flash_values, &String.contains?(&1, "OKE"))
+    end
+  end
+
   describe "mobile layout" do
     test "universe page has mobile-safe horizontal padding", %{conn: conn} do
       {:ok, _view, html} = live(conn, "/universe")

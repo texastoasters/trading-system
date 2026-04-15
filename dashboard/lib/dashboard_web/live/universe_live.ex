@@ -3,8 +3,8 @@ defmodule DashboardWeb.UniverseLive do
   Symbol Universe detail page.
 
   Shows every symbol in the tracked universe grouped by tier,
-  cross-referenced against the current watchlist and open positions
-  for a full picture of each symbol's status.
+  cross-referenced against the current watchlist and open positions.
+  Supports blacklisting symbols via dashboard controls.
   """
 
   use DashboardWeb, :live_view
@@ -21,17 +21,22 @@ defmodule DashboardWeb.UniverseLive do
       |> assign(:universe, nil)
       |> assign(:watchlist, [])
       |> assign(:redis_positions, %{})
+      |> assign(:blacklisted, %{})
+      |> assign(:collapsed, %{"tier1" => false, "tier2" => false, "tier3" => true, "blacklist" => false})
+      |> assign(:confirm_modal, nil)
 
     {:ok, socket}
   end
 
   @impl true
   def handle_info({:state_update, state}, socket) do
+    universe = state["trading:universe"]
     socket =
       socket
-      |> assign(:universe, state["trading:universe"])
+      |> assign(:universe, universe)
       |> assign(:watchlist, state["trading:watchlist"] || [])
       |> assign(:redis_positions, state["trading:positions"] || %{})
+      |> assign(:blacklisted, (universe || %{})["blacklisted"] || %{})
 
     {:noreply, socket}
   end
@@ -39,9 +44,119 @@ defmodule DashboardWeb.UniverseLive do
   # Ignore other PubSub messages (signals, clock, etc.)
   def handle_info(_msg, socket), do: {:noreply, socket}
 
+  @impl true
+  def handle_event("toggle_section", %{"id" => id}, socket) do
+    collapsed = Map.update(socket.assigns.collapsed, id, false, fn v -> !v end)
+    {:noreply, assign(socket, :collapsed, collapsed)}
+  end
+
+  @impl true
+  def handle_event("show_blacklist_confirm", %{"symbol" => symbol}, socket) do
+    {:noreply, assign(socket, :confirm_modal, %{action: :blacklist, symbol: symbol})}
+  end
+
+  @impl true
+  def handle_event("cancel_modal", _params, socket) do
+    {:noreply, assign(socket, :confirm_modal, nil)}
+  end
+
+  @impl true
+  def handle_event("confirm_blacklist", _params, socket) do
+    symbol = socket.assigns.confirm_modal[:symbol]
+    socket = assign(socket, :confirm_modal, nil)
+
+    case blacklist_symbol_redis(symbol) do
+      {:ok, _tier} ->
+        {:noreply, put_flash(socket, :info, "#{symbol} blacklisted — sell order queued")}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, "#{symbol} blacklist failed: #{reason}")}
+    end
+  end
+
+  @impl true
+  def handle_event("confirm_unblacklist", %{"symbol" => symbol}, socket) do
+    case unblacklist_symbol_redis(symbol) do
+      {:ok, tier} ->
+        {:noreply, put_flash(socket, :info, "#{symbol} restored to #{tier}")}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, "#{symbol} restore failed: #{reason}")}
+    end
+  end
+
+  # ── Redis operations ──────────────────────────────────────────────────────────
+
+  defp blacklist_symbol_redis(symbol) do
+    with {:ok, raw} <- Redix.command(:redix, ["GET", "trading:universe"]),
+         {:ok, universe} <- Jason.decode(raw || "{}") do
+      former_tier =
+        Enum.find_value(["tier1", "tier2", "tier3"], fn t ->
+          if symbol in (universe[t] || []), do: t
+        end)
+
+      case former_tier do
+        nil ->
+          {:error, "Symbol not found in universe"}
+
+        tier ->
+          blacklisted = universe["blacklisted"] || %{}
+
+          updated =
+            universe
+            |> Map.put(tier, List.delete(universe[tier] || [], symbol))
+            |> Map.put(
+              "blacklisted",
+              Map.put(blacklisted, symbol, %{
+                "since" => Date.utc_today() |> Date.to_iso8601(),
+                "former_tier" => tier
+              })
+            )
+
+          order =
+            Jason.encode!(%{
+              "symbol" => symbol,
+              "side" => "sell",
+              "signal_type" => "blacklist_liquidation",
+              "reason" => "Symbol #{symbol} blacklisted via dashboard",
+              "force" => true,
+              "time" => DateTime.utc_now() |> DateTime.to_iso8601()
+            })
+
+          with {:ok, _} <- Redix.command(:redix, ["SET", "trading:universe", Jason.encode!(updated)]),
+               {:ok, _} <- Redix.command(:redix, ["PUBLISH", "trading:approved_orders", order]) do
+            {:ok, tier}
+          end
+      end
+    end
+  end
+
+  defp unblacklist_symbol_redis(symbol) do
+    with {:ok, raw} <- Redix.command(:redix, ["GET", "trading:universe"]),
+         {:ok, universe} <- Jason.decode(raw || "{}") do
+      blacklisted = universe["blacklisted"] || %{}
+
+      case Map.get(blacklisted, symbol) do
+        nil ->
+          {:ok, "already removed"}
+
+        %{"former_tier" => tier} ->
+          tier_list = universe[tier] || []
+
+          updated =
+            universe
+            |> Map.put("blacklisted", Map.delete(blacklisted, symbol))
+            |> Map.put(tier, if(symbol in tier_list, do: tier_list, else: tier_list ++ [symbol]))
+
+          with {:ok, _} <- Redix.command(:redix, ["SET", "trading:universe", Jason.encode!(updated)]) do
+            {:ok, tier}
+          end
+      end
+    end
+  end
+
   # ── Helpers ──────────────────────────────────────────────────────────────────
 
-  # Build a flat list of enriched symbol maps for one tier list.
   defp enrich_tier(symbols, tier_num, wl_map, positions) do
     Enum.map(symbols, fn sym ->
       wl = Map.get(wl_map, sym)
@@ -117,4 +232,10 @@ defmodule DashboardWeb.UniverseLive do
   defp format_price(nil), do: "—"
   defp format_price(v) when is_float(v), do: "$#{:erlang.float_to_binary(v, decimals: 2)}"
   defp format_price(v), do: "$#{v}"
+
+  defp tier_key_for_num(1), do: "tier1"
+  defp tier_key_for_num(2), do: "tier2"
+  defp tier_key_for_num(3), do: "tier3"
+  # coveralls-ignore-next-line
+  defp tier_key_for_num(_), do: "tier3"
 end
