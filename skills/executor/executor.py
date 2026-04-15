@@ -183,6 +183,27 @@ def _reconcile_stop_filled(r, pos, positions, symbol, fill_price=None):
 
 # ── Runtime Stop Monitoring ──────────────────────────────────
 
+def _wait_for_order_cancelled(trading_client, order_id, timeout_seconds=10):
+    """Poll until order reaches a terminal cancelled/expired state.
+
+    Returns True if confirmed cancelled/expired within timeout.
+    Returns False on timeout or if order is filled (stop triggered).
+    Exceptions from get_order_by_id are swallowed and retried.
+    """
+    polls = timeout_seconds * 2  # poll every 0.5s
+    for _ in range(polls):
+        try:
+            order = trading_client.get_order_by_id(order_id)
+            if order.status in ("cancelled", "canceled", "expired"):
+                return True
+            if order.status == "filled":
+                return False
+        except Exception:
+            pass
+        time.sleep(0.5)
+    return False
+
+
 def _check_cancelled_stops(trading_client, r):
     """Check all open positions for unexpectedly cancelled stop orders.
 
@@ -284,7 +305,18 @@ def _check_trailing_upgrades(trading_client, r):
     - If gain >= TRAILING_TRIGGER_PCT[tier], cancels fixed stop and submits trailing stop
     - Updates Redis: trailing=True, trail_percent, stop_order_id
     - On any error: bails safely (no naked position window)
+
+    Only runs during market hours. After-hours cancel requests stay pending until open,
+    which causes a race where the new stop is rejected ("insufficient qty available")
+    before the old cancel settles.
     """
+    try:
+        if not trading_client.get_clock().is_open:
+            return
+    except Exception as exc:
+        print(f"  [Executor] _check_trailing_upgrades: could not fetch market clock: {exc} — skipping")
+        return
+
     positions = json.loads(r.get(Keys.POSITIONS) or "{}")
     if not positions:
         return
@@ -320,7 +352,9 @@ def _check_trailing_upgrades(trading_client, r):
         print(f"  [Executor] 🎯 {symbol}: gain {gain_pct:.1f}% >= {trigger}% — upgrading to "
               f"trailing stop ({trail_pct}%)")
 
-        # Cancel existing fixed stop
+        # Cancel existing fixed stop and wait for confirmation before submitting trailing stop.
+        # Without the wait, the new order races with the pending cancel and fails with
+        # "insufficient qty available" (the old stop still holds the position qty).
         old_stop_id = pos.get("stop_order_id")
         if old_stop_id:
             try:
@@ -328,6 +362,12 @@ def _check_trailing_upgrades(trading_client, r):
             except Exception as exc:
                 print(f"  [Executor] ⚠️ {symbol}: could not cancel old stop {old_stop_id}: {exc}")
                 continue  # bail — don't risk a double-stop situation
+            if not _wait_for_order_cancelled(trading_client, old_stop_id):
+                critical_alert(
+                    f"Stop cancel timeout for {symbol} — could not confirm cancel of "
+                    f"{old_stop_id}. Skipping trailing upgrade to avoid naked position window."
+                )
+                continue
         else:
             print(f"  [Executor] {symbol}: no fixed stop on record — submitting trailing stop directly")
 

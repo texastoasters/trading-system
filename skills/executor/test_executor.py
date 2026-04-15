@@ -1486,12 +1486,14 @@ class TestCheckTrailingUpgrades:
         r, store = make_redis({"SPY": pos})
 
         tc = MagicMock()
+        tc.get_clock.return_value = make_clock(is_open=True)
         tc.get_all_positions.return_value = [self._make_alpaca_pos("SPY", "526.0")]
         new_stop = MagicMock()
         new_stop.id = "trail-001"
         tc.submit_order.return_value = new_stop
 
-        with patch("executor.critical_alert"):
+        with patch("executor.critical_alert"), \
+             patch("executor._wait_for_order_cancelled", return_value=True):
             from executor import _check_trailing_upgrades
             _check_trailing_upgrades(tc, r)
 
@@ -1505,6 +1507,42 @@ class TestCheckTrailingUpgrades:
         assert saved["SPY"]["trailing"] is True
         assert saved["SPY"]["trail_percent"] == cfg.TRAILING_TRAIL_PCT[1]
         assert saved["SPY"]["stop_order_id"] == "trail-001"
+
+    def test_skips_when_market_is_closed(self):
+        """get_clock().is_open=False → no cancel, no submit, Redis unchanged."""
+        pos = make_position(symbol="SPY", qty=10, entry=500.0, stop=490.0,
+                            stop_order_id="old-stop")
+        pos["tier"] = 1
+        r, store = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        tc.get_clock.return_value = make_clock(is_open=False)
+        tc.get_all_positions.return_value = [self._make_alpaca_pos("SPY", "526.0")]
+
+        from executor import _check_trailing_upgrades
+        _check_trailing_upgrades(tc, r)
+
+        tc.cancel_order_by_id.assert_not_called()
+        tc.submit_order.assert_not_called()
+        saved = json.loads(store["trading:positions"])
+        assert not saved["SPY"].get("trailing")
+
+    def test_skips_when_clock_api_fails(self):
+        """get_clock() raises → skip safely, no cancel, no submit."""
+        pos = make_position(symbol="SPY", qty=10, entry=500.0, stop=490.0,
+                            stop_order_id="old-stop")
+        pos["tier"] = 1
+        r, _ = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        tc.get_clock.side_effect = RuntimeError("API down")
+        tc.get_all_positions.return_value = [self._make_alpaca_pos("SPY", "526.0")]
+
+        from executor import _check_trailing_upgrades
+        _check_trailing_upgrades(tc, r)
+
+        tc.cancel_order_by_id.assert_not_called()
+        tc.submit_order.assert_not_called()
 
     def test_skips_when_gain_below_threshold(self):
         """T1 threshold=5.0%; gain=2.0% → no upgrade."""
@@ -1568,7 +1606,8 @@ class TestCheckTrailingUpgrades:
         # First call (trailing stop): fail. Second call (fixed stop fallback): succeed.
         tc.submit_order.side_effect = [RuntimeError("API timeout"), fallback]
 
-        with patch("executor.critical_alert") as mock_alert:
+        with patch("executor.critical_alert") as mock_alert, \
+             patch("executor._wait_for_order_cancelled", return_value=True):
             from executor import _check_trailing_upgrades
             _check_trailing_upgrades(tc, r)
 
@@ -1640,7 +1679,8 @@ class TestCheckTrailingUpgrades:
         new_stop.id = "trail-spy-001"
         tc.submit_order.return_value = new_stop
 
-        with patch("executor.critical_alert"):
+        with patch("executor.critical_alert"), \
+             patch("executor._wait_for_order_cancelled", return_value=True):
             from executor import _check_trailing_upgrades
             _check_trailing_upgrades(tc, r)
 
@@ -1684,7 +1724,8 @@ class TestCheckTrailingUpgrades:
         # Both submit_order calls fail (trailing + fixed fallback)
         tc.submit_order.side_effect = [RuntimeError("API down"), RuntimeError("also down")]
 
-        with patch("executor.critical_alert") as mock_alert:
+        with patch("executor.critical_alert") as mock_alert, \
+             patch("executor._wait_for_order_cancelled", return_value=True):
             from executor import _check_trailing_upgrades
             _check_trailing_upgrades(tc, r)
 
@@ -1692,6 +1733,105 @@ class TestCheckTrailingUpgrades:
         assert mock_alert.call_count == 2
         all_msgs = " ".join(str(c) for c in mock_alert.call_args_list)
         assert "NAKED POSITION" in all_msgs
+
+
+    def test_cancel_timeout_bails_skips_submit_and_alerts(self):
+        """Cancel sent but _wait_for_order_cancelled times out → no trailing submit, critical alert."""
+        pos = make_position(symbol="SPY", qty=10, entry=500.0, stop=490.0,
+                            stop_order_id="old-stop")
+        pos["tier"] = 1
+        r, store = make_redis({"SPY": pos})
+
+        tc = MagicMock()
+        tc.get_all_positions.return_value = [self._make_alpaca_pos("SPY", "526.0")]
+
+        with patch("executor.critical_alert") as mock_alert, \
+             patch("executor._wait_for_order_cancelled", return_value=False):
+            from executor import _check_trailing_upgrades
+            _check_trailing_upgrades(tc, r)
+
+        tc.submit_order.assert_not_called()
+        mock_alert.assert_called_once()
+        assert "cancel" in mock_alert.call_args[0][0].lower()
+        saved = json.loads(store["trading:positions"])
+        assert not saved["SPY"].get("trailing")
+
+
+class TestWaitForOrderCancelled:
+    def _make_order(self, status):
+        o = MagicMock()
+        o.status = status
+        return o
+
+    def test_returns_true_when_already_cancelled(self):
+        """First poll returns cancelled → returns True immediately."""
+        tc = MagicMock()
+        tc.get_order_by_id.return_value = self._make_order("cancelled")
+
+        with patch("time.sleep"):
+            from executor import _wait_for_order_cancelled
+            assert _wait_for_order_cancelled(tc, "ord-1", timeout_seconds=5) is True
+
+        tc.get_order_by_id.assert_called_once_with("ord-1")
+
+    def test_returns_true_after_polling(self):
+        """pending_new × 2, then cancelled → returns True."""
+        tc = MagicMock()
+        tc.get_order_by_id.side_effect = [
+            self._make_order("pending_new"),
+            self._make_order("pending_new"),
+            self._make_order("cancelled"),
+        ]
+
+        with patch("time.sleep"):
+            from executor import _wait_for_order_cancelled
+            assert _wait_for_order_cancelled(tc, "ord-1", timeout_seconds=5) is True
+
+        assert tc.get_order_by_id.call_count == 3
+
+    def test_returns_false_on_timeout(self):
+        """All polls return pending_new → returns False after timeout."""
+        tc = MagicMock()
+        tc.get_order_by_id.return_value = self._make_order("pending_new")
+
+        with patch("time.sleep"):
+            from executor import _wait_for_order_cancelled
+            # timeout=1 → 2 polls
+            assert _wait_for_order_cancelled(tc, "ord-1", timeout_seconds=1) is False
+
+        assert tc.get_order_by_id.call_count == 2
+
+    def test_returns_false_if_order_filled(self):
+        """Stop was triggered and filled → returns False (position exited, cancel impossible)."""
+        tc = MagicMock()
+        tc.get_order_by_id.return_value = self._make_order("filled")
+
+        with patch("time.sleep"):
+            from executor import _wait_for_order_cancelled
+            assert _wait_for_order_cancelled(tc, "ord-1", timeout_seconds=5) is False
+
+    def test_handles_api_exception_gracefully(self):
+        """get_order_by_id raises on first call, then returns cancelled → True."""
+        tc = MagicMock()
+        tc.get_order_by_id.side_effect = [
+            RuntimeError("API blip"),
+            self._make_order("cancelled"),
+        ]
+
+        with patch("time.sleep"):
+            from executor import _wait_for_order_cancelled
+            assert _wait_for_order_cancelled(tc, "ord-1", timeout_seconds=5) is True
+
+        assert tc.get_order_by_id.call_count == 2
+
+    def test_accepts_canceled_spelling(self):
+        """Alpaca uses both 'cancelled' and 'canceled' spellings → both accepted."""
+        tc = MagicMock()
+        tc.get_order_by_id.return_value = self._make_order("canceled")
+
+        with patch("time.sleep"):
+            from executor import _wait_for_order_cancelled
+            assert _wait_for_order_cancelled(tc, "ord-1", timeout_seconds=5) is True
 
 
 class TestSubmitTrailingStop:

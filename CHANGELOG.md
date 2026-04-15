@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.26.3] — 2026-04-14
+
+### Fixed
+- **Trailing stop upgrade race condition** — `_check_trailing_upgrades` cancelled the old fixed stop then immediately submitted a trailing stop without waiting for the cancel to settle. Alpaca rejected the new order with `"insufficient qty available for order"` (the old stop still held the position qty as `held_for_orders`), leaving the position without a new stop and firing a false "NAKED POSITION" alert. Two-part fix: (1) `_check_trailing_upgrades` now gates on `get_clock().is_open` — after-hours cancel requests stay pending until market open, so trailing upgrades are deferred to the next RTH cycle rather than racing against an unsettled cancel. (2) Added `_wait_for_order_cancelled` (10s timeout, 0.5s poll) as a safety net for brief RTH cancel latency — if the cancel doesn't confirm within the timeout the upgrade is skipped and a critical alert fires.
+
+---
+
 ## [0.26.2] — 2026-04-14
 
 ### Fixed
