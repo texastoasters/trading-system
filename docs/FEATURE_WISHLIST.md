@@ -31,7 +31,7 @@ These are known issues documented in HANDOFF.md that can cause real harm.
 ### Alerts & Notifications
 - [x] **Weekly summary actually sent** — `run_weekly_summary(r)` queries 7-day rollup from TimescaleDB (trades, P&L, best/worst trade, universe size). Cron at `35 16 * * 5` (Friday 4:35 PM ET, after EOD). PR #62.
 - [x] **Morning briefing Telegram message** — At 9:20 AM ET (Mon-Fri), sends: regime+ADX, watchlist top 5, open positions, drawdown, system status. Cron at `20 9 * * 1-5`. PR #61.
-- [ ] **Drawdown progress bar in alerts** — When drawdown alerts fire, show a visual progress bar toward each threshold (10%/15%/20%) so severity is instantly clear.
+- [x] **Drawdown progress bar in alerts** — 20-char ASCII bar (0–20% HALT scale) + next threshold + gap remaining. Embedded in `drawdown_alert()`. PR #112.
 - [ ] **LLM cost tracking + daily alert** — `supervisor.py` has `llm_cost: 0.0 # TODO: track LLM costs` since day 1. Screener (news materiality), PM (high-stakes decisions), and supervisor (EOD review) all call Claude but never accumulate spend. Add a `trading:llm_cost_today` Redis key, increment it in each LLM caller, reset daily by supervisor. Then wire the existing alert threshold. Unblocks the alert and gives visibility into actual API spend.
 - [x] **Alert on manual stop-loss cancellation** — `_check_cancelled_stops` runs every executor daemon cycle. Cancelled stop + position exists → resubmits and fires `critical_alert`. Cancelled + position gone → cleans Redis and fires `critical_alert`. Resubmit failure → naked position `critical_alert`. All paths tested.
 
@@ -75,11 +75,11 @@ These are known issues documented in HANDOFF.md that can cause real harm.
 
 ### Operations
 - [x] **Automated daily backup of Redis state** — `scripts/backup_redis.py`: snapshots 8 keys to `~/trading-system/backups/YYYY-MM-DD.json`, 7-day rotation, suggested cron at 4:30 PM ET Mon–Fri. PR #83.
-- [ ] **Environment validation script** — Run on system start: check all env vars are set, Redis is reachable, Alpaca API key is valid, Telegram bot token works, TimescaleDB is up. Single command to verify readiness.
+- [x] **Environment validation script** — `scripts/validate_env.py`: checks env vars, Redis, Alpaca, Telegram, TimescaleDB; exits 0/1; no test orders. PR #112.
 - [x] **Agent restart policy** — If an agent process dies (detected by heartbeat staleness), supervisor should attempt to restart it and send an alert. Currently requires manual intervention.
 - [x] **Log rotation and archiving** — Ensure agent logs don't fill disk. Rotate daily, compress, keep 30 days. PR #100.
 - [x] **Paper trading report vs real Alpaca paper balance** — Weekly comparison: does simulated equity ($5K cap) diverge significantly from what Alpaca's paper account would show if trading at full scale? Catches sizing logic bugs.
-- [ ] **Economic calendar auto-refresh script** — `scripts/economic_calendar.json` covers 2026 and is "updated annually" — a human-memory dependency. A script that generates next year's FOMC/CPI/NFP dates (all publicly scheduled in advance) and patches the JSON would eliminate the dependency.
+- [x] **Economic calendar auto-refresh script** — `scripts/refresh_economic_calendar.py`: auto-computes NFP (first-Friday), accepts `--fomc`/`--cpi` for official dates, patches JSON in-place, preserves other years. PR #112.
 
 ---
 
