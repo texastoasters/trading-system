@@ -185,6 +185,24 @@ class TestImportFallbacks:
             else:
                 sys.modules.pop("validate_env", None)
 
+    def test_psycopg2_none_when_psycopg2_not_installed(self):
+        saved_pg = sys.modules.get("psycopg2")
+        saved_ve = sys.modules.get("validate_env")
+        sys.modules["psycopg2"] = None  # triggers ImportError on `import psycopg2`
+        sys.modules.pop("validate_env", None)
+        try:
+            import validate_env as ve_fresh
+            assert ve_fresh.psycopg2 is None
+        finally:
+            if saved_pg is not None:
+                sys.modules["psycopg2"] = saved_pg
+            else:
+                sys.modules.pop("psycopg2", None)
+            if saved_ve is not None:
+                sys.modules["validate_env"] = saved_ve
+            else:
+                sys.modules.pop("validate_env", None)
+
 
 class TestMain:
     def _patch_all(self, results: dict):
