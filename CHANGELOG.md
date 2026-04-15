@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.26.2] — 2026-04-14
+
+### Fixed
+- **Dashboard log tailing broken** — `${HOME}` in the logs volume mount (`${HOME}/trading-system/logs:/app/logs:ro`) was not present in `.env`, so Docker Compose substituted an empty string and mounted a root-owned empty directory at `/trading-system/logs` instead of the actual log directory. Changed to relative path `./logs:/app/logs:ro`.
+
+---
+
 ## [0.26.1] — 2026-04-14
 
 ### Fixed
