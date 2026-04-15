@@ -350,10 +350,35 @@ def critical_alert(message: str):
     notify(msg, silent=False)
 
 
+def _drawdown_progress_bar(pct: float) -> str:
+    """ASCII progress bar showing drawdown vs thresholds. Internal use only.
+    Thresholds must stay in sync with config.py DRAWDOWN_* constants."""
+    _THRESHOLDS = [
+        (5.0, "CAUTION"),
+        (10.0, "DEFENSIVE"),
+        (15.0, "CRITICAL"),
+        (20.0, "HALT"),
+    ]
+    halt = _THRESHOLDS[-1][0]
+    width = 20
+    filled = min(round(pct / halt * width), width)
+    bar = "▓" * filled + "░" * (width - filled)
+    next_thresh = next(((t, name) for t, name in _THRESHOLDS if pct < t), None)
+    line1 = f"<code>[{bar}]</code> {pct:.1f}% / {halt:.0f}%"
+    if next_thresh:
+        t, name = next_thresh
+        line2 = f"Next: <b>{name}</b> at {t:.0f}% — {t - pct:.1f}% away"
+    else:
+        line2 = "⛔ HALT threshold breached — all entries blocked"
+    return f"{line1}\n{line2}"
+
+
 def drawdown_alert(drawdown_pct: float, action: str, attribution: list | None = None):
     """Alert when drawdown thresholds are breached."""
     msg = (
         f"⚠️ <b>DRAWDOWN ALERT: {drawdown_pct:.1f}%</b>\n"
+        f"\n"
+        f"{_drawdown_progress_bar(drawdown_pct)}\n"
         f"\n"
         f"Action taken: {action}\n"
     )
