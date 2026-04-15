@@ -182,6 +182,9 @@ def generate_entry_signals(r, stock_client, crypto_client):
     signals = []
     market_open = is_market_hours()
     open_positions = json.loads(r.get(Keys.POSITIONS) or "{}")
+    universe_raw = r.get(Keys.UNIVERSE)
+    universe_data = json.loads(universe_raw) if universe_raw else {}
+    blacklisted_symbols = set(universe_data.get("blacklisted") or {})
 
     for item in watchlist:
         symbol = item["symbol"]
@@ -189,6 +192,11 @@ def generate_entry_signals(r, stock_client, crypto_client):
 
         # Don't generate an entry signal if we already hold this symbol.
         if symbol in open_positions:
+            continue
+
+        # Skip blacklisted symbols
+        if symbol in blacklisted_symbols:
+            print(f"  [Watcher] {symbol}: skipped (blacklisted)")
             continue
 
         # Equity orders can only be placed during market hours — skip to avoid
