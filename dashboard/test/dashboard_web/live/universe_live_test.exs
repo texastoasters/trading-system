@@ -632,6 +632,64 @@ defmodule DashboardWeb.UniverseLiveTest do
   end
 
   describe "blacklist events" do
+    test "confirm_blacklist shows success flash when symbol found in Redis universe", %{conn: conn} do
+      universe = %{"tier1" => [], "tier2" => [], "tier3" => ["IWM"], "blacklisted" => %{}}
+      Redix.command(:redix, ["SET", "trading:universe", Jason.encode!(universe)])
+
+      on_exit(fn -> Redix.command(:redix, ["DEL", "trading:universe"]) end)
+
+      {:ok, view, _} = live(conn, "/universe")
+
+      send(view.pid, {:state_update, %{
+        "trading:universe" => universe,
+        "trading:watchlist" => [],
+        "trading:positions" => %{}
+      }})
+
+      render(view)
+      render_hook(view, "show_blacklist_confirm", %{"symbol" => "IWM"})
+      render_hook(view, "confirm_blacklist", %{})
+
+      flash_values = :sys.get_state(view.pid).socket.assigns.flash |> Map.values()
+      assert Enum.any?(flash_values, &String.contains?(&1, "blacklisted"))
+    end
+
+    test "confirm_unblacklist shows error flash when Redis is unavailable", %{conn: conn} do
+      real_redix = Process.whereis(:redix)
+      Process.unregister(:redix)
+      {:ok, stub} = Dashboard.FakeRedix.start_link()
+      Process.register(stub, :redix)
+
+      on_exit(fn ->
+        try do Process.unregister(:redix) rescue _ -> :ok end
+        if real_redix && Process.alive?(real_redix) do
+          Process.register(real_redix, :redix)
+        end
+      end)
+
+      {:ok, view, _} = live(conn, "/universe")
+      render_hook(view, "confirm_unblacklist", %{"symbol" => "OKE"})
+
+      flash_values = :sys.get_state(view.pid).socket.assigns.flash |> Map.values()
+      assert Enum.any?(flash_values, &String.contains?(&1, "restore failed"))
+    end
+
+    test "confirm_unblacklist restores symbol when found in blacklisted dict in Redis", %{conn: conn} do
+      universe = %{
+        "tier1" => [], "tier2" => [], "tier3" => [],
+        "blacklisted" => %{"OKE" => %{"since" => "2026-04-14", "former_tier" => "tier3"}}
+      }
+      Redix.command(:redix, ["SET", "trading:universe", Jason.encode!(universe)])
+
+      on_exit(fn -> Redix.command(:redix, ["DEL", "trading:universe"]) end)
+
+      {:ok, view, _} = live(conn, "/universe")
+      render_hook(view, "confirm_unblacklist", %{"symbol" => "OKE"})
+
+      flash_values = :sys.get_state(view.pid).socket.assigns.flash |> Map.values()
+      assert Enum.any?(flash_values, &String.contains?(&1, "OKE"))
+    end
+
     test "show_blacklist_confirm sets confirm_modal assign", %{conn: conn} do
       {:ok, view, _} = live(conn, "/universe")
 
