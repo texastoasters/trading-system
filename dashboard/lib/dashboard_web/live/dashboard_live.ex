@@ -55,6 +55,7 @@ defmodule DashboardWeb.DashboardLive do
       |> assign(:recent_trades, [])
       |> assign(:daily_summaries, [])
       |> assign(:drawdown_attribution, [])
+      |> assign(:confirm_modal, nil)
 
     # Load DB data if connected (will be async after LV socket upgrade)
     socket =
@@ -122,7 +123,19 @@ defmodule DashboardWeb.DashboardLive do
   end
 
   @impl true
-  def handle_event("liquidate", %{"symbol" => symbol}, socket) do
+  def handle_event("show_liquidate_confirm", %{"symbol" => symbol}, socket) do
+    {:noreply, assign(socket, :confirm_modal, %{action: :liquidate, symbol: symbol})}
+  end
+
+  @impl true
+  def handle_event("cancel_modal", _params, socket) do
+    {:noreply, assign(socket, :confirm_modal, nil)}
+  end
+
+  @impl true
+  def handle_event("confirm_liquidate", _params, socket) do
+    symbol = socket.assigns.confirm_modal[:symbol]
+
     order = %{
       "symbol" => symbol,
       "side" => "sell",
@@ -132,7 +145,12 @@ defmodule DashboardWeb.DashboardLive do
       "time" => DateTime.utc_now() |> DateTime.to_iso8601()
     }
 
-    case Redix.command(:redix, ["PUBLISH", "trading:approved_orders", Jason.encode!(order)]) do
+    result =
+      Redix.command(:redix, ["PUBLISH", "trading:approved_orders", Jason.encode!(order)])
+
+    socket = assign(socket, :confirm_modal, nil)
+
+    case result do
       {:ok, _} ->
         {:noreply, put_flash(socket, :info, "Liquidation order sent for #{symbol}")}
 

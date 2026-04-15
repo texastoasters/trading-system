@@ -234,9 +234,8 @@
                 </div>
                 <div class="mt-3 flex justify-end">
                   <button
-                    phx-click="liquidate"
+                    phx-click="show_liquidate_confirm"
                     phx-value-symbol={pos["symbol"]}
-                    data-confirm={"Manually liquidate #{pos["symbol"]} (#{quantity} shares)?\n\nThis will immediately submit a market sell order. This action cannot be undone."}
                     class="min-h-[44px] text-xs px-2.5 py-1 rounded border border-red-800 text-red-400 hover:bg-red-900/30 hover:border-red-600 hover:text-red-300 transition-colors font-medium"
                   >
                     Liquidate
@@ -486,4 +485,32 @@
       </div>
     <% end %>
   </div>
+
+  <%!-- Liquidate confirmation modal --%>
+  <%= if @confirm_modal && @confirm_modal.action == :liquidate do %>
+    <div class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 px-4">
+      <div class="bg-gray-800 border border-gray-600 rounded-xl shadow-2xl p-6 max-w-sm w-full">
+        <h3 class="text-white font-semibold text-base mb-2">
+          Liquidate {@confirm_modal.symbol}?
+        </h3>
+        <p class="text-gray-400 text-sm mb-6">
+          Submits a market sell order immediately. This action cannot be undone.
+        </p>
+        <div class="flex gap-3 justify-end">
+          <button
+            phx-click="cancel_modal"
+            class="px-4 py-2 text-sm rounded border border-gray-600 text-gray-300 hover:bg-gray-700 transition"
+          >
+            Cancel
+          </button>
+          <button
+            phx-click="confirm_liquidate"
+            class="px-4 py-2 text-sm rounded bg-red-700 text-white hover:bg-red-600 transition font-medium"
+          >
+            Liquidate
+          </button>
+        </div>
+      </div>
+    </div>
+  <% end %>
 </div>
