@@ -407,7 +407,10 @@ def load_overrides(r: redis.Redis) -> None:
     Invalid type or out-of-range value: log warning, skip that key.
     This is the only supported mechanism for runtime parameter changes.
     """
-    raw = r.get(Keys.CONFIG)
+    try:
+        raw = r.get(Keys.CONFIG)
+    except Exception:
+        return  # Redis unavailable — continue with module defaults
     if not raw:
         return
 

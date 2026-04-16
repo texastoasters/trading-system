@@ -496,9 +496,16 @@ class TestLoadOverrides:
 
     def test_skips_all_drawdown_keys_when_out_of_order(self):
         r = make_r(store={Keys.CONFIG: json.dumps({
-            "DRAWDOWN_CAUTION": 15.0,    # >= DEFENSIVE of 10.0 → out of order
-            "DRAWDOWN_DEFENSIVE": 10.0,
+            "DRAWDOWN_CAUTION": 15.0,    # >= DEFENSIVE of 12.0 → out of order
+            "DRAWDOWN_DEFENSIVE": 12.0,  # ← changed from 10.0
         })})
         load_overrides(r)
         assert config.DRAWDOWN_CAUTION == 5.0    # all drawdown keys skipped
-        assert config.DRAWDOWN_DEFENSIVE == 10.0  # unchanged
+        assert config.DRAWDOWN_DEFENSIVE == 10.0  # unchanged (override was skipped)
+
+    def test_no_op_on_redis_error(self):
+        """Redis unavailable → load_overrides returns without changing globals."""
+        r = MagicMock()
+        r.get = MagicMock(side_effect=Exception("connection refused"))
+        load_overrides(r)
+        assert config.RSI2_ENTRY_CONSERVATIVE == 10.0  # unchanged
