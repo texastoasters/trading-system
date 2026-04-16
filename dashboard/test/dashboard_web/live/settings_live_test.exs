@@ -167,18 +167,7 @@ defmodule DashboardWeb.SettingsLiveTest do
 
     test "shows error flash when Redis SET fails", %{conn: conn} do
       {:ok, view, _} = live(conn, "/settings")
-
-      real_redix = Process.whereis(:redix)
-      Process.unregister(:redix)
-      {:ok, stub} = Dashboard.FakeRedix.start_link()
-      Process.register(stub, :redix)
-
-      on_exit(fn ->
-        try do Process.unregister(:redix) rescue _ -> :ok end
-        if real_redix && Process.alive?(real_redix) do
-          Process.register(real_redix, :redix)
-        end
-      end)
+      swap_redix_to_stub()
 
       params = %{
         "RSI2_ENTRY_CONSERVATIVE" => "8.0",
@@ -209,5 +198,37 @@ defmodule DashboardWeb.SettingsLiveTest do
       {:ok, raw} = Redix.command(:redix, ["GET", "trading:config"])
       assert raw == nil
     end
+
+    test "shows error flash when Redis DEL fails", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/settings")
+      swap_redix_to_stub()
+
+      html = view |> element("button[phx-click='reset']") |> render_click()
+      assert html =~ "Failed to reset"
+    end
+  end
+
+  describe "mount error path" do
+    test "falls back to defaults when Redis GET fails", %{conn: conn} do
+      swap_redix_to_stub()
+
+      {:ok, _view, html} = live(conn, "/settings")
+      assert html =~ ~s(value="10.0")   # RSI2_ENTRY_CONSERVATIVE default
+      assert html =~ "No active overrides"
+    end
+  end
+
+  defp swap_redix_to_stub do
+    real_redix = Process.whereis(:redix)
+    Process.unregister(:redix)
+    {:ok, stub} = Dashboard.FakeRedix.start_link()
+    Process.register(stub, :redix)
+
+    on_exit(fn ->
+      try do Process.unregister(:redix) rescue _ -> :ok end
+      if real_redix && Process.alive?(real_redix) do
+        Process.register(real_redix, :redix)
+      end
+    end)
   end
 end

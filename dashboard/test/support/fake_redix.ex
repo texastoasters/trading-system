@@ -1,13 +1,14 @@
 defmodule Dashboard.FakeRedix do
   @moduledoc """
-  GenServer stub for :redix that returns {:error, reason} for all pipeline calls.
+  GenServer stub for :redix that returns {:error, reason} for all commands.
 
-  Redix.Connection.pipeline/4 casts {:pipeline, commands, {from_pid, ref}, timeout} via
-  :gen_statem.cast, then blocks waiting for {ref, response}. Since :gen_statem.cast uses
-  the same $gen_cast wire protocol as GenServer.cast, a GenServer handle_cast can handle
-  the message and send the expected reply directly to from_pid.
+  Redix.command/2 calls Redix.Connection.pipeline/4, which casts
+  {:pipeline, commands, {from_pid, ref}, timeout} via :gen_statem.cast. Since
+  :gen_statem.cast uses the same $gen_cast wire protocol as GenServer.cast, a
+  GenServer handle_cast clause intercepts the message and sends the expected
+  reply directly to from_pid.
 
-  Used to exercise error paths in RedisPoller when Redis is unavailable.
+  Used to exercise error paths in RedisPoller and SettingsLive when Redis is unavailable.
   """
   use GenServer
 
@@ -22,10 +23,5 @@ defmodule Dashboard.FakeRedix do
   def handle_cast({:pipeline, _commands, {from_pid, request_id}, _timeout}, state) do
     send(from_pid, {request_id, {:error, :test_pipeline_error}})
     {:noreply, state}
-  end
-
-  @impl true
-  def handle_call({:command, _commands, _timeout}, _from, state) do
-    {:reply, {:error, :test_command_error}, state}
   end
 end
