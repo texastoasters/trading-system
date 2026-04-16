@@ -40,6 +40,7 @@ defmodule DashboardWeb.PerformanceLive do
       |> assign(:summary, compute_summary(rows))
       |> assign(:equity_points, if(connected?(socket), do: Queries.equity_curve(30), else: []))
       |> assign(:attribution, attribution)
+      |> assign(:heatmap, nil)
 
     {:ok, socket}
   end
@@ -102,7 +103,10 @@ defmodule DashboardWeb.PerformanceLive do
 
   @impl true
   def handle_info({:state_update, state}, socket) do
-    {:noreply, assign(socket, :universe, state["trading:universe"])}
+    {:noreply,
+     socket
+     |> assign(:universe, state["trading:universe"])
+     |> assign(:heatmap, state["trading:heatmap"])}
   end
 
   def handle_info(:refresh_db, socket) do
@@ -262,6 +266,24 @@ defmodule DashboardWeb.PerformanceLive do
   defp range_label("30d"), do: "30D"
   defp range_label("90d"), do: "90D"
   defp range_label("all"), do: "All"
+
+  # RSI-2 heatmap helpers
+  # Dates arrive as "YYYY-MM-DD"; render as "Mon DD" (e.g. "Apr 10").
+  defp format_heatmap_date(date_str) do
+    case Date.from_iso8601(date_str) do
+      {:ok, d} -> Calendar.strftime(d, "%b %-d")
+      _ -> date_str
+    end
+  end
+
+  # Color cells by RSI-2 value: low = oversold = buy signal.
+  defp heatmap_cell_class(nil), do: "text-gray-600"
+  defp heatmap_cell_class(v) when v < 5, do: "bg-red-700/80 text-white"
+  defp heatmap_cell_class(v) when v < 15, do: "bg-orange-600/70 text-white"
+  defp heatmap_cell_class(v) when v < 30, do: "bg-yellow-700/60 text-gray-200"
+  defp heatmap_cell_class(v) when v < 70, do: "bg-gray-700/40 text-gray-400"
+  defp heatmap_cell_class(v) when v < 85, do: "bg-sky-900/60 text-gray-300"
+  defp heatmap_cell_class(_), do: "bg-sky-700/50 text-white"
 
   defp compute_summary(rows) do
     count = length(rows)

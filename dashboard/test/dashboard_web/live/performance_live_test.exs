@@ -589,4 +589,85 @@ defmodule DashboardWeb.PerformanceLiveTest do
       assert html =~ "RSI / Price breakout"
     end
   end
+
+  describe "signal heatmap" do
+    test "heatmap section heading renders", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/performance")
+      assert html =~ "Signal Heatmap"
+    end
+
+    test "heatmap assign is nil initially", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/performance")
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert is_nil(assigns.heatmap)
+    end
+
+    test "heatmap shows empty state when nil", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/performance")
+      assert html =~ "No heatmap data"
+    end
+
+    test "heatmap assign updates from state_update", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/performance")
+      heatmap = %{"dates" => ["2026-04-10", "2026-04-11"], "instruments" => %{"SPY" => [12.5, 45.2]}}
+      send(view.pid, {:state_update, %{"trading:heatmap" => heatmap}})
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.heatmap == heatmap
+    end
+
+    test "heatmap renders instrument rows when data present", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/performance")
+      heatmap = %{"dates" => ["2026-04-10", "2026-04-11"], "instruments" => %{"SPY" => [12.5, 45.2]}}
+      send(view.pid, {:state_update, %{"trading:heatmap" => heatmap}})
+      html = render(view)
+      assert html =~ "SPY"
+    end
+
+    test "heatmap renders date headers when data present", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/performance")
+      heatmap = %{"dates" => ["2026-04-10"], "instruments" => %{"SPY" => [8.3]}}
+      send(view.pid, {:state_update, %{"trading:heatmap" => heatmap}})
+      html = render(view)
+      assert html =~ "Apr 10"
+    end
+
+    test "heatmap cell classes cover all RSI buckets", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/performance")
+      heatmap = %{
+        "dates" => ["2026-04-10"],
+        "instruments" => %{
+          "A" => [3.0],   # < 5
+          "B" => [10.0],  # < 15
+          "C" => [20.0],  # < 30
+          "D" => [50.0],  # < 70
+          "E" => [75.0],  # < 85
+          "F" => [90.0]   # >= 85
+        }
+      }
+      send(view.pid, {:state_update, %{"trading:heatmap" => heatmap}})
+      html = render(view)
+      assert html =~ "bg-red-700/80"
+      assert html =~ "bg-orange-600/70"
+      assert html =~ "bg-yellow-700/60"
+      assert html =~ "bg-gray-700/40"
+      assert html =~ "bg-sky-900/60"
+      assert html =~ "bg-sky-700/50"
+    end
+
+    test "heatmap nil cell value renders dash class", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/performance")
+      heatmap = %{"dates" => ["2026-04-10"], "instruments" => %{"SPY" => [nil]}}
+      send(view.pid, {:state_update, %{"trading:heatmap" => heatmap}})
+      html = render(view)
+      assert html =~ "text-gray-600"
+    end
+
+    test "heatmap invalid date string falls back to raw value", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/performance")
+      heatmap = %{"dates" => ["bad-date"], "instruments" => %{"SPY" => [50.0]}}
+      send(view.pid, {:state_update, %{"trading:heatmap" => heatmap}})
+      html = render(view)
+      assert html =~ "bad-date"
+    end
+  end
 end

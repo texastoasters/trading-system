@@ -421,3 +421,111 @@ class TestRunScan:
             from screener import run_scan
             run_scan()
         mock_load.assert_called_once_with(r)
+
+
+class TestRunScanHeatmap:
+    def _make_redis(self, status="active"):
+        r = MagicMock()
+        r.get = lambda k: {
+            Keys.SYSTEM_STATUS: status,
+            Keys.TIERS: json.dumps(config.DEFAULT_TIERS),
+            Keys.UNIVERSE: json.dumps(config.DEFAULT_UNIVERSE),
+        }.get(k)
+        r.set = MagicMock()
+        return r
+
+    def test_publishes_heatmap_to_redis(self):
+        r = self._make_redis()
+        spy_data = make_price_data(close_val=500.0)
+
+        with patch('screener.get_redis', return_value=r), \
+             patch('screener.config.init_redis_state'), \
+             patch('screener.get_active_instruments', return_value=["SPY"]), \
+             patch('screener.fetch_daily_bars', return_value=spy_data), \
+             patch('screener.compute_regime', return_value=ranging_regime()), \
+             patch('screener.scan_instrument', return_value=None), \
+             patch('screener.notify'):
+            from screener import run_scan
+            run_scan()
+
+        set_keys = [c[0][0] for c in r.set.call_args_list]
+        assert Keys.HEATMAP in set_keys
+
+    def test_heatmap_valid_json_with_required_keys(self):
+        r = self._make_redis()
+        spy_data = make_price_data(close_val=500.0)
+
+        with patch('screener.get_redis', return_value=r), \
+             patch('screener.config.init_redis_state'), \
+             patch('screener.get_active_instruments', return_value=["SPY"]), \
+             patch('screener.fetch_daily_bars', return_value=spy_data), \
+             patch('screener.compute_regime', return_value=ranging_regime()), \
+             patch('screener.scan_instrument', return_value=None), \
+             patch('screener.notify'):
+            from screener import run_scan
+            run_scan()
+
+        heatmap_call = next(c for c in r.set.call_args_list if c[0][0] == Keys.HEATMAP)
+        heatmap = json.loads(heatmap_call[0][1])
+        assert "dates" in heatmap
+        assert "instruments" in heatmap
+        assert isinstance(heatmap["instruments"], dict)
+        assert isinstance(heatmap["dates"], list)
+
+    def test_heatmap_contains_fetched_instruments(self):
+        r = self._make_redis()
+        spy_data = make_price_data(close_val=500.0)
+        qqq_data = make_price_data(close_val=400.0)
+
+        with patch('screener.get_redis', return_value=r), \
+             patch('screener.config.init_redis_state'), \
+             patch('screener.get_active_instruments', return_value=["SPY", "QQQ"]), \
+             patch('screener.fetch_daily_bars', side_effect=[spy_data, qqq_data]), \
+             patch('screener.compute_regime', return_value=ranging_regime()), \
+             patch('screener.scan_instrument', return_value=None), \
+             patch('screener.notify'):
+            from screener import run_scan
+            run_scan()
+
+        heatmap_call = next(c for c in r.set.call_args_list if c[0][0] == Keys.HEATMAP)
+        heatmap = json.loads(heatmap_call[0][1])
+        assert "SPY" in heatmap["instruments"]
+        assert "QQQ" in heatmap["instruments"]
+
+    def test_heatmap_excludes_instruments_with_no_data(self):
+        r = self._make_redis()
+        spy_data = make_price_data(close_val=500.0)
+
+        with patch('screener.get_redis', return_value=r), \
+             patch('screener.config.init_redis_state'), \
+             patch('screener.get_active_instruments', return_value=["SPY", "QQQ"]), \
+             patch('screener.fetch_daily_bars', side_effect=[spy_data, None]), \
+             patch('screener.compute_regime', return_value=ranging_regime()), \
+             patch('screener.scan_instrument', return_value=None), \
+             patch('screener.notify'):
+            from screener import run_scan
+            run_scan()
+
+        heatmap_call = next(c for c in r.set.call_args_list if c[0][0] == Keys.HEATMAP)
+        heatmap = json.loads(heatmap_call[0][1])
+        assert "SPY" in heatmap["instruments"]
+        assert "QQQ" not in heatmap["instruments"]
+
+    def test_heatmap_values_capped_to_heatmap_days(self):
+        r = self._make_redis()
+        spy_data = make_price_data(n=250, close_val=500.0)
+
+        with patch('screener.get_redis', return_value=r), \
+             patch('screener.config.init_redis_state'), \
+             patch('screener.get_active_instruments', return_value=["SPY"]), \
+             patch('screener.fetch_daily_bars', return_value=spy_data), \
+             patch('screener.compute_regime', return_value=ranging_regime()), \
+             patch('screener.scan_instrument', return_value=None), \
+             patch('screener.notify'):
+            from screener import run_scan
+            run_scan()
+
+        heatmap_call = next(c for c in r.set.call_args_list if c[0][0] == Keys.HEATMAP)
+        heatmap = json.loads(heatmap_call[0][1])
+        assert len(heatmap["dates"]) == config.HEATMAP_DAYS
+        assert len(heatmap["instruments"]["SPY"]) == config.HEATMAP_DAYS

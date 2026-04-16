@@ -32,6 +32,13 @@ defmodule Dashboard.RedisPollerTest do
       assert Map.has_key?(state, "trading:pdt:count")
       assert Map.has_key?(state, "trading:positions")
     end
+
+    test "broadcast includes heatmap key", %{pid: pid} do
+      Phoenix.PubSub.subscribe(Dashboard.PubSub, "dashboard:state")
+      send(pid, :poll)
+      assert_receive {:state_update, state}, 2_000
+      assert Map.has_key?(state, "trading:heatmap")
+    end
   end
 
   describe "maybe_fetch_cooldowns" do
@@ -108,6 +115,26 @@ defmodule Dashboard.RedisPollerTest do
   end
 
   describe "parse_value" do
+    test "returns parsed JSON map for heatmap key", %{pid: pid} do
+      Redix.command(:redix, ["SET", "trading:heatmap", ~s({"dates":["2026-04-10"],"instruments":{"SPY":[12.5]}})])
+      Phoenix.PubSub.subscribe(Dashboard.PubSub, "dashboard:state")
+      send(pid, :poll)
+      assert_receive {:state_update, state}, 2_000
+      assert is_map(state["trading:heatmap"])
+      assert Map.has_key?(state["trading:heatmap"], "dates")
+      assert Map.has_key?(state["trading:heatmap"], "instruments")
+    after
+      Redix.command(:redix, ["DEL", "trading:heatmap"])
+    end
+
+    test "returns nil for absent heatmap key", %{pid: pid} do
+      Redix.command(:redix, ["DEL", "trading:heatmap"])
+      Phoenix.PubSub.subscribe(Dashboard.PubSub, "dashboard:state")
+      send(pid, :poll)
+      assert_receive {:state_update, state}, 2_000
+      assert is_nil(state["trading:heatmap"])
+    end
+
     test "returns parsed JSON map for positions key", %{pid: pid} do
       Redix.command(:redix, ["SET", "trading:positions", ~s({"SPY":{"quantity":10}})])
       Phoenix.PubSub.subscribe(Dashboard.PubSub, "dashboard:state")
