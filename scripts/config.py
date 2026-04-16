@@ -127,6 +127,8 @@ RSI2_ATR_PERIOD = 14
 # Maximum days to hold a position. If a trade is still open after this many days
 # with no RSI-2 exit or stop hit, Watcher generates a time-stop exit signal.
 RSI2_MAX_HOLD_DAYS = 5  # HOT-RELOADABLE via trading:config
+# Number of trailing calendar days shown in the RSI-2 signal heatmap on the dashboard.
+HEATMAP_DAYS = 14
 
 # ── Regime ──────────────────────────────────────────────────
 
@@ -242,6 +244,7 @@ class Keys:
 
     RESTART_COUNT = "trading:restart_count"
     CONFIG = "trading:config"  # Hot-reload overrides (JSON). See load_overrides().
+    HEATMAP = "trading:heatmap"  # RSI-2 heatmap snapshot. Set by screener on each scan.
 
     @staticmethod
     def heartbeat(agent: str) -> str:

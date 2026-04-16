@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.29.1] - 2026-04-15
+
+### Added
+- **RSI-2 signal heatmap** — color-coded grid on `/performance` showing last 14 days of RSI-2 values across all universe instruments. Cells colored by bucket (deep red = strong buy signal, orange/yellow = watch, gray = neutral, sky blue = overbought). Screener stores `trading:heatmap` in Redis on every scan; RedisPoller streams it to the dashboard in real time.
+
+---
+
 ## [0.29.0] - 2026-04-15
 
 ### Added

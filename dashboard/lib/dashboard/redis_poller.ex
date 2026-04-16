@@ -30,7 +30,8 @@ defmodule Dashboard.RedisPoller do
     "trading:heartbeat:portfolio_manager",
     "trading:heartbeat:executor",
     "trading:heartbeat:supervisor",
-    "trading:peak_equity_date"
+    "trading:peak_equity_date",
+    "trading:heatmap"
   ]
 
   def start_link(_opts) do
@@ -138,7 +139,7 @@ defmodule Dashboard.RedisPoller do
 
   # JSON blobs
   defp parse_value(key, val)
-       when key in ["trading:regime", "trading:positions", "trading:watchlist", "trading:universe"] do
+       when key in ["trading:regime", "trading:positions", "trading:watchlist", "trading:universe", "trading:heatmap"] do
     case val do
       nil -> nil
       v -> Jason.decode(v) |> elem(1)

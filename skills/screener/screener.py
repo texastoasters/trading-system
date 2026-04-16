@@ -190,6 +190,9 @@ def run_scan():
 
     # Step 2: Scan each instrument
     watchlist = []
+    heatmap_instruments = {}
+    heatmap_dates = None
+    n = config.HEATMAP_DAYS
 
     for symbol in instruments:
         if symbol == "SPY":
@@ -199,6 +202,16 @@ def run_scan():
 
         if data is None:
             continue
+
+        # Build heatmap entry from full RSI-2 series (all instruments, not just watchlist)
+        rsi2_series = rsi(data['close'], 2)
+        rsi2_last_n = [
+            None if np.isnan(v) else round(float(v), 2)
+            for v in rsi2_series[-n:]
+        ]
+        if heatmap_dates is None:
+            heatmap_dates = data['dates'][-n:]
+        heatmap_instruments[symbol] = rsi2_last_n
 
         result = scan_instrument(symbol, data, regime_info)
         if result is not None:
@@ -211,6 +224,7 @@ def run_scan():
 
     # Step 4: Publish to Redis
     r.set(Keys.WATCHLIST, json.dumps(watchlist))
+    r.set(Keys.HEATMAP, json.dumps({"dates": heatmap_dates or [], "instruments": heatmap_instruments}))
 
     # Log results
     signals = [w for w in watchlist if w["priority"] in ("signal", "strong_signal")]
