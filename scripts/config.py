@@ -6,6 +6,7 @@ strategy parameters, and system constants.
 """
 
 import os
+import sys
 import json
 import redis
 from datetime import date, timedelta
@@ -49,7 +50,7 @@ PAPER_TRADING = True
 # both based on this number, not Alpaca's reported equity.
 INITIAL_CAPITAL = 5000.00
 # Maximum simultaneous open positions across all tiers and asset classes.
-MAX_CONCURRENT_POSITIONS = 5
+MAX_CONCURRENT_POSITIONS = 5  # HOT-RELOADABLE via trading:config
 # Maximum open positions in equity instruments (stocks, ETFs).
 MAX_EQUITY_POSITIONS = 3
 # Maximum open positions in crypto instruments (BTC/USD, etc.).
@@ -65,7 +66,7 @@ CRYPTO_ALLOCATION_PCT = 0.30
 # Risk per trade as a fraction of current simulated equity (1%). Portfolio Manager
 # sizes every position so that a stop-loss hit equals exactly this loss in dollar terms:
 #   qty = (equity * RISK_PER_TRADE_PCT) / (entry_price - stop_price)
-RISK_PER_TRADE_PCT = 0.01
+RISK_PER_TRADE_PCT = 0.01  # HOT-RELOADABLE via trading:config
 # Maximum daily loss as a fraction of simulated equity (3%). When the daily P&L
 # reaches -(equity × DAILY_LOSS_LIMIT_PCT), Executor blocks new buys and Supervisor
 # sets system_status → daily_halt until the next trading day reset.
@@ -107,16 +108,16 @@ EARNINGS_DAYS_AFTER = 1
 
 # RSI-2 entry threshold in conservative (RANGING) regime. Entry signal requires
 # RSI-2 < this value AND price > SMA(RSI2_SMA_PERIOD).
-RSI2_ENTRY_CONSERVATIVE = 10.0
+RSI2_ENTRY_CONSERVATIVE = 10.0  # HOT-RELOADABLE via trading:config
 # RSI-2 entry threshold in aggressive (TRENDING) regime. Tighter threshold used
 # when ADX > ADX_TREND_THRESHOLD, since trending markets mean-revert less deeply.
-RSI2_ENTRY_AGGRESSIVE = 5.0
+RSI2_ENTRY_AGGRESSIVE = 5.0  # HOT-RELOADABLE via trading:config
 # Volume filter: skip entry if today's volume < this fraction of the 20-day average daily
 # volume (ADV). Adapts per instrument without per-instrument calibration.
 MIN_VOLUME_RATIO = 0.5
 # RSI-2 exit threshold. Exit signal generated (take-profit) when RSI-2 rises above
 # this value on a daily bar, indicating the oversold condition has normalized.
-RSI2_EXIT = 60.0
+RSI2_EXIT = 60.0  # HOT-RELOADABLE via trading:config
 # SMA lookback period (days) for the trend filter. Entries only allowed when
 # the instrument's close price > its simple moving average over this period.
 RSI2_SMA_PERIOD = 200
@@ -125,7 +126,7 @@ RSI2_SMA_PERIOD = 200
 RSI2_ATR_PERIOD = 14
 # Maximum days to hold a position. If a trade is still open after this many days
 # with no RSI-2 exit or stop hit, Watcher generates a time-stop exit signal.
-RSI2_MAX_HOLD_DAYS = 5
+RSI2_MAX_HOLD_DAYS = 5  # HOT-RELOADABLE via trading:config
 
 # ── Regime ──────────────────────────────────────────────────
 
@@ -142,16 +143,16 @@ ADX_TREND_THRESHOLD = 25
 # ── Drawdown Thresholds ─────────────────────────────────────
 
 # At CAUTION level (5% drawdown from peak), Supervisor halves position sizes.
-DRAWDOWN_CAUTION = 5.0
+DRAWDOWN_CAUTION = 5.0  # HOT-RELOADABLE via trading:config
 # At DEFENSIVE level (10% drawdown), Tier 2 and Tier 3 entries are disabled.
 # Only Tier 1 instruments can receive new entries.
-DRAWDOWN_DEFENSIVE = 10.0
+DRAWDOWN_DEFENSIVE = 10.0  # HOT-RELOADABLE via trading:config
 # At CRITICAL level (15% drawdown), Tier 2+ are disabled AND the simulated
 # equity cap is cut in half to further reduce exposure.
-DRAWDOWN_CRITICAL = 15.0
+DRAWDOWN_CRITICAL = 15.0  # HOT-RELOADABLE via trading:config
 # At HALT level (20% drawdown), ALL new entries are blocked. system_status → halted.
 # Only manual intervention or EOD Supervisor reset can clear the halt.
-DRAWDOWN_HALT = 20.0
+DRAWDOWN_HALT = 20.0  # HOT-RELOADABLE via trading:config
 
 # ── Trailing Stop-Loss ──────────────────────────────────────
 
@@ -240,6 +241,7 @@ class Keys:
     # Note: strategy params are not yet implemented
 
     RESTART_COUNT = "trading:restart_count"
+    CONFIG = "trading:config"  # Hot-reload overrides (JSON). See load_overrides().
 
     @staticmethod
     def heartbeat(agent: str) -> str:
@@ -395,6 +397,82 @@ def is_crypto(symbol: str) -> bool:
 
 def get_sector(symbol: str) -> str:
     return SECTOR_MAP.get(symbol, "unknown")
+
+
+def load_overrides(r: redis.Redis) -> None:
+    """
+    Read trading:config from Redis and apply valid overrides to module globals.
+
+    Called at the top of each agent's main cycle. Missing key = no-op.
+    Invalid type or out-of-range value: log warning, skip that key.
+    This is the only supported mechanism for runtime parameter changes.
+    """
+    raw = r.get(Keys.CONFIG)
+    if not raw:
+        return
+
+    try:
+        overrides = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        print("[config] WARNING: trading:config contains invalid JSON, skipping overrides")
+        return
+
+    _SPEC = {
+        "RSI2_ENTRY_CONSERVATIVE": (float, lambda v: 0 < v <= 30),
+        "RSI2_ENTRY_AGGRESSIVE":    (float, lambda v: 0 < v <= 20),
+        "RSI2_EXIT":                (float, lambda v: 50 <= v <= 95),
+        "RSI2_MAX_HOLD_DAYS":       (int,   lambda v: 1 <= v <= 30),
+        "RISK_PER_TRADE_PCT":       (float, lambda v: 0 < v <= 0.05),
+        "MAX_CONCURRENT_POSITIONS": (int,   lambda v: 1 <= v <= 20),
+        "DRAWDOWN_CAUTION":         (float, lambda v: 0 < v < 100),
+        "DRAWDOWN_DEFENSIVE":       (float, lambda v: 0 < v < 100),
+        "DRAWDOWN_CRITICAL":        (float, lambda v: 0 < v < 100),
+        "DRAWDOWN_HALT":            (float, lambda v: 0 < v < 100),
+    }
+
+    validated = {}
+    for key, (cast, check) in _SPEC.items():
+        if key not in overrides:
+            continue
+        try:
+            val = cast(overrides[key])
+            if not check(val):
+                raise ValueError(f"{val} out of range")
+        except (TypeError, ValueError) as e:
+            print(f"[config] WARNING: override {key}={overrides[key]!r} invalid ({e}), skipping")
+            continue
+        validated[key] = val
+
+    # Cross-check: AGGRESSIVE must be < CONSERVATIVE (use effective value after override)
+    if "RSI2_ENTRY_AGGRESSIVE" in validated:
+        effective_conservative = validated.get(
+            "RSI2_ENTRY_CONSERVATIVE", RSI2_ENTRY_CONSERVATIVE
+        )
+        if validated["RSI2_ENTRY_AGGRESSIVE"] >= effective_conservative:
+            print(
+                f"[config] WARNING: RSI2_ENTRY_AGGRESSIVE="
+                f"{validated['RSI2_ENTRY_AGGRESSIVE']} >= "
+                f"RSI2_ENTRY_CONSERVATIVE={effective_conservative}, skipping aggressive override"
+            )
+            del validated["RSI2_ENTRY_AGGRESSIVE"]
+
+    # Cross-check: drawdown thresholds must be strictly ascending
+    _dd_keys = ["DRAWDOWN_CAUTION", "DRAWDOWN_DEFENSIVE", "DRAWDOWN_CRITICAL", "DRAWDOWN_HALT"]
+    _mod = sys.modules[__name__]
+    _dd_vals = [validated.get(k, getattr(_mod, k)) for k in _dd_keys]
+    for i in range(len(_dd_vals) - 1):
+        if _dd_vals[i] >= _dd_vals[i + 1]:
+            print(
+                "[config] WARNING: drawdown thresholds out of order after overrides, "
+                "skipping all drawdown overrides"
+            )
+            for k in _dd_keys:
+                validated.pop(k, None)
+            break
+
+    # Apply validated overrides to module globals
+    for key, val in validated.items():
+        setattr(_mod, key, val)
 
 
 # v1.0.0
