@@ -190,6 +190,7 @@ def attempt_service_restart(r):
 
 def run_health_check(r):
     """Check all agents are alive and system state is consistent."""
+    config.load_overrides(r)   # apply any runtime config overrides
     print("[Supervisor] Running health check...")
     r.set(Keys.heartbeat("supervisor"), datetime.now().isoformat())
 
@@ -317,6 +318,7 @@ def run_health_check(r):
 
 def run_eod_review(r):
     """End-of-day review — compute metrics and send daily summary."""
+    config.load_overrides(r)   # apply any runtime config overrides
     print("[Supervisor] Running end-of-day review...")
 
     equity = get_simulated_equity(r)

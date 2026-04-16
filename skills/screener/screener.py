@@ -160,6 +160,7 @@ def run_scan():
     """Run a complete scan of the active universe."""
     r = get_redis()
     config.init_redis_state(r)
+    config.load_overrides(r)   # apply any runtime config overrides
 
     # Send heartbeat
     r.set(Keys.heartbeat("screener"), datetime.now().isoformat())

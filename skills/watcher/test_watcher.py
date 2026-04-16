@@ -825,3 +825,16 @@ class TestRunCycle:
         mock_notify.assert_called_once()
         msg = mock_notify.call_args[0][0]
         assert "ENTRY" in msg
+
+    def test_load_overrides_called_each_cycle(self):
+        r = make_redis()
+        with patch('watcher.get_redis', return_value=r), \
+             patch('watcher.config.init_redis_state'), \
+             patch('watcher.config.load_overrides') as mock_load, \
+             patch('watcher.generate_exit_signals', return_value=[]), \
+             patch('watcher.generate_entry_signals', return_value=[]), \
+             patch('watcher.publish_signals'), \
+             patch('watcher.notify'):
+            from watcher import run_cycle
+            run_cycle()
+        mock_load.assert_called_once_with(r)
