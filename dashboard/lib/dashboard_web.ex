@@ -62,6 +62,7 @@ defmodule DashboardWeb do
   defp html_helpers do
     quote do
       import Phoenix.HTML
+      alias Phoenix.LiveView.JS
       import DashboardWeb.CoreComponents
       unquote(verified_routes())
     end
