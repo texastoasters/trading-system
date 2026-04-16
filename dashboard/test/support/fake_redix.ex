@@ -23,4 +23,9 @@ defmodule Dashboard.FakeRedix do
     send(from_pid, {request_id, {:error, :test_pipeline_error}})
     {:noreply, state}
   end
+
+  @impl true
+  def handle_call({:command, _commands, _timeout}, _from, state) do
+    {:reply, {:error, :test_command_error}, state}
+  end
 end
