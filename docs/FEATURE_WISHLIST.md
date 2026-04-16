@@ -82,6 +82,11 @@ These are known issues documented in HANDOFF.md that can cause real harm.
 - [x] **Paper trading report vs real Alpaca paper balance** — Weekly comparison: does simulated equity ($5K cap) diverge significantly from what Alpaca's paper account would show if trading at full scale? Catches sizing logic bugs.
 - [x] **Economic calendar auto-refresh script** — `scripts/refresh_economic_calendar.py`: auto-computes NFP (first-Friday), accepts `--fomc`/`--cpi` for official dates, patches JSON in-place, preserves other years. PR #112.
 
+### Dashboard — Universe / Blacklist
+- [ ] **Blacklist: bulk import via CSV** — Upload a list of symbols to blacklist in one action. Useful after a bad regime or sector rotation review.
+- [ ] **Blacklist: reason field** — Free-text note stored with each blacklist entry ("earnings risk", "halted", etc.). Shown in the blacklist section of the universe page.
+- [ ] **Automatic blacklisting on loss streaks** — If a symbol triggers stop-loss N times in M days, supervisor auto-blacklists it and sends a Telegram alert. Prevents repeated losses on a broken instrument.
+
 ---
 
 ## 🔵 Blue Sky Features (High Effort / Long Term)
