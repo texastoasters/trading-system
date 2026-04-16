@@ -156,7 +156,7 @@ class TestScanInstrument:
         result = self._scan(rsi2_val=3.0, close_val=110.0, sma200_val=100.0)
         assert result is not None
         for field in ('symbol', 'rsi2', 'sma200', 'atr14', 'close', 'prev_high',
-                      'above_sma', 'priority', 'entry_threshold', 'volume_ratio'):
+                      'above_sma', 'priority', 'entry_threshold', 'volume_ratio', 'divergence'):
             assert field in result
         assert result['symbol'] == 'SPY'
         assert result['above_sma'] is True
@@ -529,3 +529,66 @@ class TestRunScanHeatmap:
         heatmap = json.loads(heatmap_call[0][1])
         assert len(heatmap["dates"]) == config.HEATMAP_DAYS
         assert len(heatmap["instruments"]["SPY"]) == config.HEATMAP_DAYS
+
+
+# ── RSI-2 divergence ─────────────────────────────────────────
+
+class TestScanInstrumentDivergence:
+    """Bullish divergence: price lower low + RSI-2 higher low within DIVERGENCE_WINDOW bars."""
+
+    def _scan_series(self, close_series, rsi2_series, atr_val=2.0):
+        n = len(close_series)
+        close = np.array(close_series, dtype=float)
+        data = {
+            'dates': [f"2024-{i:04d}" for i in range(n)],
+            'close': close,
+            'high': close * 1.01,
+            'low': close * 0.99,
+            'volume': np.ones(n) * 1_000_000.0,
+        }
+        # SMA-200 below latest close so above_sma is True
+        sma200_val = close[-1] * 0.9
+        with patch('screener.rsi', return_value=np.array(rsi2_series, dtype=float)), \
+             patch('screener.sma', return_value=np.array([sma200_val])), \
+             patch('screener.atr', return_value=np.array([atr_val])):
+            from screener import scan_instrument
+            return scan_instrument("SPY", data, ranging_regime())
+
+    def test_divergence_true_when_price_lower_low_and_rsi_higher_low(self):
+        # 12 bars; prior 11: close=100, rsi2=3; current: close=90 (lower), rsi2=7 (higher)
+        close_series = [100.0] * 11 + [90.0]
+        rsi2_series  = [3.0]   * 11 + [7.0]
+        result = self._scan_series(close_series, rsi2_series)
+        assert result is not None
+        assert result["divergence"] is True
+
+    def test_divergence_false_when_price_not_lower_low(self):
+        # Price flat — current close == prior min, so < is False
+        close_series = [100.0] * 12
+        rsi2_series  = [3.0]   * 11 + [7.0]
+        result = self._scan_series(close_series, rsi2_series)
+        assert result is not None
+        assert result["divergence"] is False
+
+    def test_divergence_false_when_rsi_not_higher_low(self):
+        # Price lower low but RSI also makes lower low → no divergence
+        close_series = [100.0] * 11 + [90.0]
+        rsi2_series  = [7.0]   * 11 + [3.0]
+        result = self._scan_series(close_series, rsi2_series)
+        assert result is not None
+        assert result["divergence"] is False
+
+    def test_divergence_false_when_fewer_bars_than_window(self):
+        # Only 5 bars — below DIVERGENCE_WINDOW (10) — cannot detect divergence
+        close_series = [110.0] * 5
+        rsi2_series  = [3.0]   * 5
+        result = self._scan_series(close_series, rsi2_series)
+        if result is not None:
+            assert result["divergence"] is False
+
+    def test_divergence_field_always_present_in_result(self):
+        close_series = [100.0] * 12
+        rsi2_series  = [3.0]   * 12
+        result = self._scan_series(close_series, rsi2_series)
+        assert result is not None
+        assert "divergence" in result

@@ -141,6 +141,18 @@ def scan_instrument(symbol, data, regime_info):
     if priority is None:
         return None
 
+    # Bullish divergence: price makes lower low while RSI-2 makes higher low
+    window = config.DIVERGENCE_WINDOW
+    if len(close) > window and len(rsi2) > window:
+        prior_close = close[-(window + 1):-1]
+        prior_rsi2 = rsi2[-(window + 1):-1]
+        divergence = bool(
+            latest_close < float(np.min(prior_close))
+            and latest_rsi2 > float(np.min(prior_rsi2))
+        )
+    else:
+        divergence = False
+
     return {
         "symbol": symbol,
         "tier": None,  # filled by caller
@@ -153,6 +165,7 @@ def scan_instrument(symbol, data, regime_info):
         "priority": priority,
         "entry_threshold": threshold,
         "volume_ratio": round(latest_volume / avg_volume_20d, 2) if avg_volume_20d > 0 else None,
+        "divergence": divergence,
     }
 
 

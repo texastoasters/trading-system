@@ -129,6 +129,9 @@ RSI2_ATR_PERIOD = 14
 RSI2_MAX_HOLD_DAYS = 5  # HOT-RELOADABLE via trading:config
 # Number of trailing calendar days shown in the RSI-2 signal heatmap on the dashboard.
 HEATMAP_DAYS = 14
+# Lookback window (bars) for bullish RSI-2 divergence detection. Screener checks whether
+# the current bar has a lower price low AND a higher RSI-2 low than any bar in this window.
+DIVERGENCE_WINDOW = 10
 
 # ── Regime ──────────────────────────────────────────────────
 
