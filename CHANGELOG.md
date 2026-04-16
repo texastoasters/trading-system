@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.29.2] - 2026-04-15
+
+### Added
+- **RSI-2 bullish divergence detection** — screener detects when price makes a lower low while RSI-2 makes a higher low within a 10-bar lookback window (`DIVERGENCE_WINDOW = 10`). Adds `divergence: bool` to every watchlist payload entry for downstream use by watcher/PM.
+
+---
+
 ## [0.29.1] - 2026-04-15
 
 ### Added
