@@ -8,6 +8,17 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.29.4] - 2026-04-16
+
+### Fixed
+- **Discovery: 3-year backtest window** — `run_rsi2_quick` extended from 2→3 years so short-window lucky streaks (e.g. CLMT: WR=35%, PF=0.25 over 5yr) can no longer pass the admission filter.
+- **Discovery: minimum 5 trades** — min-trade gate raised from 3→5; instruments with too few backtested trades to be statistically meaningful are rejected at discovery time.
+
+### Added
+- **Revalidation: auto-archive hard fails** — `apply_hard_fails` in supervisor immediately archives any instrument with PF < 1.0 or WR < 50% after monthly revalidation, without waiting for the LLM review block. Fires a `critical_alert` listing removed symbols. Borderline failures (PF 1.0–1.3) still pending LLM actuation.
+
+---
+
 ## [0.29.3] - 2026-04-15
 
 ### Changed

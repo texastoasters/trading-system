@@ -168,10 +168,10 @@ def check_liquidity_and_price(symbol, data_client, min_volume=500000,
         return False, str(e)
 
 
-def run_rsi2_quick(symbol, data_client, years=2):
+def run_rsi2_quick(symbol, data_client, years=3):
     """
     Quick RSI-2 backtest. Returns a ScanResult.
-    Uses 2 years instead of 3 to be faster for scanning.
+    Uses 3 years to avoid short-window false positives.
     """
     try:
         end = datetime.now() - timedelta(days=1)
@@ -227,8 +227,8 @@ def run_rsi2_quick(symbol, data_client, years=2):
                     entry_i = i
                     in_pos = True
 
-        if len(returns) < 3:
-            return None, f"Only {len(returns)} trades"
+        if len(returns) < 5:
+            return None, f"Only {len(returns)} trades (need 5+)"
 
         returns = np.array(returns)
         winners = returns[returns > 0]

@@ -545,6 +545,50 @@ def daemon_loop():  # pragma: no cover
 
 # ── Monthly Re-Validation ───────────────────────────────────
 
+def apply_hard_fails(r, results, universe):
+    """
+    Auto-archive instruments with catastrophically bad backtest results.
+
+    Hard fail criteria (clearly net-negative, no LLM needed):
+      - profit_factor < 1.0  (losing more than winning in dollar terms)
+      - win_rate < 50%       (losing more than half of all trades)
+
+    Borderline failures (PF 1.0-1.3, WR 50-60%) stay pending LLM review.
+    Returns list of archived symbol strings.
+    """
+    HARD_FAIL_PF = 1.0
+    HARD_FAIL_WR = 50.0
+
+    hard_fails = [
+        res for res in results
+        if not res.passed and (res.profit_factor < HARD_FAIL_PF or res.win_rate < HARD_FAIL_WR)
+    ]
+    if not hard_fails:
+        return []
+
+    removed = []
+    for tier_key in ("tier1", "tier2", "tier3", "disabled"):
+        universe[tier_key] = [
+            sym for sym in universe.get(tier_key, [])
+            if sym not in {res.symbol for res in hard_fails}
+        ]
+    archived = universe.setdefault("archived", [])
+    for res in hard_fails:
+        if res.symbol not in archived:
+            archived.append(res.symbol)
+            removed.append(res.symbol)
+            print(f"[Supervisor] Auto-archived {res.symbol} "
+                  f"(WR {res.win_rate:.0f}%, PF {res.profit_factor:.2f})")
+
+    r.set(Keys.UNIVERSE, json.dumps(universe))
+    if removed:
+        critical_alert(
+            f"Auto-archived {len(removed)} instrument(s) after revalidation: "
+            f"{', '.join(removed)}"
+        )
+    return removed
+
+
 def run_revalidation(r):  # pragma: no cover
     """
     Monthly universe re-validation — re-backtest all instruments and classify
@@ -623,6 +667,12 @@ def run_revalidation(r):  # pragma: no cover
     print(f"  Tier 3: {[res.symbol for res in rec_tier3]}")
     print(f"  Failed: {[res.symbol for res in failed]}")
 
+    # Auto-archive catastrophic failures without waiting for LLM.
+    # Symbols with PF < 1.0 or WR < 50% are clearly net-negative; remove them
+    # immediately. Borderline failures (failed thresholds but not catastrophic)
+    # remain for LLM-driven promotion/demotion once that block is implemented.
+    auto_removed = apply_hard_fails(r, results, universe)
+
     # TODO: LLM analysis
     # Pass results + current universe to LLM for promotion/demotion decisions.
     # The LLM should compare recommended tiers to current tiers, enforce the
@@ -639,6 +689,8 @@ def run_revalidation(r):  # pragma: no cover
     ]
     if failed:
         changes.append(f"Failed ({len(failed)}): {', '.join(res.symbol for res in failed)}")
+    if auto_removed:
+        changes.append(f"Auto-archived ({len(auto_removed)}): {', '.join(auto_removed)}")
     changes.append("⚠️ Tier changes pending LLM review — universe not yet updated")
 
     universe_update(changes, len(instruments))
