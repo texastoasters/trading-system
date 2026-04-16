@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.29.5] - 2026-04-16
+
+### Fixed
+- **Dashboard: hamburger menu on iOS Safari** — added `type="button"` to prevent iOS form-submit default behavior; changed `JS.toggle` to use `display: "flex"` so `flex-col` mobile menu renders correctly when opened.
+
+---
+
 ## [0.29.4] - 2026-04-16
 
 ### Fixed

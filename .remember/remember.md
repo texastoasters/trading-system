@@ -1,12 +1,12 @@
 # Handoff
 
 ## State
-PR #121 in progress: discovery 3yr window, min-5-trades gate, apply_hard_fails auto-archive in supervisor. 604 tests passing. Dashboard files (dashboard_web.ex, layouts.ex, app.html.heex, nav_test.exs) were pre-existing uncommitted changes — not part of this PR.
+Branch `fix/hamburger-ios` ready to commit+push+PR. Fixed two iPhone hamburger bugs in `dashboard/lib/dashboard_web/layouts/app.html.heex`: added `type="button"` to button, changed `JS.toggle` to use `display: "flex"`. Two new tests in `dashboard/test/dashboard_web/live/nav_test.exs`. 386 tests passing.
 
 ## Next
-- Implement same-day exit cooldown (watcher: Redis key `trading:exited_today:{symbol}`, TTL midnight ET)
-- Implement PDT day-trade counter (executor: `trading:day_trades_today`, block at ≥3)
-- Implement entry filter: skip if `current_price > prev_day_high` (watcher signal generation)
+1. Finish `cpr` on `fix/hamburger-ios` — commit, push, PR
+2. Implement same-day exit cooldown (watcher: Redis key `trading:exited_today:{symbol}`, TTL midnight ET)
+3. Implement PDT day-trade counter (executor: `trading:day_trades_today`, block at ≥3)
 
 ## Context
-Backtest confirmed: current exit strategy (RSI>60 OR prev_high) is sound — gate ideas were no-ops. Real problems are operational (rebuys, PDT) and universe quality (CLMT/OSK in T3). User blacklisted CLMT + OSK manually. XLE and IWM also borderline (PF 0.79/1.10) — worth watching.
+Dashboard hamburger PR #121 was already merged (accidentally included dashboard files). This is a follow-up fix-only branch. VPS needs `docker compose up --build -d dashboard` after merge to pick up the heex change.

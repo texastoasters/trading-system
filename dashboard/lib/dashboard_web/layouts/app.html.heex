@@ -5,7 +5,7 @@
     </div>
     <div class="flex items-center justify-between sm:hidden">
       <span class="text-xs text-gray-400 font-medium">Trading System</span>
-      <button id="hamburger-btn" phx-click={JS.toggle(to: "#mobile-menu")} class="p-1.5 text-gray-400 hover:text-gray-200 rounded hover:bg-gray-800 transition-colors" aria-label="Toggle menu">
+      <button type="button" id="hamburger-btn" phx-click={JS.toggle(to: "#mobile-menu", display: "flex")} class="p-1.5 text-gray-400 hover:text-gray-200 rounded hover:bg-gray-800 transition-colors" aria-label="Toggle menu">
         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
         </svg>
