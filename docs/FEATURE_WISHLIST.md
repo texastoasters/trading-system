@@ -69,7 +69,7 @@ These are known issues documented in HANDOFF.md that can cause real harm.
 - [x] **Economic calendar awareness** — Block entries on FOMC, CPI, and NFP days. Dates in `scripts/economic_calendar.json`, updated annually. PR #84.
 
 ### Dashboard
-- [ ] **Equity curve chart** — Full equity curve from inception. Overlaid with drawdown shading. Shows where circuit breakers would have fired historically.
+- [x] **Equity curve chart** — ContEx SVG line chart on `/performance`: equity curve (blue), peak equity (gray), −10%/−15%/−20% circuit-breaker thresholds, 30d/90d/all range toggle. PR #92 (added), PR #96 removed from main dashboard only — performance page kept it.
 - [x] **Per-instrument P&L breakdown** — Table showing each instrument's total trades, win rate, profit factor, and cumulative P&L over rolling 30/90/365 days. Pulled from TimescaleDB. PR #85.
 - [ ] **Signal heatmap** — Grid of all instruments × days showing signal strength (RSI-2 value, color-coded). Makes it easy to spot clusters of oversold conditions.
 - [x] **Strategy attribution** — For each exit, show how much P&L came from RSI-2 reversal vs time-stop vs stop-loss vs manual. Helps tune which exit types are most valuable.
@@ -203,10 +203,10 @@ Note: equity curve chart ([x] in prior wave) was incorrect — it was added (PR 
 ### Operations
 4. **Environment validation script** — Single command on system start: checks all env vars, Redis reachable, Alpaca API valid, Telegram token works, TimescaleDB up. Catches misconfiguration before first trade of the day.
 5. ✅ **Log rotation and archiving** — Agent logs on VPS will eventually fill disk. Rotate daily, compress, 30-day retention. Logrotate config or a simple cron script. PR #100.
-6. **Economic calendar auto-refresh** — `economic_calendar.json` is "updated annually" — human-memory dependency. Script to generate next year's FOMC/CPI/NFP dates (all publicly scheduled) and patch the JSON. Run as cron every December.
+6. ~~**Economic calendar auto-refresh**~~ ✅ Done (PR #112): `scripts/refresh_economic_calendar.py` auto-computes NFP (first-Friday), accepts `--fomc`/`--cpi` for official dates, patches JSON in-place, preserves other years.
 
 ### Visibility
-7. **Dashboard: simulated equity history chart** — Sparkline of `trading:simulated_equity` over time (today + rolling). Data already in Redis and `daily_summaries`. Even a simple ContEx sparkline adds significant monitoring value.
+7. ~~**Dashboard: simulated equity history chart**~~ ✅ Done — ContEx equity curve on `/performance` (PR #92, never removed from that page). Wishlist entry was incorrect.
 8. **Config hot-reload** — Change RSI thresholds, position limits, and tier assignments in Redis without restarting daemons. Supervisor already manages Redis state; this extends that pattern.
 
 ### Signal Quality
