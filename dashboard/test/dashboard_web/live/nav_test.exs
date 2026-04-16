@@ -14,6 +14,20 @@ defmodule DashboardWeb.NavTest do
       end
     end
 
+    test "hamburger button has type=button to prevent iOS form submit default", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/")
+      assert html =~ ~r/<button[^>]+type="button"[^>]*id="hamburger-btn"|<button[^>]+id="hamburger-btn"[^>]*type="button"/,
+             "hamburger button must have type=\"button\" for iOS Safari"
+    end
+
+    test "mobile menu toggle uses flex display for correct flex-col layout", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/")
+      # JS.toggle encodes display option as JSON in phx-click; without it, defaults to "block"
+      # which breaks flex-col layout. "&quot;display&quot;" appears in the encoded JSON.
+      assert html =~ "&quot;display&quot;",
+             "JS.toggle on mobile-menu must specify display: flex (default block breaks flex-col)"
+    end
+
     test "all nav labels present", %{conn: conn} do
       {:ok, _view, html} = live(conn, "/")
 
