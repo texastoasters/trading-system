@@ -1,13 +1,12 @@
 # Handoff
 
 ## State
-On branch `feat/config-hot-reload`. Task 4 complete: SettingsLive LiveView added (commit 40ca83f).
-360 Elixir tests pass, 0 failures. All 53 Python config tests still pass.
+`feat/config-hot-reload` complete. All 5 tasks done. 365 Elixir tests, 53 Python config tests, all passing.
+Last commit: config hot-reload v0.29.0 — wishlist item 8.
 
 ## Next
-- Run `cpr` to push branch and open PR for `feat/config-hot-reload`.
-- Verify no other tasks remain in the config hot-reload feature before merging.
+Run `cpr` to push branch and open PR.
 
 ## Context
-`redis` mock in Python tests uses `except Exception` (not `except redis.RedisError`) — intentional, documented.
-SettingsLive reads/writes `trading:config` Redis key as JSON. Route already existed in router.
+Float.parse fix: only `{f, ""}` accepted — trailing chars rejected.
+FakeRedix now handles both Redix.command/2 (handle_call) and pipeline (handle_cast).
