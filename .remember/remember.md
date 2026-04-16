@@ -1,11 +1,13 @@
 # Handoff
 
 ## State
-PR #115 merged and deployed (v0.28.0 — symbol blacklist). Wishlist audited: items 6 and 7 marked done (already shipped). Worktree `feat/symbol-blacklist` can be removed.
+On branch `feat/config-hot-reload`. Task 4 complete: SettingsLive LiveView added (commit 40ca83f).
+360 Elixir tests pass, 0 failures. All 53 Python config tests still pass.
 
 ## Next
-1. Clean up worktree: `git worktree remove .worktrees/feat/symbol-blacklist`
-2. Next minor v0.29.0: pick from `docs/FEATURE_WISHLIST.md` open items — LLM cost tracking (most urgent), config hot-reload, signal heatmap, RSI-2 divergence detection
+- Run `cpr` to push branch and open PR for `feat/config-hot-reload`.
+- Verify no other tasks remain in the config hot-reload feature before merging.
 
 ## Context
-Wishlist priority wave (2026-04-12): items 2 (LLM cost), 8 (config hot-reload), 9 (signal heatmap), 10 (RSI-2 divergence) remain open.
+`redis` mock in Python tests uses `except Exception` (not `except redis.RedisError`) — intentional, documented.
+SettingsLive reads/writes `trading:config` Redis key as JSON. Route already existed in router.
