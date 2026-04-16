@@ -65,6 +65,10 @@ These are known issues documented in HANDOFF.md that can cause real harm.
 - [x] **Volume filter on entries** — `scan_instrument` skips today's volume < 50% of 20d ADV. `volume_ratio` in watchlist payload. feat/volume-filter.
 - [ ] **RSI-2 divergence detection** — Flag when price makes a new low but RSI-2 makes a higher low (bullish divergence) — stronger entry signal than raw RSI-2 threshold alone.
 - [ ] **Multi-timeframe confirmation** — Require RSI-2 < threshold on both daily AND 4-hour charts before generating a `strong_signal`. Reduces false positives.
+- [ ] **Entry filter: skip if price > prev-day-high** — If entry price is already above yesterday's high, the "close > prev_day_high" exit fires at a loss. Guard: skip entry when `current_price > prev_day_high`. Observed on KMI (entry $32.66, prev high $31.85 → exit at -2.2%).
+- [ ] **Broader strategy review** — RSI-2 exit rules (prev-day-high, RSI>60, time stop) need holistic evaluation against real trade history. Losing trades like KMI suggest some exit conditions may fire prematurely or at wrong price levels. Backtest alternative exits (5-day MA cross, entry-price minimum, combined RSI>65 only).
+- [ ] **Same-day exit cooldown** — After any exit (not just stop-loss), block re-entry until next day via Redis key `trading:exited_today:{symbol}` with TTL until midnight ET. Prevents same-day rebuy and PDT burn (observed: CLMT bought/sold 3x in one day).
+- [ ] **PDT day-trade counter** — Track day trades in `trading:day_trades_today` (reset at midnight). Block new entries when count ≥ 3. Fire Telegram alert when approaching limit.
 - [x] **Earnings avoidance** — Query Alpaca's calendar or a public earnings API. Block entry signals for any symbol within 2 days of its earnings release.
 - [x] **Economic calendar awareness** — Block entries on FOMC, CPI, and NFP days. Dates in `scripts/economic_calendar.json`, updated annually. PR #84.
 
@@ -93,6 +97,8 @@ These are known issues documented in HANDOFF.md that can cause real harm.
 
 ### Intelligence & Automation
 - [ ] **Strategy self-improvement loop** — EOD LLM review already adjusts RSI thresholds per instrument. Extend to also adjust stop-loss distances, time-stop durations, and tier assignments based on rolling performance data.
+- [x] **Discovery: 3-year backtest window + min 5 trades** — `run_rsi2_quick` extended from 2→3 years and min-trade gate raised from 3→5. Prevents short-window false positives (e.g. CLMT: WR=35%, PF=0.25 over 5yr but slipped through on lucky 2yr window).
+- [x] **Revalidation: auto-archive hard fails** — `apply_hard_fails` in supervisor archives symbols with PF < 1.0 or WR < 50% immediately after monthly revalidation, without waiting for LLM review. Borderline cases still pending LLM actuation.
 - [ ] **Regime prediction** — Instead of detecting regime from ADX (lagging), add a predictive layer: use VIX, SPY options skew, or a simple ML model to anticipate regime changes 1-2 days early.
 - [ ] **News sentiment integration** — Screener already calls LLM for news materiality. Extend to pull and score news for all watchlist instruments, not just top signals. Weight signals by sentiment score.
 - [ ] **Earnings play strategy** — Separate strategy (not RSI-2) that takes positions before earnings on historically positive-surprise stocks. Separate tier and sizing rules.

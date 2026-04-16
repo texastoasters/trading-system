@@ -1016,3 +1016,89 @@ class TestRunReconcile:
             from supervisor import run_reconcile
             run_reconcile(r)  # must not raise
         mock_alert.assert_called_once()
+
+
+# ── apply_hard_fails ──────────────────────────────────────────
+
+def make_result(symbol, win_rate, profit_factor, passed=None):
+    r = MagicMock()
+    r.symbol = symbol
+    r.win_rate = win_rate
+    r.profit_factor = profit_factor
+    r.passed = passed if passed is not None else (win_rate >= 60 and profit_factor >= 1.3)
+    r.fail_reasons = []
+    return r
+
+
+class TestApplyHardFails:
+    def _call(self, results, universe_override=None):
+        import json as _json
+        from supervisor import apply_hard_fails
+
+        universe = {
+            "tier1": ["SPY"],
+            "tier2": ["GOOGL"],
+            "tier3": ["V", "CLMT", "OSK"],
+            "disabled": [],
+            "archived": [],
+        }
+        if universe_override:
+            universe.update(universe_override)
+
+        store = {_config.Keys.UNIVERSE: _json.dumps(universe)}
+        r = make_redis(store)
+        removed = apply_hard_fails(r, results, universe)
+        saved = _json.loads(r.set.call_args[0][1]) if r.set.called else universe
+        return removed, saved
+
+    def test_removes_catastrophic_pf_from_tier3(self):
+        """PF < 1.0 → auto-archived regardless of tier."""
+        results = [make_result("CLMT", win_rate=35.7, profit_factor=0.25, passed=False)]
+        removed, saved = self._call(results)
+        assert "CLMT" in removed
+        assert "CLMT" not in saved["tier3"]
+        assert "CLMT" in saved["archived"]
+
+    def test_removes_catastrophic_wr_from_tier3(self):
+        """WR < 50% → auto-archived."""
+        results = [make_result("OSK", win_rate=45.0, profit_factor=0.95, passed=False)]
+        removed, saved = self._call(results)
+        assert "OSK" in removed
+        assert "OSK" not in saved["tier3"]
+        assert "OSK" in saved["archived"]
+
+    def test_keeps_borderline_fail(self):
+        """PF=1.1, WR=62% — failed T3 threshold (1.3) but not catastrophic → keep."""
+        results = [make_result("V", win_rate=62.0, profit_factor=1.1, passed=False)]
+        removed, saved = self._call(results)
+        assert "V" not in removed
+        assert "V" in saved["tier3"]
+
+    def test_keeps_passing_instruments_untouched(self):
+        """Passing instruments must not be archived."""
+        results = [make_result("SPY", win_rate=80.0, profit_factor=3.0, passed=True)]
+        removed, saved = self._call(results)
+        assert "SPY" not in removed
+        assert "SPY" in saved["tier1"]
+
+    def test_removes_hard_fail_from_tier2(self):
+        """Hard fails in tier2 also get archived."""
+        results = [make_result("GOOGL", win_rate=40.0, profit_factor=0.8, passed=False)]
+        removed, saved = self._call(results)
+        assert "GOOGL" in removed
+        assert "GOOGL" not in saved["tier2"]
+        assert "GOOGL" in saved["archived"]
+
+    def test_no_results_no_changes(self):
+        """Empty results list → nothing archived, Redis not written."""
+        removed, saved = self._call([])
+        assert removed == []
+
+    def test_returns_list_of_removed_symbols(self):
+        """Return value is a list of symbol strings."""
+        results = [
+            make_result("CLMT", win_rate=35.0, profit_factor=0.25, passed=False),
+            make_result("OSK",  win_rate=45.0, profit_factor=0.90, passed=False),
+        ]
+        removed, _ = self._call(results)
+        assert set(removed) == {"CLMT", "OSK"}
