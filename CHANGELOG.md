@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.29.3] - 2026-04-15
+
+### Changed
+- **Settings page descriptions** — added a short explanatory hint under each setting field (RSI strategy, position limits, drawdown thresholds) describing the effect of each parameter.
+
+---
+
 ## [0.29.2] - 2026-04-15
 
 ### Added

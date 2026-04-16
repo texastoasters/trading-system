@@ -208,6 +208,30 @@ defmodule DashboardWeb.SettingsLiveTest do
     end
   end
 
+  describe "setting descriptions" do
+    test "RSI strategy fields have descriptions", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/settings")
+      assert html =~ "Enter when RSI-2 &lt; this"
+      assert html =~ "Tighter, for strong uptrends"
+      assert html =~ "Exit when RSI-2 recovers above this"
+      assert html =~ "Force exit after N days"
+    end
+
+    test "position limit fields have descriptions", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/settings")
+      assert html =~ "Equity fraction risked, sized via ATR stop"
+      assert html =~ "Cap on simultaneously open positions"
+    end
+
+    test "drawdown threshold fields have descriptions", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/settings")
+      assert html =~ "Reduce position sizes"
+      assert html =~ "Disable Tier 2+ instruments"
+      assert html =~ "Disable Tier 3 instruments"
+      assert html =~ "Halt all trading"
+    end
+  end
+
   describe "mount error path" do
     test "falls back to defaults when Redis GET fails", %{conn: conn} do
       swap_redix_to_stub()
