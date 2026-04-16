@@ -1,0 +1,137 @@
+<div class="min-h-screen bg-gray-900 text-gray-100 px-3 sm:px-6 py-4 space-y-4">
+
+  <%!-- Header --%>
+  <div class="flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <a href="/" class="text-gray-500 hover:text-gray-300 transition-colors text-sm">← Dashboard</a>
+      <h1 class="text-lg font-bold text-white tracking-tight">Settings</h1>
+    </div>
+    <div class="text-xs">
+      <%= if @has_overrides do %>
+        <span class="text-yellow-400">Active overrides</span>
+      <% else %>
+        <span class="text-gray-500">No active overrides — showing defaults</span>
+      <% end %>
+    </div>
+  </div>
+
+  <%!-- Flash --%>
+  <%= if live_flash(@flash, :info) do %>
+    <div class="bg-green-900/40 border border-green-700 rounded-lg px-4 py-2 text-sm text-green-300">
+      {live_flash(@flash, :info)}
+    </div>
+  <% end %>
+  <%= if live_flash(@flash, :error) do %>
+    <div class="bg-red-900/40 border border-red-700 rounded-lg px-4 py-2 text-sm text-red-300">
+      {live_flash(@flash, :error)}
+    </div>
+  <% end %>
+
+  <form id="settings-form" phx-submit="save" class="space-y-4">
+
+    <%!-- RSI Strategy --%>
+    <div class="bg-gray-800 rounded-lg border border-gray-700 p-4 space-y-3">
+      <h2 class="text-sm font-semibold text-gray-200">RSI Strategy</h2>
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">Entry Conservative</label>
+          <input type="number" name="config[RSI2_ENTRY_CONSERVATIVE]"
+            value={@form_params["RSI2_ENTRY_CONSERVATIVE"]}
+            step="0.1" min="0.1" max="30"
+            class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500">
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">Entry Aggressive</label>
+          <input type="number" name="config[RSI2_ENTRY_AGGRESSIVE]"
+            value={@form_params["RSI2_ENTRY_AGGRESSIVE"]}
+            step="0.1" min="0.1" max="20"
+            class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500">
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">Exit Threshold</label>
+          <input type="number" name="config[RSI2_EXIT]"
+            value={@form_params["RSI2_EXIT"]}
+            step="1" min="50" max="95"
+            class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500">
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">Max Hold Days</label>
+          <input type="number" name="config[RSI2_MAX_HOLD_DAYS]"
+            value={@form_params["RSI2_MAX_HOLD_DAYS"]}
+            step="1" min="1" max="30"
+            class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500">
+        </div>
+      </div>
+    </div>
+
+    <%!-- Position Limits --%>
+    <div class="bg-gray-800 rounded-lg border border-gray-700 p-4 space-y-3">
+      <h2 class="text-sm font-semibold text-gray-200">Position Limits</h2>
+      <div class="grid grid-cols-2 gap-3 sm:w-1/2">
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">Risk per Trade (%)</label>
+          <input type="number" name="config[RISK_PER_TRADE_PCT]"
+            value={@form_params["RISK_PER_TRADE_PCT"]}
+            step="0.001" min="0.001" max="0.05"
+            class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500">
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">Max Concurrent Positions</label>
+          <input type="number" name="config[MAX_CONCURRENT_POSITIONS]"
+            value={@form_params["MAX_CONCURRENT_POSITIONS"]}
+            step="1" min="1" max="20"
+            class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500">
+        </div>
+      </div>
+    </div>
+
+    <%!-- Drawdown Thresholds --%>
+    <div class="bg-gray-800 rounded-lg border border-gray-700 p-4 space-y-3">
+      <h2 class="text-sm font-semibold text-gray-200">Drawdown Thresholds (%)</h2>
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">Caution</label>
+          <input type="number" name="config[DRAWDOWN_CAUTION]"
+            value={@form_params["DRAWDOWN_CAUTION"]}
+            step="0.5" min="0.5" max="99"
+            class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500">
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">Defensive</label>
+          <input type="number" name="config[DRAWDOWN_DEFENSIVE]"
+            value={@form_params["DRAWDOWN_DEFENSIVE"]}
+            step="0.5" min="0.5" max="99"
+            class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500">
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">Critical</label>
+          <input type="number" name="config[DRAWDOWN_CRITICAL]"
+            value={@form_params["DRAWDOWN_CRITICAL"]}
+            step="0.5" min="0.5" max="99"
+            class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500">
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">Halt</label>
+          <input type="number" name="config[DRAWDOWN_HALT]"
+            value={@form_params["DRAWDOWN_HALT"]}
+            step="0.5" min="0.5" max="99"
+            class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500">
+        </div>
+      </div>
+    </div>
+
+    <%!-- Actions --%>
+    <div class="flex gap-3">
+      <button type="submit"
+        class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded transition-colors">
+        Save
+      </button>
+      <button type="button" phx-click="reset"
+        class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm font-medium rounded transition-colors">
+        Reset to Defaults
+      </button>
+    </div>
+
+  </form>
+
+</div>

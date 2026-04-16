@@ -45,7 +45,7 @@ These are known issues documented in HANDOFF.md that can cause real harm.
 ### System Management
 - [x] **`start_trading_system.sh --logs`** — Tail all agent logs in a tmux split-pane layout. Currently requires manual setup. PR #100.
 - [x] **Graceful shutdown** — On SIGTERM, agents finish their current cycle, write final state to Redis, then exit cleanly. Prevents mid-cycle state corruption. PR #83.
-- [ ] **Config hot-reload** — Allow changing RSI thresholds, position limits, and tier assignments in Redis without restarting daemons. Supervisor already manages some Redis state; this extends it.
+- [x] **Config hot-reload** — Allow changing RSI thresholds, position limits, and tier assignments in Redis without restarting daemons. Supervisor already manages some Redis state; this extends it.
 
 ---
 
@@ -212,7 +212,7 @@ Note: equity curve chart ([x] in prior wave) was incorrect — it was added (PR 
 
 ### Visibility
 7. **Dashboard: simulated equity history chart** — Sparkline of `trading:simulated_equity` over time (today + rolling). Data already in Redis and `daily_summaries`. Even a simple ContEx sparkline adds significant monitoring value.
-8. **Config hot-reload** — Change RSI thresholds, position limits, and tier assignments in Redis without restarting daemons. Supervisor already manages Redis state; this extends that pattern.
+8. ~~**Config hot-reload**~~ ✅ Done (PR #116): `load_overrides(r)` in `scripts/config.py`, `/settings` LiveView page, wired into all five agents.
 
 ### Signal Quality
 9. **Signal heatmap** — Grid of all instruments × days showing RSI-2 value, color-coded. Makes oversold clusters and correlated signals immediately visible. Dashboard page or panel.

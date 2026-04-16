@@ -6,7 +6,7 @@ Run from repo root:
 """
 import json
 import sys
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -501,6 +501,13 @@ class TestProcessSignal:
         order = process_signal(r, signal)
         assert order is None
         r.publish.assert_not_called()
+
+    def test_load_overrides_called_on_process_signal(self):
+        r = make_redis()
+        with patch('portfolio_manager.config.load_overrides') as mock_load:
+            from portfolio_manager import process_signal
+            process_signal(r, make_signal(signal_type="entry"))
+        mock_load.assert_called_once_with(r)
 
 
 # ── process_pending_signals ───────────────────────────────────

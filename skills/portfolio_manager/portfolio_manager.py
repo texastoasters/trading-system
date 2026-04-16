@@ -295,6 +295,7 @@ def evaluate_exit_signal(r, signal):
 
 def process_signal(r, signal):
     """Process a single signal — entry or exit."""
+    config.load_overrides(r)   # apply any runtime config overrides
     sig_type = signal.get("signal_type", "")
     symbol = signal.get("symbol", "")
 

@@ -459,6 +459,7 @@ def run_cycle():
     """Run one complete evaluation cycle."""
     r = get_redis()
     config.init_redis_state(r)
+    config.load_overrides(r)   # apply any runtime config overrides
 
     # Heartbeat
     r.set(Keys.heartbeat("watcher"), datetime.now().isoformat())

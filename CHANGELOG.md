@@ -8,6 +8,16 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.29.0] - 2026-04-15
+
+### Added
+- Config hot-reload: runtime override of RSI-2 thresholds, position limits, and drawdown circuit breaker levels via `/settings` dashboard page without restarting agents
+- `load_overrides(r)` in `scripts/config.py` reads `trading:config` Redis key at each agent cycle start and applies valid JSON overrides to module globals
+- `/settings` Phoenix LiveView page with three-section form (RSI Strategy, Position Limits, Drawdown Thresholds), save and reset actions
+- Hot-reload wired into all five agents: screener, watcher, portfolio manager, executor, supervisor
+
+---
+
 ## [0.28.0] — 2026-04-15
 
 ### Added

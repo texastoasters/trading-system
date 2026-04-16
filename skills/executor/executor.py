@@ -1046,6 +1046,7 @@ def verify_startup(trading_client, r):
 
 def process_order(r, trading_client, order):
     """Process a single approved order."""
+    config.load_overrides(r)   # apply any runtime config overrides
     account = trading_client.get_account()
 
     # Validate

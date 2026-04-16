@@ -411,3 +411,13 @@ class TestRunScan:
         watchlist_keys = [c[0][0] for c in r.set.call_args_list]
         assert Keys.WATCHLIST in watchlist_keys
         assert Keys.REGIME in watchlist_keys
+
+    def test_load_overrides_called_each_scan(self):
+        r = self._make_redis()
+        with patch('screener.get_redis', return_value=r), \
+             patch('screener.config.init_redis_state'), \
+             patch('screener.config.load_overrides') as mock_load, \
+             patch('screener.fetch_daily_bars', return_value=None):
+            from screener import run_scan
+            run_scan()
+        mock_load.assert_called_once_with(r)

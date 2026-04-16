@@ -1219,6 +1219,16 @@ class TestProcessOrder:
         result = process_order(r, tc, {"side": "hold", "symbol": "SPY", "quantity": 1, "entry_price": 10.0, "order_value": 10.0})
         assert result is False
 
+    def test_load_overrides_called_on_process_order(self):
+        r, _ = make_redis({})
+        tc = MagicMock()
+        with patch('executor.config.load_overrides') as mock_load, \
+             patch('executor.validate_order', return_value=(False, "blocked for test")):
+            from executor import process_order
+            process_order(r, tc, {"side": "buy", "symbol": "SPY", "quantity": 1,
+                                  "entry_price": 100.0, "order_value": 100.0})
+        mock_load.assert_called_once_with(r)
+
 
 # ── TestCheckCancelledStops ──────────────────────────────────
 

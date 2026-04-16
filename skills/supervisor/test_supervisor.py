@@ -440,6 +440,13 @@ class TestRunCircuitBreakers:
             run_circuit_breakers(r)  # must not raise
         mock_alert.assert_called_once()
 
+    def test_load_overrides_called_on_circuit_breakers(self):
+        r = _make_cb()
+        with patch("supervisor.config.load_overrides") as mock_load:
+            from supervisor import run_circuit_breakers
+            run_circuit_breakers(r)
+        mock_load.assert_called_once_with(r)
+
 
 # ── disable_tiers / enable_all_tiers ─────────────────────────
 
@@ -685,6 +692,16 @@ class TestRunHealthCheck:
             from supervisor import run_health_check
             run_health_check(r)
         mock_restart.assert_called_once_with(r)
+
+    def test_load_overrides_called_on_health_check(self):
+        r = make_redis()
+        with patch('supervisor.config.load_overrides') as mock_load, \
+             patch('supervisor.notify'):
+            from supervisor import run_health_check
+            run_health_check(r)
+        # called at least once in run_health_check; also called by run_circuit_breakers
+        assert mock_load.call_count >= 1
+        mock_load.assert_called_with(r)
 
 # ── TestPositionAgeAlert ──────────────────────────────────────
 
@@ -951,6 +968,17 @@ class TestRunEodReview:
             run_eod_review(r)
         # notify called at least once for capital constraint
         assert mock_notify.call_count >= 1
+
+    def test_load_overrides_called_on_eod_review(self):
+        r = make_redis()
+        conn = MagicMock()
+        with patch('supervisor.config.load_overrides') as mock_load, \
+             patch('supervisor.get_db', return_value=conn), \
+             patch('supervisor.notify'), \
+             patch('supervisor.daily_summary'):
+            from supervisor import run_eod_review
+            run_eod_review(r)
+        mock_load.assert_called_once_with(r)
 
 
 # ── run_reconcile ─────────────────────────────────────────────

@@ -25,6 +25,7 @@ from config import (
     get_active_instruments, get_tier,
     get_simulated_equity, get_drawdown,
     is_crypto, get_sector,
+    load_overrides,
     DEFAULT_UNIVERSE, DEFAULT_TIERS, INITIAL_CAPITAL,
 )
 
@@ -419,3 +420,92 @@ def test_keys_age_alert_crypto():
     from config import Keys
     key = Keys.age_alert("BTC/USD")
     assert key == "trading:age_alert:BTC/USD"
+
+
+# ── load_overrides ───────────────────────────────────────────
+
+class TestLoadOverrides:
+    def setup_method(self):
+        """Reset all hot-reloadable globals to known defaults before each test."""
+        import config as _c
+        _c.RSI2_ENTRY_CONSERVATIVE = 10.0
+        _c.RSI2_ENTRY_AGGRESSIVE = 5.0
+        _c.RSI2_EXIT = 60.0
+        _c.RSI2_MAX_HOLD_DAYS = 5
+        _c.RISK_PER_TRADE_PCT = 0.01
+        _c.MAX_CONCURRENT_POSITIONS = 5
+        _c.DRAWDOWN_CAUTION = 5.0
+        _c.DRAWDOWN_DEFENSIVE = 10.0
+        _c.DRAWDOWN_CRITICAL = 15.0
+        _c.DRAWDOWN_HALT = 20.0
+
+    def test_no_op_when_key_absent(self):
+        r = make_r(store={})
+        load_overrides(r)
+        assert config.RSI2_ENTRY_CONSERVATIVE == 10.0
+
+    def test_no_op_on_invalid_json(self):
+        r = make_r(store={Keys.CONFIG: "not_valid_json"})
+        load_overrides(r)
+        assert config.RSI2_EXIT == 60.0
+
+    def test_applies_valid_subset(self):
+        r = make_r(store={Keys.CONFIG: json.dumps({
+            "RSI2_ENTRY_CONSERVATIVE": 8.0,
+            "RSI2_EXIT": 65.0,
+        })})
+        load_overrides(r)
+        assert config.RSI2_ENTRY_CONSERVATIVE == 8.0
+        assert config.RSI2_EXIT == 65.0
+        assert config.RSI2_ENTRY_AGGRESSIVE == 5.0  # unchanged
+
+    def test_skips_out_of_range_value_applies_others(self):
+        r = make_r(store={Keys.CONFIG: json.dumps({
+            "RSI2_ENTRY_CONSERVATIVE": 99.0,  # > 30, out of range
+            "RSI2_EXIT": 70.0,                 # valid
+        })})
+        load_overrides(r)
+        assert config.RSI2_ENTRY_CONSERVATIVE == 10.0  # skipped
+        assert config.RSI2_EXIT == 70.0                # applied
+
+    def test_skips_wrong_type_applies_others(self):
+        r = make_r(store={Keys.CONFIG: json.dumps({
+            "MAX_CONCURRENT_POSITIONS": "not_a_number",
+            "RSI2_EXIT": 70.0,
+        })})
+        load_overrides(r)
+        assert config.MAX_CONCURRENT_POSITIONS == 5  # skipped
+        assert config.RSI2_EXIT == 70.0              # applied
+
+    def test_skips_aggressive_when_gte_conservative(self):
+        r = make_r(store={Keys.CONFIG: json.dumps({
+            "RSI2_ENTRY_AGGRESSIVE": 12.0,  # >= default conservative of 10.0
+        })})
+        load_overrides(r)
+        assert config.RSI2_ENTRY_AGGRESSIVE == 5.0  # unchanged
+
+    def test_applies_both_when_aggressive_lt_new_conservative(self):
+        """When both are overridden and aggressive < new conservative, both apply."""
+        r = make_r(store={Keys.CONFIG: json.dumps({
+            "RSI2_ENTRY_CONSERVATIVE": 15.0,
+            "RSI2_ENTRY_AGGRESSIVE": 8.0,  # < 15.0 ✓
+        })})
+        load_overrides(r)
+        assert config.RSI2_ENTRY_CONSERVATIVE == 15.0
+        assert config.RSI2_ENTRY_AGGRESSIVE == 8.0
+
+    def test_skips_all_drawdown_keys_when_out_of_order(self):
+        r = make_r(store={Keys.CONFIG: json.dumps({
+            "DRAWDOWN_CAUTION": 15.0,    # >= DEFENSIVE of 12.0 → out of order
+            "DRAWDOWN_DEFENSIVE": 12.0,  # ← changed from 10.0
+        })})
+        load_overrides(r)
+        assert config.DRAWDOWN_CAUTION == 5.0    # all drawdown keys skipped
+        assert config.DRAWDOWN_DEFENSIVE == 10.0  # unchanged (override was skipped)
+
+    def test_no_op_on_redis_error(self):
+        """Redis unavailable → load_overrides returns without changing globals."""
+        r = MagicMock()
+        r.get = MagicMock(side_effect=Exception("connection refused"))
+        load_overrides(r)
+        assert config.RSI2_ENTRY_CONSERVATIVE == 10.0  # unchanged

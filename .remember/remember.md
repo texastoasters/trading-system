@@ -1,11 +1,13 @@
 # Handoff
 
 ## State
-PR #115 merged and deployed (v0.28.0 — symbol blacklist). Wishlist audited: items 6 and 7 marked done (already shipped). Worktree `feat/symbol-blacklist` can be removed.
+`feat/config-hot-reload` complete. All 5 tasks done. 582 Python + 365 Elixir tests, 0 failures.
+Last commit: `0cf448a` (fix: load_overrides in run_circuit_breakers). Not yet pushed.
 
 ## Next
-1. Clean up worktree: `git worktree remove .worktrees/feat/symbol-blacklist`
-2. Next minor v0.29.0: pick from `docs/FEATURE_WISHLIST.md` open items — LLM cost tracking (most urgent), config hot-reload, signal heatmap, RSI-2 divergence detection
+- Run `cpr` to push branch and open PR for `feat/config-hot-reload`.
+- Tag v0.29.0 after PR merges.
 
 ## Context
-Wishlist priority wave (2026-04-12): items 2 (LLM cost), 8 (config hot-reload), 9 (signal heatmap), 10 (RSI-2 divergence) remain open.
+`run_health_check` calls `load_overrides` twice (directly + via `run_circuit_breakers`). Test uses `assert call_count >= 1` — intentional.
+Float.parse fix: `{f, ""}` only; `"10abc"` rejected. FakeRedix handles Redix.command/2 (handle_call) + pipeline (handle_cast).
