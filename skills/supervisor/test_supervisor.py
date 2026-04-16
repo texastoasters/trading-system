@@ -440,6 +440,13 @@ class TestRunCircuitBreakers:
             run_circuit_breakers(r)  # must not raise
         mock_alert.assert_called_once()
 
+    def test_load_overrides_called_on_circuit_breakers(self):
+        r = _make_cb()
+        with patch("supervisor.config.load_overrides") as mock_load:
+            from supervisor import run_circuit_breakers
+            run_circuit_breakers(r)
+        mock_load.assert_called_once_with(r)
+
 
 # ── disable_tiers / enable_all_tiers ─────────────────────────
 
@@ -692,7 +699,9 @@ class TestRunHealthCheck:
              patch('supervisor.notify'):
             from supervisor import run_health_check
             run_health_check(r)
-        mock_load.assert_called_once_with(r)
+        # called at least once in run_health_check; also called by run_circuit_breakers
+        assert mock_load.call_count >= 1
+        mock_load.assert_called_with(r)
 
 # ── TestPositionAgeAlert ──────────────────────────────────────
 

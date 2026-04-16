@@ -52,6 +52,7 @@ def get_db():  # pragma: no cover
 
 def run_circuit_breakers(r):
     """Check all circuit breakers. Returns True if system should continue."""
+    config.load_overrides(r)   # apply any runtime config overrides
     equity = get_simulated_equity(r)
     peak = float(r.get(Keys.PEAK_EQUITY) or config.INITIAL_CAPITAL)
     dd = get_drawdown(r)
