@@ -39,6 +39,7 @@
             value={@form_params["RSI2_ENTRY_CONSERVATIVE"]}
             step="0.1" min="0.1" max="30"
             class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500">
+          <p class="text-xs text-gray-500 mt-1">Enter when RSI-2 &lt; this</p>
         </div>
         <div>
           <label class="block text-xs text-gray-400 mb-1">Entry Aggressive</label>
@@ -46,6 +47,7 @@
             value={@form_params["RSI2_ENTRY_AGGRESSIVE"]}
             step="0.1" min="0.1" max="20"
             class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500">
+          <p class="text-xs text-gray-500 mt-1">Tighter, for strong uptrends</p>
         </div>
         <div>
           <label class="block text-xs text-gray-400 mb-1">Exit Threshold</label>
@@ -53,6 +55,7 @@
             value={@form_params["RSI2_EXIT"]}
             step="1" min="50" max="95"
             class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500">
+          <p class="text-xs text-gray-500 mt-1">Exit when RSI-2 recovers above this</p>
         </div>
         <div>
           <label class="block text-xs text-gray-400 mb-1">Max Hold Days</label>
@@ -60,6 +63,7 @@
             value={@form_params["RSI2_MAX_HOLD_DAYS"]}
             step="1" min="1" max="30"
             class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500">
+          <p class="text-xs text-gray-500 mt-1">Force exit after N days</p>
         </div>
       </div>
     </div>
@@ -74,6 +78,7 @@
             value={@form_params["RISK_PER_TRADE_PCT"]}
             step="0.001" min="0.001" max="0.05"
             class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500">
+          <p class="text-xs text-gray-500 mt-1">Equity fraction risked, sized via ATR stop</p>
         </div>
         <div>
           <label class="block text-xs text-gray-400 mb-1">Max Concurrent Positions</label>
@@ -81,6 +86,7 @@
             value={@form_params["MAX_CONCURRENT_POSITIONS"]}
             step="1" min="1" max="20"
             class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500">
+          <p class="text-xs text-gray-500 mt-1">Cap on simultaneously open positions</p>
         </div>
       </div>
     </div>
@@ -95,6 +101,7 @@
             value={@form_params["DRAWDOWN_CAUTION"]}
             step="0.5" min="0.5" max="99"
             class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500">
+          <p class="text-xs text-gray-500 mt-1">Reduce position sizes</p>
         </div>
         <div>
           <label class="block text-xs text-gray-400 mb-1">Defensive</label>
@@ -102,6 +109,7 @@
             value={@form_params["DRAWDOWN_DEFENSIVE"]}
             step="0.5" min="0.5" max="99"
             class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500">
+          <p class="text-xs text-gray-500 mt-1">Disable Tier 2+ instruments</p>
         </div>
         <div>
           <label class="block text-xs text-gray-400 mb-1">Critical</label>
@@ -109,6 +117,7 @@
             value={@form_params["DRAWDOWN_CRITICAL"]}
             step="0.5" min="0.5" max="99"
             class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500">
+          <p class="text-xs text-gray-500 mt-1">Disable Tier 3 instruments</p>
         </div>
         <div>
           <label class="block text-xs text-gray-400 mb-1">Halt</label>
@@ -116,6 +125,7 @@
             value={@form_params["DRAWDOWN_HALT"]}
             step="0.5" min="0.5" max="99"
             class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500">
+          <p class="text-xs text-gray-500 mt-1">Halt all trading</p>
         </div>
       </div>
     </div>
