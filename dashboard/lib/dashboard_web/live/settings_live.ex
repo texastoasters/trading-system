@@ -59,10 +59,18 @@ defmodule DashboardWeb.SettingsLive do
       {:ok, nil} ->
         {@defaults, false}
       {:ok, raw} ->
-        overrides = Jason.decode!(raw)
-        merged =
-          Map.merge(@defaults, Map.new(overrides, fn {k, v} -> {k, to_string(v)} end))
-        {merged, true}
+        case Jason.decode(raw) do
+          {:ok, overrides} ->
+            merged =
+              Map.merge(
+                @defaults,
+                Map.take(overrides, Map.keys(@defaults))
+                |> Map.new(fn {k, v} -> {k, to_string(v)} end)
+              )
+            {merged, true}
+          {:error, _} ->
+            {@defaults, false}
+        end
       {:error, _} ->
         {@defaults, false}
     end
@@ -80,22 +88,33 @@ defmodule DashboardWeb.SettingsLive do
       end)
 
     case result do
-      {:error, _} = err -> err
-      map -> {:ok, map}
+      {:error, _} = err ->
+        err
+      map ->
+        caution   = map["DRAWDOWN_CAUTION"]
+        defensive = map["DRAWDOWN_DEFENSIVE"]
+        critical  = map["DRAWDOWN_CRITICAL"]
+        halt      = map["DRAWDOWN_HALT"]
+
+        if caution < defensive and defensive < critical and critical < halt do
+          {:ok, map}
+        else
+          {:error, "Drawdown thresholds must be in ascending order: CAUTION < DEFENSIVE < CRITICAL < HALT"}
+        end
     end
   end
 
   defp parse_value(key, val) when key in @float_keys do
     case Float.parse(String.trim(val)) do
-      {f, _} -> {:ok, f}
-      :error  -> {:error, "#{key}: expected a number, got #{inspect(val)}"}
+      {f, ""} -> {:ok, f}
+      _       -> {:error, "#{key}: expected a number, got #{inspect(val)}"}
     end
   end
 
   defp parse_value(key, val) when key in @int_keys do
     case Integer.parse(String.trim(val)) do
-      {i, _} -> {:ok, i}
-      :error  -> {:error, "#{key}: expected an integer, got #{inspect(val)}"}
+      {i, ""} -> {:ok, i}
+      _       -> {:error, "#{key}: expected an integer, got #{inspect(val)}"}
     end
   end
 end
