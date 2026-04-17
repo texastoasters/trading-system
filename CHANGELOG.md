@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.32.6] - 2026-04-16
+
+### Added
+- **Wave 4 #3b + #3c: per-symbol RSI-2 `max_hold_days` wiring** — `config.get_max_hold_days(r, symbol)` returns the persisted per-instrument `max_hold` from the existing `trading:thresholds:{symbol}` JSON payload, falling back to the global `RSI2_MAX_HOLD_DAYS` const on missing key / malformed JSON / null cell. `supervisor.run_refit_thresholds` now accepts a `max_hold_sweeper` dependency (wired to `sweep_symbol_max_hold` at the CLI); when injected, each refit extends the existing thresholds payload with `"max_hold": int|null` instead of writing a parallel Redis key — quarterly refit produces one payload per symbol containing both regime thresholds and the time-stop winner. Sweep crashes preserve the regime refit and set `max_hold=None`. `watcher.generate_exit_signals` swaps the global `config.RSI2_MAX_HOLD_DAYS` lookup on the RSI-2 time-stop branch for `config.get_max_hold_days(r, symbol)` (IBS path still uses `IBS_MAX_HOLD_DAYS`). Pre-#3b threshold payloads without `max_hold` still read cleanly via the helper's fallback. Closes Wave 4 #3.
+
+---
+
 ## [0.32.5] - 2026-04-16
 
 ### Added

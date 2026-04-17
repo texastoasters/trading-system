@@ -1,44 +1,51 @@
 # Remember
 
-## v0.32.5 — Wave 4 #3a (RSI-2 `max_hold_days` sweep harness)
+## v0.32.6 — Wave 4 #3b + #3c (per-symbol RSI-2 max_hold wiring)
 
-Offline walk-forward sweep for per-instrument time-stop. Parallel copy of the
-threshold-sweep harness, single-dim + regime-agnostic.
+Combined PR: helper + supervisor refit fold + watcher wiring.
 
-Shipped:
-- `scripts/sweep_rsi2_max_hold.py`:
-  - `DEFAULT_MAX_HOLD_GRID = [2, 3, 5, 7, 10]` — tight around current 5.
-  - `simulate_max_hold(open_, high, low, close, rsi2, sma200, atr14, regimes,
-    max_hold_bars, start=0, end=None, aggressive=5.0, conservative=10.0)` —
-    entry gate mirrors live prod (UPTREND → aggressive, else conservative).
-    Exit precedence: stop → rsi_exit → prev_high → time.
-  - `pick_max_hold_winner(per_window, min_trades=5, min_oos_pf=1.2)` —
-    majority-of-windows; tiebreak by avg OOS PF; returns `int | None`.
-  - `sweep_symbol_max_hold(bars, ...)` returns
-    `{symbol, last_refit, windows_tested, max_hold, oos_pf_avg, trades}`.
-  - CLI writes `data/rsi2_max_hold/{symbol}.json`.
-- `pyproject.toml`: omit `scripts/sweep_rsi2_max_hold.py` from coverage
-  (same treatment as threshold-sweep sibling).
+### #3b — config helper + supervisor refit fold
+- `config.get_max_hold_days(r, symbol) -> int`:
+  - Reads `trading:thresholds:{symbol}` JSON payload, returns `int(payload["max_hold"])`.
+  - Falls back to global `RSI2_MAX_HOLD_DAYS` const on: missing key / malformed JSON / `max_hold` absent / `max_hold=None`.
+  - Mirrors `get_entry_threshold` fallback semantics.
+- `supervisor.run_refit_thresholds(r, fetcher=..., sweeper=..., max_hold_sweeper=None)`:
+  - New optional `max_hold_sweeper` param. When injected, each per-symbol payload gets `"max_hold": int|null` added alongside regime thresholds.
+  - Sweep crash is caught per-symbol → `max_hold=None` written, regime refit preserved (`print` logs the failure).
+  - Existing `TestRefitThresholds` tests untouched (param defaults to None → payload omits field, pre-#3b shape).
+- CLI `supervisor.py --refit-thresholds`:
+  - Lazy-imports `sweep_symbol_max_hold` from `sweep_rsi2_max_hold` and injects it (wrapped in pragma no-cover so production-only path doesn't fail coverage).
+- `Keys.thresholds(symbol)` docstring updated to document the `max_hold` field.
 
-Tests: `scripts/test_sweep_rsi2_max_hold.py` — 15 tests
-(TestSimulateMaxHold ×7, TestPickMaxHoldWinner ×5, TestSweepSymbolMaxHold ×3).
-Full suite 747 passed, 100% coverage.
+### #3c — watcher wiring
+- `watcher.py` line 489-491 RSI-2 branch:
+  ```python
+  max_hold = (config.IBS_MAX_HOLD_DAYS
+              if pos_primary == "IBS"
+              else config.get_max_hold_days(r, symbol))
+  ```
+- IBS path untouched (still `IBS_MAX_HOLD_DAYS` const).
 
-Design (locked with user):
-- q1 (a) parallel copy, not shared harness
-- q2 (a) RSI-2 only (IBS too green for sweep)
-- q3 (a) grid `{2,3,5,7,10}`
-- q4 (b) single `max_hold` per symbol, regime-agnostic
-- q5 guardrails match #2: PF, min_trades=5, min_oos_pf=1.2
-- q6 (b) fold into existing `--refit-thresholds` CLI job (#3b)
-- q7 (a) three PRs: 3a (sweep), 3b (helper+refit), 3c (watcher wiring)
+### Tests
+- `scripts/test_config.py` — `TestGetMaxHoldDays` ×6 (no_key / per-symbol / null / absent / malformed / int coercion).
+- `skills/supervisor/test_supervisor.py` — `TestRefitThresholdsMaxHold` ×4 (sweeper-provided / sweeper-returns-none / sweeper-raises / no-sweeper-omits).
+- `skills/watcher/test_watcher.py` — ×2 per-symbol max_hold tests (extended honors, earlier-than-global fires). Second test uses max_hold=3 vs global=5 at hold=4 to force distinguishable behavior.
+- Full suite: **759 passed, 100% coverage**.
 
-No prod path touched this PR. `watcher.py:489-491` still uses global
-`RSI2_MAX_HOLD_DAYS` constant — #3c swap point.
+### Payload shape (post-#3b)
+```json
+{
+  "RANGING": 5, "UPTREND": 3, "DOWNTREND": null,
+  "max_hold": 7,
+  "refit": "2026-04-16"
+}
+```
+Pre-#3b payloads without `max_hold` still read cleanly via fallback.
 
-Next:
-- Wave 4 #3b: fold `sweep_symbol_max_hold` into `run_refit_thresholds` +
-  add `Keys.max_hold(symbol)` + `get_max_hold_days(r, symbol)` helper.
-  Decide: extend thresholds JSON payload or use separate key?
-- Wave 4 #3c: swap watcher time-stop to `get_max_hold_days` with fallback.
-- Wave 4 #4: Donchian-BO trend slot (v0.33.0 — new minor).
+### Design decisions locked with user
+- q1) one combined PR (not sequential 3b→3c)
+- q2) extend existing `trading:thresholds:{symbol}` (not separate Redis key)
+- q3) helper returns int, internal fallback to global const
+
+### Next
+- Wave 4 #4: Donchian-BO trend slot (v0.33.0 — new minor). DG, GOOGL, NVDA, AMGN, SMH, LIN, XLY where RSI-2 stays idle. 22d avg hold → wider position-sizing.

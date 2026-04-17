@@ -39,10 +39,10 @@ Actionable items from `docs/STRATEGY_REVIEW.md` + `docs/ALTERNATE_STRATEGIES.md`
   - [x] 2a: offline walk-forward sweep harness (`scripts/sweep_rsi2_thresholds.py`) — v0.32.2
   - [x] 2b: Redis persistence layer + `get_entry_threshold(r, symbol, regime)` helper + supervisor `--refit-thresholds` quarterly job — v0.32.3
   - [x] 2c: wire screener RSI-2 entry check through helper (fallback → global const) — v0.32.4
-- [ ] **Per-instrument time-stop sweep** — Same harness, sweep `max_hold_days`. Today's global value is untested against live data (zero time_stop exits in production). (§5 rec #8)
+- [x] **Per-instrument time-stop sweep** — Same harness, sweep `max_hold_days`. Today's global value is untested against live data (zero time_stop exits in production). (§5 rec #8)
   - [x] 3a: offline walk-forward `max_hold` sweep harness (`scripts/sweep_rsi2_max_hold.py`) — v0.32.5
-  - [ ] 3b: fold into existing `supervisor --refit-thresholds` job + `get_max_hold_days(r, symbol)` helper
-  - [ ] 3c: wire watcher time-stop through helper (fallback → global const)
+  - [x] 3b: fold into existing `supervisor --refit-thresholds` job + `get_max_hold_days(r, symbol)` helper — v0.32.6
+  - [x] 3c: wire watcher time-stop through helper (fallback → global const) — v0.32.6
 - [ ] **Donchian-BO trend slot** — Phase 2 multi-strategy. For DG, GOOGL, NVDA, AMGN, SMH, LIN, XLY where RSI-2 stays idle. Requires wider position-sizing (22d avg hold).
 - [x] **Exclude META and TSLA from routing** — Flat/negative across all backtested strategies in the 2y window. ✅ Shipped in v0.32.1
 

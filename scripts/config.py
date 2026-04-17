@@ -281,10 +281,12 @@ class Keys:
 
     @staticmethod
     def thresholds(symbol: str) -> str:
-        """Per-symbol RSI-2 entry threshold map written by the Wave 4 #2b
-        supervisor refit job. Value is JSON
+        """Per-symbol RSI-2 entry threshold + time-stop map written by the
+        Wave 4 #2b/#3b supervisor refit job. Value is JSON
         `{"RANGING": int|null, "UPTREND": int|null, "DOWNTREND": int|null,
-          "refit": "YYYY-MM-DD"}`."""
+          "max_hold": int|null, "refit": "YYYY-MM-DD"}`. `max_hold` was
+        added in v0.32.6; older payloads (regimes only) still read cleanly
+        via the helper fallbacks."""
         return f"trading:thresholds:{symbol}"
 
     @staticmethod
@@ -394,6 +396,25 @@ def get_entry_threshold(r: redis.Redis, symbol: str, regime: str) -> float:
     if value is None:
         return fallback
     return value
+
+
+def get_max_hold_days(r: redis.Redis, symbol: str) -> int:
+    """Return the RSI-2 time-stop bar count for `symbol`. Reads the per-symbol
+    map written by the Wave 4 #3b refit job from `trading:thresholds:{symbol}`
+    (shared key with the entry-threshold helper); falls back to the global
+    `RSI2_MAX_HOLD_DAYS` const when the key is missing, the `max_hold` slot is
+    absent/null, or the payload is malformed."""
+    raw = r.get(Keys.thresholds(symbol))
+    if not raw:
+        return RSI2_MAX_HOLD_DAYS
+    try:
+        payload = json.loads(raw)
+    except (ValueError, TypeError):
+        return RSI2_MAX_HOLD_DAYS
+    value = payload.get("max_hold")
+    if value is None:
+        return RSI2_MAX_HOLD_DAYS
+    return int(value)
 
 
 def get_simulated_equity(r: redis.Redis) -> float:

@@ -1194,3 +1194,59 @@ class TestRefitThresholds:
         from supervisor import run_refit_thresholds
         run_refit_thresholds(r, symbols=None, fetcher=fetcher, sweeper=sweeper)
         assert set(calls) == {"SPY", "GOOGL"}
+
+
+# ── run_refit_thresholds max_hold fold-in (Wave 4 #3b) ────────
+
+class TestRefitThresholdsMaxHold:
+    def _helpers(self):
+        fetcher = lambda sym: [{"symbol": sym}]
+        sweeper = lambda bars: make_sweep_result(bars[0]["symbol"])
+        return fetcher, sweeper
+
+    def test_payload_includes_max_hold_when_sweeper_passed(self):
+        r = make_redis()
+        fetcher, sweeper = self._helpers()
+        mh = lambda bars: {"max_hold": 7}
+        from supervisor import run_refit_thresholds
+        run_refit_thresholds(r, symbols=["SPY"], fetcher=fetcher,
+                             sweeper=sweeper, max_hold_sweeper=mh)
+        payload = json.loads(r.set.call_args_list[0].args[1])
+        assert payload["max_hold"] == 7
+
+    def test_payload_max_hold_null_when_sweeper_returns_none(self):
+        """Sweep cell failed guardrails → `None`. Preserves regime thresholds."""
+        r = make_redis()
+        fetcher, sweeper = self._helpers()
+        mh = lambda bars: {"max_hold": None}
+        from supervisor import run_refit_thresholds
+        run_refit_thresholds(r, symbols=["SPY"], fetcher=fetcher,
+                             sweeper=sweeper, max_hold_sweeper=mh)
+        payload = json.loads(r.set.call_args_list[0].args[1])
+        assert payload["max_hold"] is None
+        assert payload["RANGING"] == 7  # threshold half intact
+
+    def test_payload_max_hold_null_when_sweeper_raises(self):
+        """Max_hold sweep crash must not void the threshold refit — persist
+        thresholds with `max_hold=None` so the live helper falls back."""
+        r = make_redis()
+        fetcher, sweeper = self._helpers()
+        def mh(bars):
+            raise RuntimeError("math error")
+        from supervisor import run_refit_thresholds
+        count = run_refit_thresholds(r, symbols=["SPY"], fetcher=fetcher,
+                                     sweeper=sweeper, max_hold_sweeper=mh)
+        assert count == 1
+        payload = json.loads(r.set.call_args_list[0].args[1])
+        assert payload["RANGING"] == 7
+        assert payload["max_hold"] is None
+
+    def test_payload_omits_max_hold_when_no_sweeper_injected(self):
+        """Pre-#3b call sites that don't opt in keep the legacy payload shape."""
+        r = make_redis()
+        fetcher, sweeper = self._helpers()
+        from supervisor import run_refit_thresholds
+        run_refit_thresholds(r, symbols=["SPY"], fetcher=fetcher,
+                             sweeper=sweeper)
+        payload = json.loads(r.set.call_args_list[0].args[1])
+        assert "max_hold" not in payload

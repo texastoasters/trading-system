@@ -855,6 +855,48 @@ class TestGenerateExitSignals:
         assert len(signals) == 1
         assert signals[0]["signal_type"] == "time_stop"
 
+    def test_rsi2_time_stop_honors_per_symbol_max_hold_extended(self):
+        """max_hold=10 persisted in Redis → 6-day RSI-2 hold must NOT fire
+        the global-default (5) time stop."""
+        hold6 = (datetime.now() - timedelta(days=6)).strftime("%Y-%m-%d")
+        pos = {"SPY": make_position(entry_price=490.0, stop_price=480.0,
+                                    entry_date=hold6)}
+        payload = {"RANGING": 10, "UPTREND": 5, "DOWNTREND": None,
+                   "max_hold": 10, "refit": "2026-04-16"}
+        r = make_redis({
+            Keys.POSITIONS: json.dumps(pos),
+            Keys.thresholds("SPY"): json.dumps(payload),
+        })
+        with patch('watcher.fetch_intraday_bars', return_value=make_intraday(close=490.0, low=486.0)), \
+             patch('watcher.fetch_recent_bars', return_value=make_daily(close=490.0, prev_high=495.0)), \
+             patch('watcher.rsi', return_value=np.array([40.0])), \
+             patch('watcher.is_market_hours', return_value=True):
+            from watcher import generate_exit_signals
+            signals = generate_exit_signals(r, MagicMock(), MagicMock())
+        assert signals == []  # per-symbol max_hold raised bar above hold_days
+
+    def test_rsi2_time_stop_per_symbol_max_hold_fires_earlier_than_global(self):
+        """max_hold=3 persisted → 4-day hold fires time_stop even though the
+        global default (5) would not. Proves the helper value tightens
+        the bound, not just loosens it."""
+        hold4 = (datetime.now() - timedelta(days=4)).strftime("%Y-%m-%d")
+        pos = {"SPY": make_position(entry_price=490.0, stop_price=480.0,
+                                    entry_date=hold4)}
+        payload = {"RANGING": 10, "UPTREND": 5, "DOWNTREND": None,
+                   "max_hold": 3, "refit": "2026-04-16"}
+        r = make_redis({
+            Keys.POSITIONS: json.dumps(pos),
+            Keys.thresholds("SPY"): json.dumps(payload),
+        })
+        with patch('watcher.fetch_intraday_bars', return_value=make_intraday(close=490.0, low=486.0)), \
+             patch('watcher.fetch_recent_bars', return_value=make_daily(close=490.0, prev_high=495.0)), \
+             patch('watcher.rsi', return_value=np.array([40.0])), \
+             patch('watcher.is_market_hours', return_value=True):
+            from watcher import generate_exit_signals
+            signals = generate_exit_signals(r, MagicMock(), MagicMock())
+        assert len(signals) == 1
+        assert signals[0]["signal_type"] == "time_stop"
+
     def test_bad_entry_date_defaults_hold_days_to_zero(self):
         pos = {"SPY": {**make_position(), "entry_date": "not-a-date"}}
         r = make_redis({Keys.POSITIONS: json.dumps(pos)})
