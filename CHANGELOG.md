@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.32.4] - 2026-04-16
+
+### Changed
+- **Wave 4 #2c: screener reads per-symbol RSI-2 thresholds from Redis** — `screener.run_scan` now resolves the RSI-2 entry threshold for each instrument via `get_entry_threshold(r, symbol, regime)` and passes it explicitly into `scan_instrument`. Empty / missing / malformed `trading:thresholds:{symbol}` keys fall back to the global `RSI2_ENTRY_AGGRESSIVE` (UPTREND) / `RSI2_ENTRY_CONSERVATIVE` (elsewhere) consts — zero-behavior change until the quarterly `supervisor --refit-thresholds` job has populated Redis. `scan_instrument(symbol, data, regime_info, threshold)` now takes `threshold` as a required positional param; `strong_signal` boundary stays hardcoded at `rsi2 < 5` (per-symbol tuning gates entry, not the extreme-oversold semantic tier). Closes Wave 4 #2.
+
+---
+
 ## [0.32.3] - 2026-04-16
 
 ### Added

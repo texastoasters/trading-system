@@ -23,7 +23,7 @@ from alpaca.data.requests import StockBarsRequest, CryptoBarsRequest
 from alpaca.data.timeframe import TimeFrame
 
 import config
-from config import Keys, get_redis, get_active_instruments, get_tier, is_crypto
+from config import Keys, get_redis, get_active_instruments, get_tier, is_crypto, get_entry_threshold
 from indicators import rsi, sma, atr, adx, ibs
 from notify import notify, fmt_et
 
@@ -95,8 +95,14 @@ def compute_regime(data):
     }
 
 
-def scan_instrument(symbol, data, regime_info):
-    """Compute RSI-2 and check entry conditions for one instrument."""
+def scan_instrument(symbol, data, regime_info, threshold):
+    """Compute RSI-2 and check entry conditions for one instrument.
+
+    `threshold` is the RSI-2 entry threshold resolved by the caller via
+    `get_entry_threshold(r, symbol, regime)` — per-symbol value from Redis
+    or the global regime-based fallback. Kept as a required param so
+    `scan_instrument` stays pure (no Redis coupling)."""
+    threshold = float(threshold)
     close = data['close']
     high = data['high']
     low = data['low']
@@ -121,12 +127,6 @@ def scan_instrument(symbol, data, regime_info):
     avg_volume_20d = float(np.mean(data['volume'][-21:-1]))  # prior 20 days, excludes today
     if avg_volume_20d > 0 and latest_volume < config.MIN_VOLUME_RATIO * avg_volume_20d:
         return None  # thin-volume day — skip entry
-
-    # Determine entry threshold based on regime
-    if regime_info["regime"] == "UPTREND":
-        threshold = config.RSI2_ENTRY_AGGRESSIVE
-    else:
-        threshold = config.RSI2_ENTRY_CONSERVATIVE
 
     # Check trend filter
     above_sma = bool(latest_close > latest_sma200)
@@ -246,7 +246,8 @@ def run_scan():
             heatmap_dates = data['dates'][-n:]
         heatmap_instruments[symbol] = rsi2_last_n
 
-        result = scan_instrument(symbol, data, regime_info)
+        threshold = get_entry_threshold(r, symbol, regime_info["regime"])
+        result = scan_instrument(symbol, data, regime_info, threshold)
         if result is not None:
             result["tier"] = get_tier(r, symbol)
             watchlist.append(result)
