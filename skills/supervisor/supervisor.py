@@ -718,13 +718,23 @@ def _default_threshold_fetcher(symbol):  # pragma: no cover
     return fetch_stock(client, symbol, years=5)
 
 
-def run_refit_thresholds(r, symbols=None, fetcher=None, sweeper=None):
-    """Refit per-symbol RSI-2 entry thresholds and persist to Redis.
+def run_refit_thresholds(r, symbols=None, fetcher=None, sweeper=None,
+                         max_hold_sweeper=None):
+    """Refit per-symbol RSI-2 entry thresholds and (optionally) the per-symbol
+    time-stop `max_hold` bar count. Persists both to Redis under the same
+    `trading:thresholds:{symbol}` key.
 
     For each symbol, pulls bars via `fetcher`, runs `sweeper` (walk-forward
-    threshold sweep), and writes `trading:thresholds:{symbol}` with shape
+    threshold sweep), optionally runs `max_hold_sweeper` (Wave 4 #3b
+    walk-forward `max_hold` sweep), and writes the merged JSON payload
     `{"RANGING": int|null, "UPTREND": int|null, "DOWNTREND": int|null,
-    "refit": "YYYY-MM-DD"}`. Symbols with fetch or sweep errors are skipped.
+    "max_hold": int|null, "refit": "YYYY-MM-DD"}`. When
+    `max_hold_sweeper` is None the payload omits the `max_hold` field
+    (pre-#3b shape) so the live helper falls back to the global const.
+
+    A threshold-sweep failure skips the symbol entirely. A max_hold sweep
+    failure logs + persists thresholds with `max_hold=None` so the primary
+    refit work isn't lost.
 
     Returns number of symbols successfully refit.
     """
@@ -754,6 +764,13 @@ def run_refit_thresholds(r, symbols=None, fetcher=None, sweeper=None):
             print(f"[Supervisor] refit {sym}: sweep failed ({e})")
             continue
         payload = dict(result["thresholds"])
+        if max_hold_sweeper is not None:
+            try:
+                mh_result = max_hold_sweeper(bars)
+                payload["max_hold"] = mh_result.get("max_hold")
+            except Exception as e:
+                print(f"[Supervisor] refit {sym}: max_hold sweep failed ({e})")
+                payload["max_hold"] = None
         payload["refit"] = result["last_refit"]
         r.set(Keys.thresholds(sym), json.dumps(payload))
         count += 1
@@ -996,7 +1013,8 @@ def main():  # pragma: no cover
             critical_alert(f"Monthly revalidation failed: {e}")
     elif args.refit_thresholds:
         try:
-            run_refit_thresholds(r)
+            from sweep_rsi2_max_hold import sweep_symbol_max_hold
+            run_refit_thresholds(r, max_hold_sweeper=sweep_symbol_max_hold)
         except Exception as e:
             print(f"[Supervisor] Threshold refit error: {e}")
             critical_alert(f"Quarterly threshold refit failed: {e}")

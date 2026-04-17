@@ -488,7 +488,7 @@ def generate_exit_signals(r, stock_client, crypto_client):
         pos_strategies = list(pos.get("strategies") or [pos_primary])
         max_hold = (config.IBS_MAX_HOLD_DAYS
                     if pos_primary == "IBS"
-                    else config.RSI2_MAX_HOLD_DAYS)
+                    else config.get_max_hold_days(r, symbol))
 
         exit_signal = None
 

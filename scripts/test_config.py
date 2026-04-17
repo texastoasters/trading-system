@@ -23,12 +23,12 @@ from config import (
     Keys, _load_trading_env,
     get_redis, init_redis_state,
     get_active_instruments, get_tier,
-    get_entry_threshold,
+    get_entry_threshold, get_max_hold_days,
     get_simulated_equity, get_drawdown,
     is_crypto, get_sector,
     load_overrides,
     DEFAULT_UNIVERSE, DEFAULT_TIERS, INITIAL_CAPITAL,
-    RSI2_ENTRY_CONSERVATIVE, RSI2_ENTRY_AGGRESSIVE,
+    RSI2_ENTRY_CONSERVATIVE, RSI2_ENTRY_AGGRESSIVE, RSI2_MAX_HOLD_DAYS,
 )
 
 
@@ -257,6 +257,43 @@ class TestGetEntryThreshold:
         (CONSERVATIVE) fallback rather than erroring."""
         r = make_r(store={})
         assert get_entry_threshold(r, "SPY", "UNKNOWN") == RSI2_ENTRY_CONSERVATIVE
+
+
+class TestGetMaxHoldDays:
+    def test_returns_global_when_no_key(self):
+        r = make_r(store={})
+        assert get_max_hold_days(r, "SPY") == RSI2_MAX_HOLD_DAYS
+
+    def test_returns_per_symbol_value_when_key_present(self):
+        payload = {"RANGING": 7, "UPTREND": 3, "DOWNTREND": 5,
+                   "max_hold": 7, "refit": "2026-04-16"}
+        r = make_r(store={Keys.thresholds("SPY"): json.dumps(payload)})
+        assert get_max_hold_days(r, "SPY") == 7
+
+    def test_falls_back_when_max_hold_is_null(self):
+        """Sweep cell that failed guardrails is stored as null."""
+        payload = {"RANGING": 7, "UPTREND": 3, "DOWNTREND": 5,
+                   "max_hold": None, "refit": "2026-04-16"}
+        r = make_r(store={Keys.thresholds("SPY"): json.dumps(payload)})
+        assert get_max_hold_days(r, "SPY") == RSI2_MAX_HOLD_DAYS
+
+    def test_falls_back_when_max_hold_absent(self):
+        """Pre-#3b payloads have only regime keys; helper must not KeyError."""
+        payload = {"RANGING": 7, "UPTREND": 3, "DOWNTREND": 5,
+                   "refit": "2026-04-16"}
+        r = make_r(store={Keys.thresholds("SPY"): json.dumps(payload)})
+        assert get_max_hold_days(r, "SPY") == RSI2_MAX_HOLD_DAYS
+
+    def test_falls_back_on_malformed_json(self):
+        r = make_r(store={Keys.thresholds("SPY"): "{not json"})
+        assert get_max_hold_days(r, "SPY") == RSI2_MAX_HOLD_DAYS
+
+    def test_returned_value_is_int(self):
+        payload = {"max_hold": 5, "refit": "2026-04-16"}
+        r = make_r(store={Keys.thresholds("SPY"): json.dumps(payload)})
+        result = get_max_hold_days(r, "SPY")
+        assert isinstance(result, int)
+        assert result == 5
 
 
 class TestDefaultUniverseExclusions:
