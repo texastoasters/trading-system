@@ -25,11 +25,12 @@ for mod in [
 import config as _config  # noqa: F401
 
 
-def make_bar(close, high=None, low=None):
+def make_bar(close, high=None, low=None, open_=None):
     b = MagicMock()
     b.close = close
     b.high = high if high is not None else close * 1.01
     b.low = low if low is not None else close * 0.99
+    b.open = open_ if open_ is not None else close
     return b
 
 
@@ -124,3 +125,56 @@ class TestRunRsi2Quick:
         client = make_client(flat_bars(800))
         result, error = run_rsi2_quick("ZERO", client)
         assert result is None or not result.get("passed", False)
+
+    def test_entry_price_is_next_bar_open_not_signal_close(self):
+        """Backtest must enter at open[i+1] to match live execution.
+
+        Live flow: screener emits from EOD snapshot (close[i]); watcher emits
+        signal overnight; executor fills at next open. Entering at close[i]
+        in backtest overstates PF/WR when open[i+1] gaps off close[i].
+        """
+        run_rsi2_quick = self._import()
+
+        # Upward ramp so SMA200 sits below recent prices
+        prices = [50.0 + 0.5 * i for i in range(200)]  # ramps 50 → 149.5
+        opens = list(prices)
+
+        # Signal cycle: 2 drop bars → RSI-2 near 0; 3rd bar opens gap-up
+        # (entry fills here under the fix) and closes > prev-high (exit).
+        # Cooldown of 5 flat bars between cycles so RSI-2 can re-crush
+        # on the next dip (Wilder smoothing has long memory on gains
+        # after the recovery bar). Repeat 6 times to clear ≥5-trade gate.
+        for _ in range(6):
+            prices += [140.0, 130.0, 145.0]
+            opens  += [140.0, 130.0, 135.0]  # gap up on exit/entry bar
+            prices += [145.0] * 5  # cooldown
+            opens  += [145.0] * 5
+
+        # Tail
+        prices += [145.0] * 10
+        opens  += [145.0] * 10
+
+        bars = [make_bar(close=p, open_=o) for p, o in zip(prices, opens)]
+        result, error = run_rsi2_quick("GAPUP", make_client(bars))
+
+        assert result is not None, f"expected trades, got error: {error}"
+        assert "entries" in result, "result must expose entries list"
+        assert len(result["entries"]) >= 1
+        first_entry_price = result["entries"][0]["entry_price"]
+        assert first_entry_price == pytest.approx(135.0), (
+            f"expected entry at open[i+1]=135.0, got {first_entry_price}"
+        )
+
+    def test_skips_entry_on_final_bar_no_next_open(self):
+        """If RSI-2 fires on the last bar, skip — no open[i+1] available."""
+        run_rsi2_quick = self._import()
+
+        prices = [50.0 + 0.5 * i for i in range(200)]  # ramp
+        prices += [140.0, 130.0]  # final 2 bars produce signal at i=201
+        # No i=202 — total length 202 bars
+        bars = [make_bar(close=p) for p in prices]
+
+        result, error = run_rsi2_quick("EDGE", make_client(bars))
+        # Either too few bars (< 220) or too few trades — must not crash
+        # with IndexError on open[i+1]
+        assert result is None or isinstance(result.get("entries"), list)

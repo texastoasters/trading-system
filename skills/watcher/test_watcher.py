@@ -22,7 +22,7 @@ for _mod in [
     "alpaca", "alpaca.data", "alpaca.data.historical",
     "alpaca.data.requests", "alpaca.data.timeframe",
     "alpaca.trading", "alpaca.trading.client",
-    "pytz", "requests",
+    "pytz", "requests", "psycopg2",
 ]:
     if _mod not in sys.modules:
         sys.modules[_mod] = MagicMock()
@@ -810,8 +810,9 @@ class TestPublishSignals:
             {"symbol": "QQQ", "signal_type": "stop_loss",
              "pnl_pct": -2.0, "reason": "stop hit"},
         ]
-        from watcher import publish_signals
-        publish_signals(r, signals)
+        with patch("watcher._log_signal"):
+            from watcher import publish_signals
+            publish_signals(r, signals)
         assert r.publish.call_count == 2
 
     def test_does_not_publish_when_no_signals(self):
@@ -819,6 +820,122 @@ class TestPublishSignals:
         from watcher import publish_signals
         publish_signals(r, [])
         r.publish.assert_not_called()
+
+    def test_publish_signals_logs_each_signal_to_db(self):
+        """Each signal published to Redis must also be persisted to
+        the signals TimescaleDB table for dedup + retro analysis."""
+        r = make_redis()
+        signals = [
+            {"symbol": "SPY", "signal_type": "entry",
+             "indicators": {"rsi2": 7.0}, "suggested_stop": 490.0,
+             "tier": 1, "rsi2_config": "conservative", "strategy": "RSI2",
+             "direction": "long"},
+            {"symbol": "QQQ", "signal_type": "stop_loss",
+             "pnl_pct": -2.0, "reason": "stop hit", "strategy": "RSI2",
+             "direction": "close"},
+        ]
+        with patch("watcher._log_signal") as mock_log:
+            from watcher import publish_signals
+            publish_signals(r, signals)
+        assert mock_log.call_count == 2
+        assert mock_log.call_args_list[0][0][0]["symbol"] == "SPY"
+        assert mock_log.call_args_list[1][0][0]["symbol"] == "QQQ"
+
+
+class TestLogSignal:
+    """_log_signal persists one signal to the TimescaleDB signals table."""
+
+    def test_log_signal_inserts_entry_row(self):
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("watcher.psycopg2.connect", return_value=mock_conn):
+            from watcher import _log_signal
+            _log_signal({
+                "symbol": "SPY",
+                "strategy": "RSI2",
+                "signal_type": "entry",
+                "direction": "long",
+                "confidence": 0.3,
+                "regime": "RANGING",
+                "indicators": {"rsi2": 7.0, "sma200": 480.0},
+            })
+
+        call_args = mock_cur.execute.call_args[0]
+        assert "INSERT INTO signals" in call_args[0]
+        params = call_args[1]
+        assert params[0] == "SPY"
+        assert params[1] == "RSI2"
+        assert params[2] == "entry"
+        assert params[3] == "long"
+        assert params[4] == 0.3
+        assert params[5] == "RANGING"
+        assert json.loads(params[6]) == {"rsi2": 7.0, "sma200": 480.0}
+        assert params[7] is False  # acted_on default
+        mock_conn.close.assert_called_once()
+
+    def test_log_signal_inserts_exit_row_with_reason_in_indicators(self):
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("watcher.psycopg2.connect", return_value=mock_conn):
+            from watcher import _log_signal
+            _log_signal({
+                "symbol": "QQQ",
+                "strategy": "RSI2",
+                "signal_type": "stop_loss",
+                "direction": "close",
+                "exit_price": 380.0,
+                "entry_price": 400.0,
+                "pnl_pct": -5.0,
+                "reason": "stop hit",
+            })
+
+        call_args = mock_cur.execute.call_args[0]
+        params = call_args[1]
+        assert params[2] == "stop_loss"
+        assert params[3] == "close"
+        ind = json.loads(params[6])
+        assert ind["reason"] == "stop hit"
+        assert ind["exit_price"] == 380.0
+        assert ind["pnl_pct"] == -5.0
+
+    def test_log_signal_defaults_confidence_and_regime_to_none(self):
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("watcher.psycopg2.connect", return_value=mock_conn):
+            from watcher import _log_signal
+            _log_signal({
+                "symbol": "SPY",
+                "strategy": "RSI2",
+                "signal_type": "take_profit",
+                "direction": "close",
+            })
+
+        params = mock_cur.execute.call_args[0][1]
+        assert params[4] is None  # confidence
+        assert params[5] is None  # regime
+
+    @patch("builtins.print")
+    def test_log_signal_non_fatal_on_db_error(self, mock_print):
+        with patch("watcher.psycopg2.connect", side_effect=Exception("connection refused")):
+            from watcher import _log_signal
+            # Must not raise
+            _log_signal({
+                "symbol": "SPY", "strategy": "RSI2",
+                "signal_type": "entry", "direction": "long",
+            })
+        mock_print.assert_called_once()
+        msg = mock_print.call_args[0][0]
+        assert "Failed to log signal to DB" in msg
+        assert "connection refused" in msg
 
 
 # ── run_cycle ─────────────────────────────────────────────────

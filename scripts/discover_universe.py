@@ -191,12 +191,14 @@ def run_rsi2_quick(symbol, data_client, years=3):
         close = np.array([float(b.close) for b in bar_list])
         high = np.array([float(b.high) for b in bar_list])
         low = np.array([float(b.low) for b in bar_list])
+        open_ = np.array([float(b.open) for b in bar_list])
 
         rsi2 = rsi(close, 2)
         sma200 = sma(close, 200)
         atr14 = atr(high, low, close, 14)
 
         returns = []
+        entries = []
         in_pos = False
         entry_p = entry_i = 0
 
@@ -223,8 +225,13 @@ def run_rsi2_quick(symbol, data_client, years=3):
                     in_pos = False
             else:
                 if rsi2[i] < 10 and close[i] > sma200[i]:
-                    entry_p = close[i]
-                    entry_i = i
+                    # Signal fires EOD at close[i]; live executor fills
+                    # at next-bar open. Skip if no next bar available.
+                    if i + 1 >= len(close):
+                        continue
+                    entry_p = open_[i + 1]
+                    entry_i = i + 1
+                    entries.append({"entry_price": entry_p, "entry_i": entry_i})
                     in_pos = True
 
         if len(returns) < 5:
@@ -256,6 +263,7 @@ def run_rsi2_quick(symbol, data_client, years=3):
             'trades_per_year': tpy,
             'passed': passed,
             'fail_reasons': fails,
+            'entries': entries,
         }, None
 
     except Exception as e:

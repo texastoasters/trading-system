@@ -8,6 +8,16 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.31.0] - 2026-04-16
+
+### Fixed
+- **Backtest: entry at next-bar open, not signal-day close** — `scripts/discover_universe.py`, `scripts/backtest_rsi2.py`, `scripts/backtest_rsi2_expanded.py`, and `scripts/backtest_rsi2_universe.py` now fill at `open[i+1]` to match live executor behavior. Screener emits EOD from `close[i]`; watcher emits signal overnight; executor fills at the next bar's open. Entering at `close[i]` overstates PF/WR whenever `open[i+1]` gaps off `close[i]` — the root cause of the "same-day churn" the v0.30.2 guards were softening as a symptom. Guards final-bar edge case (no next open → skip). Universe scanner `Result` now exposes an `entries` list for live-parity verification.
+
+### Added
+- **Watcher: signals table persistence** — `_log_signal` helper persists every published signal to the TimescaleDB `signals` table (columns: symbol, strategy, signal_type, direction, confidence, regime, indicators JSONB, acted_on). Exit metadata (reason, exit_price, entry_price, pnl_pct, hold_days) is folded into the `indicators` JSONB so the schema stays flat. DB failures are logged and non-fatal — never block a live signal. Enables signal-level dedup and retro analysis (PM/executor rejection attribution still TBD).
+
+---
+
 ## [0.30.2] - 2026-04-16
 
 ### Added

@@ -141,6 +141,7 @@ def run_rsi2_backtest(
     close = data['close']
     high = data['high']
     low = data['low']
+    open_ = data['open']
     dates = data['dates']
     n = len(close)
 
@@ -244,12 +245,15 @@ def run_rsi2_backtest(
             # Check entry conditions
             # RSI-2 below threshold AND close above 200-day SMA
             if rsi2[i] < rsi_entry_threshold and close[i] > sma200[i]:
-                entry_price = close[i]  # enter at close
-                entry_date = dates[i]
-                entry_idx = i
+                # Signal fires EOD; executor fills at next-bar open.
+                if i + 1 >= n:
+                    continue
+                entry_price = open_[i + 1]
+                entry_date = dates[i + 1]
+                entry_idx = i + 1
 
                 # Position sizing: 1% risk
-                stop_price = entry_price - (atr_stop_multiplier * atr14[i])
+                stop_price = entry_price - (atr_stop_multiplier * atr14[entry_idx])
                 risk_per_share = entry_price - stop_price
 
                 if risk_per_share <= 0:

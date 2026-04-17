@@ -11,6 +11,7 @@ Usage (from repo root):
 """
 
 import json
+import os
 import sys
 import time
 import argparse
@@ -18,6 +19,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import numpy as np
+import psycopg2
 import requests
 
 from alpaca.data.historical import StockHistoricalDataClient, CryptoHistoricalDataClient
@@ -29,6 +31,53 @@ import config
 from config import Keys, get_redis, get_simulated_equity, is_crypto
 from indicators import rsi, sma, atr
 from notify import notify, fmt_et
+
+
+def _get_db():  # pragma: no cover
+    """Connect to TimescaleDB."""
+    return psycopg2.connect(
+        host="localhost", port=5432,
+        dbname="trading", user="trader",
+        password=os.environ.get("TSDB_PASSWORD", "changeme_in_env_file"),
+    )
+
+
+def _log_signal(signal):
+    """Insert one row into the TimescaleDB signals table.
+
+    Non-fatal: DB failure must never block a live signal.
+    Exit metadata (reason, pnl_pct, prices) is folded into the
+    indicators JSONB so the schema stays flat.
+    """
+    try:
+        indicators = dict(signal.get("indicators") or {})
+        for k in ("reason", "exit_price", "entry_price", "pnl_pct",
+                  "hold_days", "suggested_stop"):
+            if k in signal:
+                indicators[k] = signal[k]
+
+        conn = _get_db()
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO signals
+                       (symbol, strategy, signal_type, direction,
+                        confidence, regime, indicators, acted_on)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+                    (
+                        signal["symbol"],
+                        signal["strategy"],
+                        signal["signal_type"],
+                        signal["direction"],
+                        signal.get("confidence"),
+                        signal.get("regime"),
+                        json.dumps(indicators),
+                        False,
+                    ),
+                )
+        conn.close()
+    except Exception as e:
+        print(f"  [Watcher] ⚠️ Failed to log signal to DB: {e}")
 
 
 def fetch_recent_bars(symbol, stock_client, crypto_client, days=10):
@@ -482,9 +531,10 @@ def generate_exit_signals(r, stock_client, crypto_client):
 
 
 def publish_signals(r, signals):
-    """Publish signals to Redis channel and log."""
+    """Publish signals to Redis channel and persist to TimescaleDB."""
     for signal in signals:
         r.publish(Keys.SIGNALS, json.dumps(signal))
+        _log_signal(signal)
 
         sig_type = signal["signal_type"]
         symbol = signal["symbol"]
