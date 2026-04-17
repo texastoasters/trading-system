@@ -2147,6 +2147,51 @@ class TestLogTrade:
 
 # ── TestExecuteBuyLogsTradeTask5 ─────────────────────────────
 
+class TestExecuteBuyWritesStrategies:
+    """Position dict must carry strategies[] and primary_strategy from order
+    so the watcher can route exits to the correct rule set."""
+
+    def test_test_symbol_writes_strategies_and_primary(self):
+        r, store = make_redis({})
+        order = make_buy_signal(symbol="TEST")
+        order["strategies"] = ["IBS", "RSI2"]
+        order["primary_strategy"] = "IBS"
+        from executor import execute_buy
+        assert execute_buy(r, MagicMock(), order) is True
+        positions = json.loads(store["trading:positions"])
+        assert sorted(positions["TEST"]["strategies"]) == ["IBS", "RSI2"]
+        assert positions["TEST"]["primary_strategy"] == "IBS"
+
+    def test_live_fill_writes_strategies_and_primary(self):
+        r, store = make_redis({})
+        filled = MagicMock()
+        filled.status = "filled"
+        filled.filled_avg_price = "500.0"
+        filled.filled_qty = "10"
+        submitted = MagicMock()
+        submitted.id = "ord-ms-1"
+        stop_order = MagicMock()
+        stop_order.id = "stop-ms-1"
+        tc = MagicMock()
+        tc.get_clock.return_value = make_clock(is_open=True)
+        tc.get_orders.return_value = []
+        tc.submit_order.side_effect = [submitted, stop_order]
+        tc.get_order_by_id.return_value = filled
+
+        order = make_buy_signal(symbol="SPY")
+        order["strategies"] = ["IBS", "RSI2"]
+        order["primary_strategy"] = "IBS"
+
+        with patch("time.sleep"), patch("notify.trade_alert"), \
+             patch("executor._log_trade"):
+            from executor import execute_buy
+            assert execute_buy(r, tc, order) is True
+
+        positions = json.loads(store["trading:positions"])
+        assert sorted(positions["SPY"]["strategies"]) == ["IBS", "RSI2"]
+        assert positions["SPY"]["primary_strategy"] == "IBS"
+
+
 class TestExecuteBuyLogsTrade:
     def test_log_trade_called_after_confirmed_buy_fill(self):
         """_log_trade called once with correct buy params after confirmed fill."""

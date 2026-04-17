@@ -58,28 +58,23 @@ if order_value > effective_cash:
 
 When a signal arrives but capital is insufficient, apply this priority logic:
 
-**Case 1 — No cash available, existing positions are LOWER tier:**
+**Case 1 — Position limit reached (sell-to-make-room):**
 ```python
-if effective_cash < min_order_value and signal_tier < lowest_held_tier:
-    # Find the weakest lower-tier position (lowest profit or longest held)
-    weakest = find_weakest_position(tier_threshold=signal_tier)
-    if weakest and weakest.unrealized_pnl >= 0:  # at breakeven or profit
-        # Close it to free capital for the higher-tier signal
-        publish_exit(weakest, reason="displaced_by_tier1_signal")
-        queue_entry(signal, wait_for="exit_fill")
-    else:
-        REJECT — "Lower-tier position is in loss, won't displace"
+# v0.32.0: tier no longer gates displacement. Any open position can be closed
+# to free a slot. Ranking preference:
+#   (b) highest unrealized pnl%
+#   (a) closest-to-exit by held / strategy max_hold
+#   (c) longest held (absolute days)
+# Fallback when no position is at breakeven-or-better: smallest loser.
+target = pick_displacement_target()
+if target.entry_date == today and pdt_count >= PDT_MAX_DAY_TRADES:
+    REJECT — "PDT cap blocks displacement"
+else:
+    publish_exit(target, reason="displaced_to_make_room")
+    queue_entry(signal, wait_for="exit_fill")
 ```
 
-**Case 2 — No cash available, existing positions are SAME or HIGHER tier:**
-```python
-# Do NOT close good positions for an equal-tier signal
-REJECT — "Insufficient capital, all positions same/higher tier"
-# Log to TimescaleDB for Supervisor's end-of-day review
-log_rejected_signal(signal, reason="insufficient_capital")
-```
-
-**Case 3 — Some cash available, but not enough for full position:**
+**Case 2 — Some cash available, but not enough for full position:**
 ```python
 # Take a reduced position if at least 50% of target size is achievable
 target_shares = max_risk / stop_distance

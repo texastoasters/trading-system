@@ -86,8 +86,11 @@ class TestKeys:
     def test_heartbeat(self):
         assert Keys.heartbeat("screener") == "trading:heartbeat:screener"
 
-    def test_whipsaw(self):
-        assert Keys.whipsaw("SPY") == "trading:whipsaw:SPY"
+    def test_whipsaw_defaults_to_rsi2(self):
+        assert Keys.whipsaw("SPY") == "trading:whipsaw:SPY:RSI2"
+
+    def test_whipsaw_scopes_to_strategy(self):
+        assert Keys.whipsaw("SPY", "IBS") == "trading:whipsaw:SPY:IBS"
 
     def test_exit_signaled(self):
         assert Keys.exit_signaled("QQQ") == "trading:exit_signaled:QQQ"
@@ -534,3 +537,16 @@ class TestLoadOverrides:
         r.get = MagicMock(side_effect=Exception("connection refused"))
         load_overrides(r)
         assert config.RSI2_ENTRY_CONSERVATIVE == 10.0  # unchanged
+
+
+# ── IBS strategy parameters ──────────────────────────────────
+
+class TestIbsConstants:
+    def test_ibs_entry_threshold_default(self):
+        assert config.IBS_ENTRY_THRESHOLD == 0.15
+
+    def test_ibs_max_hold_days_default(self):
+        assert config.IBS_MAX_HOLD_DAYS == 3
+
+    def test_ibs_atr_mult_default(self):
+        assert config.IBS_ATR_MULT == 2.0

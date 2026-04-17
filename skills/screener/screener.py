@@ -24,7 +24,7 @@ from alpaca.data.timeframe import TimeFrame
 
 import config
 from config import Keys, get_redis, get_active_instruments, get_tier, is_crypto
-from indicators import rsi, sma, atr, adx
+from indicators import rsi, sma, atr, adx, ibs
 from notify import notify, fmt_et
 
 
@@ -104,12 +104,14 @@ def scan_instrument(symbol, data, regime_info):
     rsi2 = rsi(close, 2)
     sma200 = sma(close, config.RSI2_SMA_PERIOD)
     atr14 = atr(high, low, close, config.RSI2_ATR_PERIOD)
+    ibs_arr = ibs(high, low, close)
 
     latest_rsi2 = rsi2[-1]
     latest_sma200 = sma200[-1]
     latest_atr14 = atr14[-1]
     latest_close = close[-1]
     prev_high = high[-2]
+    latest_ibs = ibs_arr[-1]
 
     if any(np.isnan(x) for x in [latest_rsi2, latest_sma200, latest_atr14]):
         return None
@@ -129,17 +131,32 @@ def scan_instrument(symbol, data, regime_info):
     # Check trend filter
     above_sma = bool(latest_close > latest_sma200)
 
-    # Classify priority
-    priority = None
+    # Classify RSI-2 priority
+    rsi2_priority = None
     if above_sma and latest_rsi2 < 5:
-        priority = "strong_signal"
+        rsi2_priority = "strong_signal"
     elif above_sma and latest_rsi2 < threshold:
-        priority = "signal"
+        rsi2_priority = "signal"
     elif above_sma and latest_rsi2 < threshold + 5:
-        priority = "watch"
+        rsi2_priority = "watch"
 
-    if priority is None:
+    # Classify IBS priority
+    ibs_priority = None
+    if above_sma and not np.isnan(latest_ibs):
+        if latest_ibs < config.IBS_ENTRY_THRESHOLD:
+            ibs_priority = "signal"
+        elif latest_ibs < config.IBS_ENTRY_THRESHOLD + 0.05:
+            ibs_priority = "watch"
+
+    if rsi2_priority is None and ibs_priority is None:
         return None
+
+    # Top-level priority = best of the two (strong_signal > signal > watch)
+    _rank = {"strong_signal": 0, "signal": 1, "watch": 2}
+    priority = min(
+        [p for p in (rsi2_priority, ibs_priority) if p is not None],
+        key=lambda p: _rank[p],
+    )
 
     # Bullish divergence: price makes lower low while RSI-2 makes higher low
     window = config.DIVERGENCE_WINDOW
@@ -163,6 +180,9 @@ def scan_instrument(symbol, data, regime_info):
         "prev_high": round(prev_high, 2),
         "above_sma": above_sma,
         "priority": priority,
+        "rsi2_priority": rsi2_priority,
+        "ibs": None if np.isnan(latest_ibs) else round(float(latest_ibs), 4),
+        "ibs_priority": ibs_priority,
         "entry_threshold": threshold,
         "volume_ratio": round(latest_volume / avg_volume_20d, 2) if avg_volume_20d > 0 else None,
         "divergence": divergence,

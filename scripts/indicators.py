@@ -228,6 +228,18 @@ def relative_volume(volume: np.ndarray, period: int = 20) -> np.ndarray:
     return out
 
 
+def ibs(high: np.ndarray, low: np.ndarray, close: np.ndarray) -> np.ndarray:
+    """
+    Internal Bar Strength = (close - low) / (high - low).
+    Returns values 0.0 (close at low) to 1.0 (close at high).
+    NaN when high == low (zero range).
+    """
+    rng = high - low
+    with np.errstate(divide='ignore', invalid='ignore'):
+        out = np.where(rng > 0, (close - low) / rng, np.nan)
+    return out
+
+
 # ── Convenience: compute all indicators for a daily bar dataset ──
 
 def compute_all_daily(high, low, close, volume):

@@ -11,6 +11,7 @@ import pytest
 sys.path.insert(0, "scripts")
 from indicators import (
     sma, ema, rsi, atr, adx, macd, vwap, relative_volume, compute_all_daily,
+    ibs,
 )
 
 
@@ -259,6 +260,43 @@ class TestRelativeVolume:
         # sma window includes current bar: mean([100]*19 + [200]) = 105
         expected = 200.0 / np.mean(volume[-20:])
         assert result[-1] == pytest.approx(expected, rel=0.01)
+
+
+# ── IBS (Internal Bar Strength) ──────────────────────────────
+
+class TestIbs:
+    def test_close_at_low_returns_zero(self):
+        high = np.array([10.0])
+        low = np.array([5.0])
+        close = np.array([5.0])
+        assert ibs(high, low, close)[0] == pytest.approx(0.0)
+
+    def test_close_at_high_returns_one(self):
+        high = np.array([10.0])
+        low = np.array([5.0])
+        close = np.array([10.0])
+        assert ibs(high, low, close)[0] == pytest.approx(1.0)
+
+    def test_close_at_midpoint_returns_half(self):
+        high = np.array([10.0])
+        low = np.array([0.0])
+        close = np.array([5.0])
+        assert ibs(high, low, close)[0] == pytest.approx(0.5)
+
+    def test_zero_range_returns_nan(self):
+        high = np.array([5.0])
+        low = np.array([5.0])
+        close = np.array([5.0])
+        assert np.isnan(ibs(high, low, close)[0])
+
+    def test_vectorized_over_arrays(self):
+        high = np.array([10.0, 20.0, 30.0])
+        low = np.array([0.0, 10.0, 20.0])
+        close = np.array([5.0, 10.0, 30.0])
+        result = ibs(high, low, close)
+        assert result[0] == pytest.approx(0.5)
+        assert result[1] == pytest.approx(0.0)
+        assert result[2] == pytest.approx(1.0)
 
 
 # ── compute_all_daily ────────────────────────────────────────

@@ -73,22 +73,50 @@ def get_effective_cash(r):
     return max(0, equity - invested)
 
 
-def find_weakest_position(r, tier_threshold):
-    """Find the weakest position with tier > tier_threshold (lower priority)."""
+def _position_hold_days(pos):
+    """Days between entry_date and now. 0 if missing/unparseable."""
+    try:
+        entry_dt = datetime.strptime(pos.get("entry_date", ""), "%Y-%m-%d")
+        return max(0, (datetime.now() - entry_dt).days)
+    except (ValueError, TypeError):
+        return 0
+
+
+def _position_max_hold(pos):
+    """Time-stop horizon implied by the position's primary strategy."""
+    primary = pos.get("primary_strategy", pos.get("strategy", "RSI2"))
+    return config.IBS_MAX_HOLD_DAYS if primary == "IBS" else config.RSI2_MAX_HOLD_DAYS
+
+
+def pick_displacement_target(r):
+    """Select a position to close to make room for a new entry.
+
+    Ranking: (b) highest unrealized pnl% → (a) closest-to-exit (held / max_hold)
+    → (c) longest held. Fallback when no position is at breakeven-or-better:
+    smallest loser (least-negative pnl%). Returns (key, position) or None.
+    """
     positions = get_open_positions(r)
-    candidates = []
-
-    for key, pos in positions.items():
-        pos_tier = get_tier(r, pos["symbol"])
-        if pos_tier > tier_threshold:
-            candidates.append((key, pos, pos_tier))
-
-    if not candidates:
+    if not positions:
         return None
 
-    # Sort by tier (highest = weakest), then by unrealized P&L (lowest first)
-    candidates.sort(key=lambda x: (-x[2], x[1].get("unrealized_pnl_pct", 0)))
-    return candidates[0]  # (key, position, tier)
+    enriched = []
+    for key, pos in positions.items():
+        pnl = pos.get("unrealized_pnl_pct", 0)
+        held = _position_hold_days(pos)
+        max_hold = _position_max_hold(pos) or 1
+        proximity = held / max_hold
+        enriched.append((key, pos, pnl, proximity, held))
+
+    profitable = [e for e in enriched if e[2] >= 0]
+    if profitable:
+        profitable.sort(key=lambda x: (-x[2], -x[3], -x[4]))
+        key, pos, *_ = profitable[0]
+        return key, pos
+
+    # All losers — take smallest loss (max pnl%)
+    enriched.sort(key=lambda x: -x[2])
+    key, pos, *_ = enriched[0]
+    return key, pos
 
 
 def evaluate_entry_signal(r, signal):
@@ -131,34 +159,42 @@ def evaluate_entry_signal(r, signal):
     if symbol in disabled:
         return None, f"{symbol} is currently disabled"
 
-    # ── Position limits ──
+    # ── Position limits (sell-to-make-room) ──
     num_positions = count_open_positions(r)
     if num_positions >= config.MAX_CONCURRENT_POSITIONS:
-        # Check if we can displace a lower-tier position
-        weakest = find_weakest_position(r, signal_tier)
-        if weakest:
-            weak_key, weak_pos, weak_tier = weakest
-            unrealized = weak_pos.get("unrealized_pnl_pct", 0)
-            if unrealized >= 0:  # at breakeven or profit
-                # Publish displacement exit signal
-                displace_signal = {
-                    "time": datetime.now().isoformat(),
-                    "symbol": weak_pos["symbol"],
-                    "strategy": "RSI2",
-                    "signal_type": "displaced",
-                    "direction": "close",
-                    "reason": f"Displaced by Tier {signal_tier} signal on {symbol}",
-                }
-                r.publish(Keys.SIGNALS, json.dumps(displace_signal))
-                print(f"  [PM] Displacing {weak_pos['symbol']} (Tier {weak_tier}) "
-                      f"for {symbol} (Tier {signal_tier})")
-                # Note: actual position close happens in Executor
-                # The new order will need to wait for the fill
-                return None, f"Displacement queued — {weak_pos['symbol']} closing for {symbol}"
-            else:
-                return None, f"Max positions ({num_positions}) — lower-tier position is in loss, won't displace"
-        else:
-            return None, f"Max positions ({num_positions}) — all same/higher tier"
+        target = pick_displacement_target(r)
+        if not target:
+            return None, f"Max positions ({num_positions}) — no displacement candidate"
+        _, target_pos = target
+
+        # PDT guard: if the chosen target was entered today, closing it counts
+        # as a day trade. Block when the PDT cap is already hit.
+        today = datetime.now().strftime("%Y-%m-%d")
+        pdt_count = int(r.get(Keys.PDT_COUNT) or 0)
+        if (target_pos.get("entry_date") == today
+                and pdt_count >= config.PDT_MAX_DAY_TRADES):
+            return None, (
+                f"PDT cap ({pdt_count}/{config.PDT_MAX_DAY_TRADES}) "
+                f"blocks displacement of {target_pos['symbol']}"
+            )
+
+        target_primary = target_pos.get("primary_strategy",
+                                         target_pos.get("strategy", "RSI2"))
+        displace_signal = {
+            "time": datetime.now().isoformat(),
+            "symbol": target_pos["symbol"],
+            "strategy": target_primary,
+            "primary_strategy": target_primary,
+            "strategies": list(target_pos.get("strategies") or [target_primary]),
+            "signal_type": "displaced",
+            "direction": "close",
+            "reason": f"Displaced to make room for {symbol}",
+        }
+        r.publish(Keys.SIGNALS, json.dumps(displace_signal))
+        pnl_pct = target_pos.get("unrealized_pnl_pct", 0)
+        print(f"  [PM] Displacing {target_pos['symbol']} "
+              f"(pnl {pnl_pct:+.2f}%) for {symbol}")
+        return None, f"Displacement queued — {target_pos['symbol']} closing for {symbol}"
 
     # Asset class limits
     if is_crypto(symbol) and count_crypto_positions(r) >= config.MAX_CRYPTO_POSITIONS:
@@ -226,6 +262,14 @@ def evaluate_entry_signal(r, signal):
         actual_risk_pct = actual_risk / equity * 100
 
     # ── Build approved order ──
+    strategies = list(signal.get("strategies") or [])
+    primary_strategy = signal.get("primary_strategy") or signal.get("strategy")
+    if not strategies:
+        # Legacy signal: fall back to primary or RSI-2 as a single-strategy list
+        strategies = [primary_strategy] if primary_strategy else ["RSI2"]
+    if not primary_strategy:
+        primary_strategy = strategies[0]
+
     order = {
         "time": datetime.now().isoformat(),
         "symbol": symbol,
@@ -233,7 +277,9 @@ def evaluate_entry_signal(r, signal):
         "quantity": position_size if is_crypto(symbol) else int(position_size),
         "order_type": "limit" if is_crypto(symbol) else "market",
         "limit_price": round(entry_price * 1.001, 2) if is_crypto(symbol) else None,
-        "strategy": "RSI2",
+        "strategies": strategies,
+        "primary_strategy": primary_strategy,
+        "strategy": primary_strategy,
         "tier": signal_tier,
         "stop_price": round(stop_price, 2),
         "entry_price": round(entry_price, 2),
