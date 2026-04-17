@@ -12,7 +12,7 @@ v0.30.0 signal quality features (all on PR #123):
 ## Next
 - Merge PR #123 → tag v0.30.0 → deploy VPS (`docker compose up --build -d dashboard`)
 - Multi-timeframe confirmation (v0.31, medium effort, needs 4h bar data from Alpaca)
-- Broader strategy review output landing in `docs/STRATEGY_REVIEW.md` (parallel agent session)
+- Review `docs/STRATEGY_REVIEW.md` findings and decide which recommendations to act on
 
 ## Context
 VPS needs `docker compose up --build -d dashboard` after merge (dashboard changes in sparkline).
