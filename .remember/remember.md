@@ -1,46 +1,37 @@
 # Remember
 
-## v0.33.0 — Wave 4 #4b + #4c (Donchian-BO end-to-end)
+## v0.33.1 — PDT gate surgical rewrite
 
-Third strategy live on the 7 curated DONCHIAN_SYMBOLS. Closes Wave 4 #4.
+Fix for the silent production stall found in today's log audit: executor rejected 11 WMB take-profit exits with blanket `if account.pattern_day_trader: return False`. None of the rejections were warranted — Alpaca paper cash account had `pattern_day_trader=True` + `daytrade_count=5` + `multiplier=1`, which is bookkeeping only; Alpaca itself enforces nothing because day-trade buying power ($0) is never evaluated on cash.
 
 ### Shipped
-- **Screener** (`skills/screener/screener.py`):
-  - Imports `donchian_channel` from indicators.
-  - `scan_instrument`: for `symbol in DONCHIAN_SYMBOLS`, computes `donchian_channel(high, low, ENTRY_LEN, EXIT_LEN)` and sets `donchian_priority="signal"` when `above_sma AND close > upper[i]` (upper excludes current bar; `close > upper[i]` is the breakout direct).
-  - Row admission is now 3-way OR: RSI-2 OR IBS OR DONCHIAN qualifies.
-  - Priority rank picks the tightest of (rsi2_priority, ibs_priority, donchian_priority).
-  - Result dict carries `donchian_priority`, `donchian_upper`, `donchian_lower`.
-- **Watcher entry** (`watcher.generate_entry_signals`):
-  - 3-way qualify gate. New DONCHIAN candidate: `strategy="DONCHIAN"`, `atr_mult=DONCHIAN_ATR_MULT` (3.0), `stop = close − 3.0 × ATR14`, `confidence=1.0`. Whipsaw scoped to `trading:whipsaw:{symbol}:DONCHIAN`.
-  - Primary selector (tightest-hold-wins) extends to `IBS > RSI2 > DONCHIAN` (3d > 5d > 30d).
-  - `indicators` dict includes `donchian_upper` when DONCHIAN in strategies_list.
-- **Watcher exit** (`watcher.generate_exit_signals`):
-  - DONCHIAN primary branch. Exits: stop_loss (shared), `close < lower[-1]` 10d chandelier (take_profit), `hold ≥ 30d` time_stop.
-  - RSI-2>60 exit gated off for DONCHIAN (already primary-gated).
-  - `close > prev_high` take_profit gated off for DONCHIAN primary — trend-following must ride past prior highs.
-  - `max_hold` routing: IBS→3, DONCHIAN→30, else `get_max_hold_days()` (per-symbol RSI-2).
-  - Chandelier pre-computed OUTSIDE the elif chain (critical: an elif that doesn't fire still consumes control flow, blocking fall-through to time-stop). Use `donchian_chandelier_lower = None | float` then `elif donchian_chandelier_lower is not None and close < lower`.
-- **PM** (`portfolio_manager._position_max_hold`):
-  - Now branches IBS → IBS_MAX_HOLD_DAYS, DONCHIAN → DONCHIAN_MAX_HOLD_DAYS (30), else RSI2_MAX_HOLD_DAYS. Previously hardcoded IBS-or-RSI2 which treated DONCHIAN as RSI2 (5d) → broke displacement proximity ranking.
-- **Executor / PM signal plumbing**: strategy-agnostic passthrough already — reads `strategy`/`primary_strategy`/`strategies` from signal dict. No hardcoded branches on strategy name. DONCHIAN flows through unchanged.
-
-### Tests added
-- Screener: `TestScanInstrumentDonchian` ×7 (breakout fires / no-breakout None / non-enabled never fires / trend gate blocks / NaN upper None / row admitted when only donchian qualifies / result carries donchian fields).
-- Watcher entry: `TestGenerateEntrySignalsDonchian` ×8 (solo fires / stop uses DONCHIAN_ATR_MULT / donchian_upper in indicators / RSI2+DONCHIAN→primary=RSI2 / IBS+DONCHIAN→primary=IBS / all-three→primary=IBS / whipsaw blocks only DONCHIAN / whipsaw on solo → no signal).
-- Watcher exit: `TestGenerateExitSignalsDonchian` ×9 (stop_loss / chandelier fires / no-exit when close>lower / RSI>60 ignored / prev-high ignored / 30d time_stop / no-exit at 29d / payload carries DONCHIAN marker / stacked primary=RSI2 routes by RSI2 rules).
-- PM: `test_donchian_proximity_uses_30day_max_hold` (stacked DONCHIAN has 0.20 proximity vs RSI2 0.40 → displace RSI2).
-
-### Verification
-- **796 passed, 100% coverage** (all 13 production modules).
+- **`executor.validate_order`**: blanket `pattern_day_trader` check replaced. New gate fires only when BOTH `pdt_count >= 3` AND the order would complete a same-session round-trip.
+  - sell: round-trip iff `positions[symbol]["entry_date"] == today`.
+  - buy: round-trip iff `r.hexists(Keys.CLOSED_TODAY, symbol)`.
+  - reason strings: `"PDT: sell of today's entry would be 4th day trade"` / `"PDT: buy after today's close would be 4th day trade"`.
+  - non-round-trip orders allowed regardless of the flag.
+- **`executor.execute_sell`**: on every fill writes `r.hset(Keys.CLOSED_TODAY, symbol, HH:MM:SS)` right after the existing `exited_today` set. `exited_today:{symbol}` stays (watcher re-entry gate); `closed_today` is the new PDT-gate input.
+- **`Keys.CLOSED_TODAY = "trading:closed_today"`** added to `config.py`. Hash, no init — empty = no closes today. Not added to `init_redis_state` (test_config already pins `r.set.call_count == 11`; empty-hash semantics mean we don't need to seed).
+- **`watcher.generate_entry_signals`**: mirror gate (`pdt_count >= 3 → return []`) removed outright. Executor owns enforcement. Rationale: pre-rejection wasted overnight-intent signals (today KNSA rsi2=2.0, PAGP rsi2=0.52 both strong_signal, wasted). `Keys.PDT_COUNT` import unused in watcher after this change — not removed from import list to keep diff minimal.
+- **`supervisor.reset_daily`**: `r.delete(Keys.CLOSED_TODAY)` added next to the existing `DAILY_PNL` reset. Wipes yesterday's closes so today's buys aren't falsely classified as round-trips. `PDT_COUNT` is NOT reset here (Alpaca's rolling-5-biz-day count decays naturally; executor startup syncs from Alpaca).
 
 ### Design decisions locked
-- Chandelier is DONCHIAN-only. Reason: turtle-style trail is the defining exit of Donchian-BO; grafting it onto RSI-2/IBS would break those strategies' tested exits.
-- `close > prev_high` gated off for DONCHIAN. Reason: it's trend-following — exiting on the first close past prior high defeats the purpose.
-- Stacked primary selector kept as explicit if/elif chain (not dict lookup). Reason: 3-entry case, consistent with existing 2-way IBS/RSI2 code. Refactor when (if) a 4th strategy lands.
-- PM/executor signal payload is strategy-agnostic by design (read marker → pass through). DONCHIAN needs zero new persistence code there. Verified by grep — no hardcoded strategy-name branches in either module.
+- **Executor is the single PDT gate**. Watcher removed its mirror because the two gates had different inputs (pdt_count only vs pdt_count + round-trip context) and the watcher's blunter version wasted signal. One rejection point, one semantic.
+- **Flag is not the condition — `pdt_count >= 3` is**. The FINRA rule is about the 4th day trade in 5 biz days, not about whether a flag was ever set. Paper cash accounts leak the flag forever (no reset path); checking it would permanently stick the gate on. Same logic will apply on live — the flag indicates "you've hit PDT in the past," not "you're currently restricted."
+- **Round-trip detection is local to executor, not relying on Alpaca**. `positions[sym]["entry_date"]` (string ISO date, already in use) for the sell side; new `trading:closed_today` hash for the buy side. Avoids an extra Alpaca round-trip per order validation.
+- **Hash over set** for `closed_today`: stores `HH:MM:SS` as value for future diagnostics (e.g., "closed SPY at 14:00 — can we buy again?"). Set would suffice for the current gate; hash is strictly more informative at no extra cost.
+- **No equity-threshold carve-out**. FINRA PDT only applies under $25k equity, but Alpaca paper cash is on a different code path entirely and the simulated `$5k` virtual equity is what actually drives sizing. Easier to mirror Alpaca's own behavior (they check unconditionally once flagged) than introduce a threshold that might drift.
 
-### Next (Wave 4 followups, deferred)
-- Walk-forward sweep of Donchian params (20/10/30/3.0 are static research defaults).
-- Dynamic DONCHIAN_SYMBOLS (currently hardcoded set of 7).
-- Backtest Donchian integrated into `backtest_rsi2_universe.py` tier classification.
+### Tests added (+10 → 806 passing, 100% coverage on all 13 modules)
+- Executor `TestValidateOrder` gained 7 tests covering: flag alone no longer blocks; overnight sell allowed at 3/3; sell of today's entry rejected at 3/3; sell of today's entry allowed at 2/3; buy of symbol sold today rejected at 3/3; buy of symbol not in `closed_today` allowed at 3/3; buy of symbol sold today allowed at 2/3.
+- Executor `TestExecuteSellNewBehavior` gained 1 test: successful sell writes symbol into `trading:closed_today` hash.
+- Watcher: `test_returns_empty_when_pdt_at_limit` flipped to `test_generates_entry_when_pdt_at_limit` (now asserts signal is generated); new `test_generates_entry_when_pdt_above_limit` for the 5/3 paper-advisory case.
+- Supervisor `TestResetDaily` gained 1 test: `reset_daily(r)` calls `r.delete("trading:closed_today")`.
+
+### Test infrastructure change
+- `skills/executor/test_executor.py::make_redis` mock gained `hset` / `hexists` / `hdel` / `hkeys` backed by JSON-serialized dicts inside the same `store`. Enables the new gate tests to exercise round-trip detection without a real Redis. Existing tests unaffected (the fixture's `r.delete = MagicMock()` override pattern still works — MagicMock with side_effect still records calls).
+
+### Ops follow-ups (deferred)
+- Audit the 11-12 SIGTERM/restart cycles seen on executor + PM in today's logs (daemon watchdog or `--reset-daily` restarting too aggressively). Not a trading-correctness bug, but worth tracing.
+- Dashboard: surface `trading:closed_today` hash on the state panel so the operator can see "SPY was closed 14:00 — PDT gate will block buy" before the executor rejects it.
+- Consider exposing a `scripts/check_pdt.py` helper (one-liner: `get_account().pattern_day_trader + daytrade_count + multiplier`) for quick ops diagnostics.

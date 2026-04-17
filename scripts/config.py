@@ -278,6 +278,11 @@ class Keys:
     DAILY_PNL = "trading:daily_pnl"
     DRAWDOWN = "trading:drawdown"
     PDT_COUNT = "trading:pdt:count"
+    # Hash {symbol: close_time_iso} of positions closed today. Used by the
+    # executor same-day-round-trip gate: if pdt_count >= 3, reject buys of
+    # symbols in this hash (would be the 4th day trade). Cleared by
+    # supervisor --reset-daily. Empty hash = no same-day closes.
+    CLOSED_TODAY = "trading:closed_today"
     RISK_MULTIPLIER = "trading:risk_multiplier"
     SYSTEM_STATUS = "trading:system_status"
     # Note: disabled instruments are stored in universe["disabled"], not a separate key

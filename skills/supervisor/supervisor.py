@@ -445,6 +445,10 @@ def reset_daily(r):
     """Reset daily counters — run at market open."""
     r.set(Keys.DAILY_PNL, "0.0")
 
+    # Wipe yesterday's same-day close records so today's buys are not
+    # falsely classified as round-trips by the executor PDT gate.
+    r.delete(Keys.CLOSED_TODAY)
+
     # Reset peak equity to current equity at session start so drawdown
     # is measured within the current trading period, not against a stale peak
     equity = get_simulated_equity(r)

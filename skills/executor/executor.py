@@ -500,8 +500,26 @@ def validate_order(r, order, account):
     # Account status
     if account.trading_blocked:
         return False, "Account trading blocked"
+
+    # PDT gate — surgical, not blanket. Alpaca sets pattern_day_trader on paper
+    # cash accounts but does not enforce it (buying power is evaluated against
+    # cash, not day-trade buying power). Blocking every order when the flag is
+    # set disables exits of overnight positions (which are not day trades).
+    # We block only orders that would complete a same-day round-trip AND push
+    # us past the 3-day-trade ceiling tracked in trading:pdt:count.
     if account.pattern_day_trader:
-        return False, "PDT flag triggered"
+        pdt_count = int(r.get(Keys.PDT_COUNT) or 0)
+        if pdt_count >= 3:
+            today = datetime.now().strftime("%Y-%m-%d")
+            symbol = order["symbol"]
+            if order["side"] == "sell":
+                positions = json.loads(r.get(Keys.POSITIONS) or "{}")
+                pos = positions.get(symbol)
+                if pos and pos.get("entry_date") == today:
+                    return False, "PDT: sell of today's entry would be 4th day trade"
+            else:  # buy
+                if r.hexists(Keys.CLOSED_TODAY, symbol):
+                    return False, "PDT: buy after today's close would be 4th day trade"
 
     return True, "All validations passed"
 
@@ -876,6 +894,11 @@ def execute_sell(r, trading_client, order):
 
         # Mark symbol as exited today — Watcher will block re-entry until midnight ET
         r.set(Keys.exited_today(symbol), "1", ex=_seconds_until_midnight_et())
+
+        # Record close in trading:closed_today so the executor PDT gate can
+        # reject a same-session re-buy when pdt_count is at the 3/3 ceiling.
+        # Cleared by supervisor --reset-daily at EOD.
+        r.hset(Keys.CLOSED_TODAY, symbol, datetime.now().strftime("%H:%M:%S"))
 
         # Send Telegram notification
         exit_alert(

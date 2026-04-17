@@ -103,6 +103,9 @@ class TestKeys:
     def test_peak_equity_date_key(self):
         assert Keys.PEAK_EQUITY_DATE == "trading:peak_equity_date"
 
+    def test_closed_today_key(self):
+        assert Keys.CLOSED_TODAY == "trading:closed_today"
+
 
 # ── get_redis ─────────────────────────────────────────────────
 
