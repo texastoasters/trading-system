@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.32.7] - 2026-04-17
+
+### Added
+- **Wave 4 #4a: Donchian-BO trend-slot foundation** — `donchian_channel(high, low, entry_len=20, exit_len=10)` indicator in `scripts/indicators.py` returns `(upper, lower)` numpy arrays where `upper[i] = max(high[i-entry_len:i])` and `lower[i] = min(low[i-exit_len:i])` (both explicitly exclude the current bar so `close[i] > upper[i]` is a direct breakout condition; insufficient-history bars return NaN). `scripts/config.py` gains the static strategy constants `DONCHIAN_ENTRY_LEN=20`, `DONCHIAN_EXIT_LEN=10`, `DONCHIAN_MAX_HOLD_DAYS=30`, `DONCHIAN_ATR_MULT=3.0`, and `DONCHIAN_SYMBOLS={DG, GOOGL, NVDA, AMGN, SMH, LIN, XLY}` — the curated 7 where the alt-strategies research showed Donchian-BO wins on names where RSI-2 sits idle. Foundation only: zero prod-path wiring. Screener/watcher/PM/executor untouched. Follow-ups #4b (screener breakout publish) and #4c (watcher entry+exit + stacking + executor marker persist) consume these.
+
+---
+
 ## [0.32.6] - 2026-04-16
 
 ### Added

@@ -686,3 +686,25 @@ class TestIbsConstants:
 
     def test_ibs_atr_mult_default(self):
         assert config.IBS_ATR_MULT == 2.0
+
+
+class TestDonchianConstants:
+    def test_entry_len_default(self):
+        assert config.DONCHIAN_ENTRY_LEN == 20
+
+    def test_exit_len_default(self):
+        assert config.DONCHIAN_EXIT_LEN == 10
+
+    def test_max_hold_days_default(self):
+        assert config.DONCHIAN_MAX_HOLD_DAYS == 30
+
+    def test_atr_mult_default(self):
+        assert config.DONCHIAN_ATR_MULT == 3.0
+
+    def test_symbols_set_contains_research_seven(self):
+        expected = {"DG", "GOOGL", "NVDA", "AMGN", "SMH", "LIN", "XLY"}
+        assert config.DONCHIAN_SYMBOLS == expected
+
+    def test_symbols_is_a_set_not_list(self):
+        # O(1) membership lookup in screener/watcher hot paths.
+        assert isinstance(config.DONCHIAN_SYMBOLS, (set, frozenset))

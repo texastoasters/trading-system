@@ -228,6 +228,29 @@ def relative_volume(volume: np.ndarray, period: int = 20) -> np.ndarray:
     return out
 
 
+def donchian_channel(high: np.ndarray, low: np.ndarray,
+                     entry_len: int = 20, exit_len: int = 10):
+    """
+    Donchian Channel. Returns (upper, lower) numpy arrays.
+
+    upper[i] = max(high[i-entry_len : i])   — prior N bars' highs, excludes bar i
+    lower[i] = min(low[i-exit_len : i])     — prior M bars' lows,  excludes bar i
+
+    Bars with insufficient prior history return NaN.
+    Matches turtle-style breakout semantics: `close[i] > upper[i]` means the
+    current close broke above the prior N bars' range.
+    """
+    n = len(high)
+    upper = np.full(n, np.nan)
+    lower = np.full(n, np.nan)
+    for i in range(n):
+        if i >= entry_len:
+            upper[i] = np.max(high[i - entry_len:i])
+        if i >= exit_len:
+            lower[i] = np.min(low[i - exit_len:i])
+    return upper, lower
+
+
 def ibs(high: np.ndarray, low: np.ndarray, close: np.ndarray) -> np.ndarray:
     """
     Internal Bar Strength = (close - low) / (high - low).
