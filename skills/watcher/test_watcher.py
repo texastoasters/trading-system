@@ -737,6 +737,66 @@ class TestGenerateExitSignals:
         # No stop signal — Alpaca owns this stop
         assert signals == []
 
+    def test_breakeven_same_day_takeprofit_sets_short_whipsaw(self):
+        """Same-day take_profit at ~breakeven → 4h whipsaw cooldown.
+
+        Bar-timing leak: backtest enters at close[D] but live enters at
+        open[D+1]. If RSI-2 flips above 60 on the first bar, we round-trip
+        at ~entry price. Block re-entry for 4h to avoid immediate re-fire.
+        """
+        today = datetime.now().strftime("%Y-%m-%d")
+        pos = {"SPY": make_position(entry_price=500.0, stop_price=485.0,
+                                    entry_date=today)}
+        r = make_redis({Keys.POSITIONS: json.dumps(pos)})
+        # close=500.0 == entry 500.0 → pnl_pct = 0.0; rsi=65 → take_profit
+        with patch('watcher.fetch_intraday_bars', return_value=make_intraday(close=500.0, low=495.0)), \
+             patch('watcher.fetch_recent_bars', return_value=make_daily(close=500.0, prev_high=498.0)), \
+             patch('watcher.rsi', return_value=np.array([65.0])), \
+             patch('watcher.is_market_hours', return_value=True):
+            from watcher import generate_exit_signals
+            signals = generate_exit_signals(r, MagicMock(), MagicMock())
+        assert len(signals) == 1
+        assert signals[0]["signal_type"] == "take_profit"
+        assert signals[0]["hold_days"] == 0
+        # 4h breakeven whipsaw set
+        r.set.assert_any_call(Keys.whipsaw("SPY"), ANY, ex=14400)
+
+    def test_multi_day_takeprofit_does_not_set_breakeven_whipsaw(self):
+        """Take-profit after >0 hold days is a real win — no whipsaw block."""
+        old_date = (datetime.now() - timedelta(days=3)).strftime("%Y-%m-%d")
+        pos = {"SPY": make_position(entry_price=500.0, stop_price=485.0,
+                                    entry_date=old_date)}
+        r = make_redis({Keys.POSITIONS: json.dumps(pos)})
+        with patch('watcher.fetch_intraday_bars', return_value=make_intraday(close=500.0, low=495.0)), \
+             patch('watcher.fetch_recent_bars', return_value=make_daily(close=500.0, prev_high=498.0)), \
+             patch('watcher.rsi', return_value=np.array([65.0])), \
+             patch('watcher.is_market_hours', return_value=True):
+            from watcher import generate_exit_signals
+            generate_exit_signals(r, MagicMock(), MagicMock())
+        # Make sure no 4h whipsaw key was set
+        for call in r.set.call_args_list:
+            args, kwargs = call
+            if args and args[0] == Keys.whipsaw("SPY"):
+                pytest.fail(f"Unexpected whipsaw set for multi-day take_profit: {call}")
+
+    def test_same_day_takeprofit_with_meaningful_profit_no_breakeven_whipsaw(self):
+        """Same-day take_profit with >0.2% gain is a real win — no whipsaw block."""
+        today = datetime.now().strftime("%Y-%m-%d")
+        pos = {"SPY": make_position(entry_price=500.0, stop_price=485.0,
+                                    entry_date=today)}
+        r = make_redis({Keys.POSITIONS: json.dumps(pos)})
+        # close=503 → pnl_pct = +0.6% (×100 scale) — well above 0.2 threshold
+        with patch('watcher.fetch_intraday_bars', return_value=make_intraday(close=503.0, low=495.0)), \
+             patch('watcher.fetch_recent_bars', return_value=make_daily(close=503.0, prev_high=498.0)), \
+             patch('watcher.rsi', return_value=np.array([65.0])), \
+             patch('watcher.is_market_hours', return_value=True):
+            from watcher import generate_exit_signals
+            generate_exit_signals(r, MagicMock(), MagicMock())
+        for call in r.set.call_args_list:
+            args, kwargs = call
+            if args and args[0] == Keys.whipsaw("SPY"):
+                pytest.fail(f"Unexpected whipsaw set for profitable take_profit: {call}")
+
 
 # ── publish_signals ───────────────────────────────────────────
 
@@ -921,6 +981,41 @@ class TestGenerateEntrySignalsNewGuards:
         })
         with patch('watcher.is_market_hours', return_value=True), \
              patch('watcher.check_whipsaw', return_value=False):
+            from watcher import generate_entry_signals
+            signals = generate_entry_signals(r, MagicMock(), MagicMock())
+        assert len(signals) == 1
+
+    def test_skips_entry_when_intraday_price_gapped_above_prev_high(self):
+        """EOD close below prev_high, but live intraday price gapped up above prev_high*1.001 → skip."""
+        # EOD close ($500) < prev_high ($502) so the EOD filter passes,
+        # but intraday current price ($503) is > prev_high * 1.001 ($502.5).
+        item = make_watchlist_item(close=500.0, prev_high=502.0)
+        r = make_redis({Keys.WATCHLIST: json.dumps([item])})
+        with patch('watcher.is_market_hours', return_value=True), \
+             patch('watcher.check_whipsaw', return_value=False), \
+             patch('watcher.fetch_intraday_bars', return_value=make_intraday(close=503.0)):
+            from watcher import generate_entry_signals
+            signals = generate_entry_signals(r, MagicMock(), MagicMock())
+        assert signals == []
+
+    def test_allows_entry_when_intraday_price_below_prev_high(self):
+        """EOD close below prev_high AND live intraday price also below prev_high → proceed."""
+        item = make_watchlist_item(close=500.0, prev_high=502.0)
+        r = make_redis({Keys.WATCHLIST: json.dumps([item])})
+        with patch('watcher.is_market_hours', return_value=True), \
+             patch('watcher.check_whipsaw', return_value=False), \
+             patch('watcher.fetch_intraday_bars', return_value=make_intraday(close=501.0)):
+            from watcher import generate_entry_signals
+            signals = generate_entry_signals(r, MagicMock(), MagicMock())
+        assert len(signals) == 1
+
+    def test_proceeds_when_intraday_fetch_fails_graceful_fallback(self):
+        """If intraday fetch returns None, fall back to EOD-only filter (don't block)."""
+        item = make_watchlist_item(close=500.0, prev_high=502.0)
+        r = make_redis({Keys.WATCHLIST: json.dumps([item])})
+        with patch('watcher.is_market_hours', return_value=True), \
+             patch('watcher.check_whipsaw', return_value=False), \
+             patch('watcher.fetch_intraday_bars', return_value=None):
             from watcher import generate_entry_signals
             signals = generate_entry_signals(r, MagicMock(), MagicMock())
         assert len(signals) == 1

@@ -145,6 +145,31 @@ class TestGetActiveInstruments:
         assert "SPY" in result
         assert "QQQ" in result
 
+    def test_excludes_blacklisted_symbols(self):
+        """Blacklisted symbols must not appear in the active instrument list,
+        even if they are listed in tier1/2/3 (watcher already filters, but
+        the screener relies on this canonical helper)."""
+        universe = {
+            "tier1": ["SPY", "META"], "tier2": ["QQQ"], "tier3": ["IWM"],
+            "blacklisted": ["META"],
+        }
+        r = make_r(store={Keys.UNIVERSE: json.dumps(universe)})
+        result = get_active_instruments(r)
+        assert "META" not in result
+        assert "SPY" in result
+        assert "QQQ" in result
+        assert "IWM" in result
+
+    def test_handles_missing_blacklist_key(self):
+        universe = {"tier1": ["SPY"], "tier2": [], "tier3": []}
+        r = make_r(store={Keys.UNIVERSE: json.dumps(universe)})
+        assert get_active_instruments(r) == ["SPY"]
+
+    def test_handles_null_blacklist_value(self):
+        universe = {"tier1": ["SPY"], "tier2": [], "tier3": [], "blacklisted": None}
+        r = make_r(store={Keys.UNIVERSE: json.dumps(universe)})
+        assert get_active_instruments(r) == ["SPY"]
+
 
 # ── get_tier ──────────────────────────────────────────────────
 

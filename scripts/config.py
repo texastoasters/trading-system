@@ -318,9 +318,11 @@ def init_redis_state(r: redis.Redis):
 # ── Helpers ─────────────────────────────────────────────────
 
 def get_active_instruments(r: redis.Redis) -> list:
-    """Return list of all active (non-disabled) instruments."""
+    """Return list of all active (non-disabled, non-blacklisted) instruments."""
     universe = json.loads(r.get(Keys.UNIVERSE) or json.dumps(DEFAULT_UNIVERSE))
-    return universe["tier1"] + universe["tier2"] + universe["tier3"]
+    blacklisted = set(universe.get("blacklisted") or [])
+    all_tiers = universe["tier1"] + universe["tier2"] + universe["tier3"]
+    return [s for s in all_tiers if s not in blacklisted]
 
 
 def get_tier(r: redis.Redis, symbol: str) -> int:
