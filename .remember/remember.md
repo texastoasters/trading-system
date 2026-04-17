@@ -1,12 +1,15 @@
 # Handoff
 
 ## State
-Branch `fix/hamburger-ios` ready to commit+push+PR. Fixed two iPhone hamburger bugs in `dashboard/lib/dashboard_web/layouts/app.html.heex`: added `type="button"` to button, changed `JS.toggle` to use `display: "flex"`. Two new tests in `dashboard/test/dashboard_web/live/nav_test.exs`. 386 tests passing.
+Branch `main`, clean. 400 tests passing.
+
+## Last Completed
+Intraday equity sparkline on main dashboard (above open positions). Samples equity every 30s (15 Redis polls), newest-first list capped at 800. Hand-rolled SVG polyline, blue=up red=down. Wishlist item checked off.
 
 ## Next
-1. Finish `cpr` on `fix/hamburger-ios` — commit, push, PR
-2. Implement same-day exit cooldown (watcher: Redis key `trading:exited_today:{symbol}`, TTL midnight ET)
-3. Implement PDT day-trade counter (executor: `trading:day_trades_today`, block at ≥3)
+1. Same-day exit cooldown (watcher: Redis key `trading:exited_today:{symbol}`, TTL midnight ET)
+2. PDT day-trade counter (executor: `trading:day_trades_today`, block at ≥3)
+3. Equity curve chart on main dashboard (full history from `daily_summaries`, not just intraday)
 
 ## Context
-Dashboard hamburger PR #121 was already merged (accidentally included dashboard files). This is a follow-up fix-only branch. VPS needs `docker compose up --build -d dashboard` after merge to pick up the heex change.
+VPS needs `docker compose up --build -d dashboard` after merge to pick up changes.

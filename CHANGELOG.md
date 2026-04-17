@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.29.6] - 2026-04-16
+
+### Added
+- **Dashboard: intraday equity sparkline** — SVG polyline above open positions showing `trading:simulated_equity` trend since process start. Samples every 30s (every 15 Redis polls at 2s), newest-first buffer capped at 800 points. Blue when equity is above session open, red when below. Shows "Collecting data…" until enough samples accumulate.
+
+---
+
 ## [0.29.5] - 2026-04-16
 
 ### Fixed
