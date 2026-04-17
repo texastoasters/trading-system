@@ -281,6 +281,18 @@ class TestPickDisplacementTarget:
         _, pos = pick_displacement_target(r)
         assert pos["symbol"] == "FLAT"
 
+    def test_tolerates_missing_entry_date(self):
+        # Pre-v0.32.0 positions have no entry_date. Must not crash — treat as
+        # held=0 days so ranking still works.
+        positions = {
+            "OLD": {"symbol": "OLD", "quantity": 5, "value": 1000.0,
+                    "unrealized_pnl_pct": 2.0},
+        }
+        r = make_redis({Keys.POSITIONS: json.dumps(positions)})
+        from portfolio_manager import pick_displacement_target
+        _, pos = pick_displacement_target(r)
+        assert pos["symbol"] == "OLD"
+
 
 # ── Drawdown circuit breakers ─────────────────────────────────
 

@@ -162,10 +162,8 @@ def evaluate_entry_signal(r, signal):
     # ── Position limits (sell-to-make-room) ──
     num_positions = count_open_positions(r)
     if num_positions >= config.MAX_CONCURRENT_POSITIONS:
-        target = pick_displacement_target(r)
-        if not target:
-            return None, f"Max positions ({num_positions}) — no displacement candidate"
-        _, target_pos = target
+        # num_positions >= 1 → pick_displacement_target always returns a tuple.
+        _, target_pos = pick_displacement_target(r)
 
         # PDT guard: if the chosen target was entered today, closing it counts
         # as a day trade. Block when the PDT cap is already hit.
