@@ -11,7 +11,7 @@ import pytest
 sys.path.insert(0, "scripts")
 from indicators import (
     sma, ema, rsi, atr, adx, macd, vwap, relative_volume, compute_all_daily,
-    ibs,
+    ibs, donchian_channel,
 )
 
 
@@ -297,6 +297,66 @@ class TestIbs:
         assert result[0] == pytest.approx(0.5)
         assert result[1] == pytest.approx(0.0)
         assert result[2] == pytest.approx(1.0)
+
+
+# ── donchian_channel ─────────────────────────────────────────
+
+class TestDonchianChannel:
+    def test_upper_is_max_of_prior_entry_len_highs(self):
+        high = np.array([10.0, 11.0, 12.0, 13.0, 14.0, 15.0])
+        low = np.array([9.0, 10.0, 11.0, 12.0, 13.0, 14.0])
+        upper, _ = donchian_channel(high, low, entry_len=3, exit_len=2)
+        # bar 3: prior 3 highs = [10, 11, 12] → max=12
+        assert upper[3] == pytest.approx(12.0)
+        assert upper[5] == pytest.approx(14.0)
+
+    def test_lower_is_min_of_prior_exit_len_lows(self):
+        high = np.array([10.0, 11.0, 12.0, 13.0, 14.0])
+        low = np.array([9.0, 8.0, 7.0, 6.0, 5.0])
+        _, lower = donchian_channel(high, low, entry_len=2, exit_len=3)
+        # bar 3: prior 3 lows = [9, 8, 7] → min=7
+        assert lower[3] == pytest.approx(7.0)
+        assert lower[4] == pytest.approx(6.0)
+
+    def test_excludes_current_bar(self):
+        # Current bar's own high should NOT be in the upper channel —
+        # breakout logic is `close[i] > upper[i]` meaning prior N bars.
+        high = np.array([10.0, 11.0, 12.0, 99.0])
+        low = np.array([9.0, 10.0, 11.0, 50.0])
+        upper, _ = donchian_channel(high, low, entry_len=3, exit_len=3)
+        # bar 3: prior 3 highs = [10, 11, 12] → 12, NOT 99
+        assert upper[3] == pytest.approx(12.0)
+
+    def test_nan_before_enough_history(self):
+        high = np.arange(10, 20, dtype=float)
+        low = np.arange(5, 15, dtype=float)
+        upper, lower = donchian_channel(high, low, entry_len=5, exit_len=3)
+        # First 5 upper bars = NaN (need 5 prior bars before bar 5)
+        for i in range(5):
+            assert np.isnan(upper[i])
+        assert not np.isnan(upper[5])
+        # First 3 lower bars = NaN
+        for i in range(3):
+            assert np.isnan(lower[i])
+        assert not np.isnan(lower[3])
+
+    def test_default_periods_20_and_10(self):
+        n = 30
+        high = np.arange(100, 100 + n, dtype=float)
+        low = np.arange(90, 90 + n, dtype=float)
+        upper, lower = donchian_channel(high, low)
+        # Defaults: entry_len=20, exit_len=10
+        assert np.isnan(upper[19])
+        assert upper[20] == pytest.approx(119.0)  # max of highs[0..19]
+        assert np.isnan(lower[9])
+        assert lower[10] == pytest.approx(90.0)  # min of lows[0..9]
+
+    def test_returns_tuple_of_two_arrays_same_length(self):
+        high = np.arange(50, dtype=float) + 10
+        low = np.arange(50, dtype=float)
+        upper, lower = donchian_channel(high, low, entry_len=5, exit_len=5)
+        assert len(upper) == 50
+        assert len(lower) == 50
 
 
 # ── compute_all_daily ────────────────────────────────────────

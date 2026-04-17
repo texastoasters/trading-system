@@ -152,6 +152,18 @@ IBS_ATR_MULT = 2.0
 # in the Portfolio Manager can prefer stacked entries.
 STACKED_CONFIDENCE_BOOST = 1.25
 
+# ── Donchian-BO trend slot (Wave 4 #4) ──────────────────────
+# Third entry path. Trend-following, 20-day breakout above the prior N-bar high
+# with SMA(200) trend gate. Exits on 10-day low (chandelier), stop_loss, or 30-day
+# time-stop. Wider ATR multiple (3.0x) than RSI-2/IBS because breakouts need
+# breathing room. Only the curated DONCHIAN_SYMBOLS set is considered — the
+# research showed Donchian-BO wins on names where RSI-2 sits idle.
+DONCHIAN_ENTRY_LEN = 20
+DONCHIAN_EXIT_LEN = 10
+DONCHIAN_MAX_HOLD_DAYS = 30
+DONCHIAN_ATR_MULT = 3.0
+DONCHIAN_SYMBOLS = {"DG", "GOOGL", "NVDA", "AMGN", "SMH", "LIN", "XLY"}
+
 # FINRA's Pattern Day Trader rule caps same-day round-trip closes at 3 per
 # rolling 5 business days on sub-$25K accounts. Portfolio Manager blocks a
 # displacement close when the target was entered today and this cap is hit.
