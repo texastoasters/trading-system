@@ -85,7 +85,11 @@ def _position_hold_days(pos):
 def _position_max_hold(pos):
     """Time-stop horizon implied by the position's primary strategy."""
     primary = pos.get("primary_strategy", pos.get("strategy", "RSI2"))
-    return config.IBS_MAX_HOLD_DAYS if primary == "IBS" else config.RSI2_MAX_HOLD_DAYS
+    if primary == "IBS":
+        return config.IBS_MAX_HOLD_DAYS
+    if primary == "DONCHIAN":
+        return config.DONCHIAN_MAX_HOLD_DAYS
+    return config.RSI2_MAX_HOLD_DAYS
 
 
 def pick_displacement_target(r):

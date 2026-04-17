@@ -246,6 +246,18 @@ class TestPickDisplacementTarget:
         _, pos = pick_displacement_target(r)
         assert pos["symbol"] == "IBS"
 
+    def test_donchian_proximity_uses_30day_max_hold(self):
+        # Both 2.0% pnl. DONCHIAN held 6 of 30 = 0.20. RSI2 held 2 of 5 = 0.40.
+        # RSI2 closer to exit → displace RSI2 (NOT DONCHIAN, despite longer hold).
+        positions = {
+            "RSI": _pos("RSI", pnl_pct=2.0, held_days=2, primary="RSI2"),
+            "DON": _pos("DON", pnl_pct=2.0, held_days=6, primary="DONCHIAN"),
+        }
+        r = make_redis({Keys.POSITIONS: json.dumps(positions)})
+        from portfolio_manager import pick_displacement_target
+        _, pos = pick_displacement_target(r)
+        assert pos["symbol"] == "RSI"
+
     def test_longest_held_breaks_remaining_tie(self):
         # Both 2.0% pnl. Both proximity 1.0 (at time-stop limit).
         # RSI2 held=5 days, IBS held=3 days. Longer held = RSI2 → displace RSI2.

@@ -1,39 +1,46 @@
 # Remember
 
-## v0.32.7 — Wave 4 #4a (Donchian-BO foundation)
+## v0.33.0 — Wave 4 #4b + #4c (Donchian-BO end-to-end)
 
-Trend-slot foundation PR. No prod-path wiring.
+Third strategy live on the 7 curated DONCHIAN_SYMBOLS. Closes Wave 4 #4.
 
 ### Shipped
-- `scripts/indicators.py`:
-  - `donchian_channel(high, low, entry_len=20, exit_len=10) -> (upper, lower)`.
-  - `upper[i] = max(high[i-entry_len:i])`, `lower[i] = min(low[i-exit_len:i])`.
-  - Both **exclude current bar** — so `close[i] > upper[i]` is the breakout test directly (no off-by-one in screener/watcher).
-  - Insufficient-history bars → NaN.
-  - Contrast: `scripts/backtest_alt_strategies.py:donchian` INCLUDES current bar; different semantics — do not reuse that one in prod code.
-- `scripts/config.py` — new `Donchian-BO trend slot (Wave 4 #4)` block:
-  - `DONCHIAN_ENTRY_LEN = 20`
-  - `DONCHIAN_EXIT_LEN = 10`
-  - `DONCHIAN_MAX_HOLD_DAYS = 30`
-  - `DONCHIAN_ATR_MULT = 3.0`
-  - `DONCHIAN_SYMBOLS = {"DG", "GOOGL", "NVDA", "AMGN", "SMH", "LIN", "XLY"}` (set, not list — O(1) membership for screener hot path).
+- **Screener** (`skills/screener/screener.py`):
+  - Imports `donchian_channel` from indicators.
+  - `scan_instrument`: for `symbol in DONCHIAN_SYMBOLS`, computes `donchian_channel(high, low, ENTRY_LEN, EXIT_LEN)` and sets `donchian_priority="signal"` when `above_sma AND close > upper[i]` (upper excludes current bar; `close > upper[i]` is the breakout direct).
+  - Row admission is now 3-way OR: RSI-2 OR IBS OR DONCHIAN qualifies.
+  - Priority rank picks the tightest of (rsi2_priority, ibs_priority, donchian_priority).
+  - Result dict carries `donchian_priority`, `donchian_upper`, `donchian_lower`.
+- **Watcher entry** (`watcher.generate_entry_signals`):
+  - 3-way qualify gate. New DONCHIAN candidate: `strategy="DONCHIAN"`, `atr_mult=DONCHIAN_ATR_MULT` (3.0), `stop = close − 3.0 × ATR14`, `confidence=1.0`. Whipsaw scoped to `trading:whipsaw:{symbol}:DONCHIAN`.
+  - Primary selector (tightest-hold-wins) extends to `IBS > RSI2 > DONCHIAN` (3d > 5d > 30d).
+  - `indicators` dict includes `donchian_upper` when DONCHIAN in strategies_list.
+- **Watcher exit** (`watcher.generate_exit_signals`):
+  - DONCHIAN primary branch. Exits: stop_loss (shared), `close < lower[-1]` 10d chandelier (take_profit), `hold ≥ 30d` time_stop.
+  - RSI-2>60 exit gated off for DONCHIAN (already primary-gated).
+  - `close > prev_high` take_profit gated off for DONCHIAN primary — trend-following must ride past prior highs.
+  - `max_hold` routing: IBS→3, DONCHIAN→30, else `get_max_hold_days()` (per-symbol RSI-2).
+  - Chandelier pre-computed OUTSIDE the elif chain (critical: an elif that doesn't fire still consumes control flow, blocking fall-through to time-stop). Use `donchian_chandelier_lower = None | float` then `elif donchian_chandelier_lower is not None and close < lower`.
+- **PM** (`portfolio_manager._position_max_hold`):
+  - Now branches IBS → IBS_MAX_HOLD_DAYS, DONCHIAN → DONCHIAN_MAX_HOLD_DAYS (30), else RSI2_MAX_HOLD_DAYS. Previously hardcoded IBS-or-RSI2 which treated DONCHIAN as RSI2 (5d) → broke displacement proximity ranking.
+- **Executor / PM signal plumbing**: strategy-agnostic passthrough already — reads `strategy`/`primary_strategy`/`strategies` from signal dict. No hardcoded branches on strategy name. DONCHIAN flows through unchanged.
 
-### Tests
-- `TestDonchianChannel` ×6: prior-N upper / prior-M lower / exclude-current-bar / NaN padding / defaults (20,10) / tuple-of-arrays shape.
-- `TestDonchianConstants` ×6: all 4 numeric constants + 7-symbol set + `isinstance(set|frozenset)`.
-- Full suite: **771 passed, 100% coverage**.
+### Tests added
+- Screener: `TestScanInstrumentDonchian` ×7 (breakout fires / no-breakout None / non-enabled never fires / trend gate blocks / NaN upper None / row admitted when only donchian qualifies / result carries donchian fields).
+- Watcher entry: `TestGenerateEntrySignalsDonchian` ×8 (solo fires / stop uses DONCHIAN_ATR_MULT / donchian_upper in indicators / RSI2+DONCHIAN→primary=RSI2 / IBS+DONCHIAN→primary=IBS / all-three→primary=IBS / whipsaw blocks only DONCHIAN / whipsaw on solo → no signal).
+- Watcher exit: `TestGenerateExitSignalsDonchian` ×9 (stop_loss / chandelier fires / no-exit when close>lower / RSI>60 ignored / prev-high ignored / 30d time_stop / no-exit at 29d / payload carries DONCHIAN marker / stacked primary=RSI2 routes by RSI2 rules).
+- PM: `test_donchian_proximity_uses_30day_max_hold` (stacked DONCHIAN has 0.20 proximity vs RSI2 0.40 → displace RSI2).
 
-### Design decisions locked with user
-- Sub-PR split (like #2/#3): 4a foundation → 4b screener → 4c watcher+PM+executor.
-- Hardcoded `DONCHIAN_SYMBOLS` set (research 7). Sweep-driven dynamic list = future wave.
-- Static defaults from research (20/10/30/3.0). Walk-forward sweep = follow-up wave.
-- Stack w/ existing RSI-2/IBS pattern (tightest-stop wins primary).
-- Same 1% risk sizing (3.0× ATR auto-shrinks shares).
-- Watcher exit routing: new `pos_primary == "DONCHIAN"` branch (mirrors IBS shape). Exits: stop_loss, `close < lower[i]` (10d chandelier), `hold ≥ 30d`.
-- Whipsaw: reuse `trading:whipsaw:{symbol}:DONCHIAN` pattern.
+### Verification
+- **796 passed, 100% coverage** (all 13 production modules).
 
-### Dropped from 4a scope
-- Standalone `backtest_donchian.py` validator — redundant with existing `backtest_alt_strategies.py` which already benchmarked Donchian-BO (PF 1.21, +0.56% avg on 33 symbols).
+### Design decisions locked
+- Chandelier is DONCHIAN-only. Reason: turtle-style trail is the defining exit of Donchian-BO; grafting it onto RSI-2/IBS would break those strategies' tested exits.
+- `close > prev_high` gated off for DONCHIAN. Reason: it's trend-following — exiting on the first close past prior high defeats the purpose.
+- Stacked primary selector kept as explicit if/elif chain (not dict lookup). Reason: 3-entry case, consistent with existing 2-way IBS/RSI2 code. Refactor when (if) a 4th strategy lands.
+- PM/executor signal payload is strategy-agnostic by design (read marker → pass through). DONCHIAN needs zero new persistence code there. Verified by grep — no hardcoded strategy-name branches in either module.
 
-### Next (Wave 4 #4b)
-Screener: scan each symbol in `DONCHIAN_SYMBOLS`; compute `donchian_channel` + `sma(200)`. Publish to watchlist with `strategy="DONCHIAN"` marker when `close > upper[i]` AND `close > sma200[i]`. Reuse existing watchlist publish path; tag strategy so 4c watcher can branch.
+### Next (Wave 4 followups, deferred)
+- Walk-forward sweep of Donchian params (20/10/30/3.0 are static research defaults).
+- Dynamic DONCHIAN_SYMBOLS (currently hardcoded set of 7).
+- Backtest Donchian integrated into `backtest_rsi2_universe.py` tier classification.

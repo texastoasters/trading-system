@@ -314,6 +314,80 @@ class TestScanInstrumentIbs:
         assert result['rsi2_priority'] == 'strong_signal'
 
 
+# ── Donchian-BO (Wave 4 #4b) ─────────────────────────────────
+
+class TestScanInstrumentDonchian:
+    """Screener tags DONCHIAN_SYMBOLS with donchian_priority='signal' on breakout
+    (close > prior-20d high) while still trend-gated above SMA(200)."""
+
+    def _scan(self, symbol, close_val=110.0, sma200_val=100.0, rsi2_val=50.0,
+              ibs_val=0.5, upper_val=109.0, lower_val=95.0, atr_val=2.0,
+              regime=None):
+        data = make_price_data(close_val=close_val)
+        if regime is None:
+            regime = ranging_regime()
+        with patch('screener.rsi', return_value=np.array([rsi2_val])), \
+             patch('screener.sma', return_value=np.array([sma200_val])), \
+             patch('screener.atr', return_value=np.array([atr_val])), \
+             patch('screener.ibs', return_value=np.array([ibs_val])), \
+             patch('screener.donchian_channel',
+                   return_value=(np.array([upper_val]), np.array([lower_val]))):
+            from screener import scan_instrument
+            threshold = config.RSI2_ENTRY_CONSERVATIVE
+            return scan_instrument(symbol, data, regime, threshold)
+
+    def test_breakout_on_enabled_symbol_emits_donchian_signal(self):
+        # DG is in DONCHIAN_SYMBOLS. close=110 > upper=109 AND close > sma200.
+        result = self._scan("DG", close_val=110.0, upper_val=109.0, sma200_val=100.0)
+        assert result is not None
+        assert result['donchian_priority'] == 'signal'
+
+    def test_no_breakout_on_enabled_symbol_is_none(self):
+        # close=105 not above upper=109 → no breakout
+        result = self._scan("DG", close_val=105.0, upper_val=109.0,
+                            rsi2_val=3.0)  # rsi2 signal still present so row admitted
+        assert result is not None
+        assert result['donchian_priority'] is None
+
+    def test_non_enabled_symbol_never_emits_donchian(self):
+        # SPY not in DONCHIAN_SYMBOLS. Even with close > upper it should stay None.
+        result = self._scan("SPY", close_val=110.0, upper_val=109.0,
+                            rsi2_val=3.0)
+        assert result is not None
+        assert result['donchian_priority'] is None
+
+    def test_breakout_blocked_by_trend_gate_below_sma(self):
+        # close=110 above upper=109 but below sma200=120 → trend gate kills it
+        result = self._scan("DG", close_val=110.0, upper_val=109.0,
+                            sma200_val=120.0, rsi2_val=50.0, ibs_val=0.5)
+        # No strategy qualifies → row rejected
+        assert result is None
+
+    def test_nan_upper_treated_as_no_signal(self):
+        result = self._scan("DG", close_val=110.0, upper_val=float('nan'),
+                            rsi2_val=3.0)
+        assert result is not None
+        assert result['donchian_priority'] is None
+        assert result['rsi2_priority'] == 'strong_signal'
+
+    def test_admits_row_when_only_donchian_qualifies(self):
+        result = self._scan("DG", close_val=110.0, upper_val=109.0,
+                            sma200_val=100.0, rsi2_val=50.0, ibs_val=0.5)
+        assert result is not None
+        assert result['donchian_priority'] == 'signal'
+        assert result['rsi2_priority'] is None
+        assert result['ibs_priority'] is None
+
+    def test_result_includes_donchian_fields(self):
+        result = self._scan("DG", close_val=110.0, upper_val=109.0, lower_val=95.0,
+                            rsi2_val=3.0)
+        assert 'donchian_priority' in result
+        assert 'donchian_upper' in result
+        assert 'donchian_lower' in result
+        assert result['donchian_upper'] == pytest.approx(109.0)
+        assert result['donchian_lower'] == pytest.approx(95.0)
+
+
 # ── fetch_daily_bars ──────────────────────────────────────────
 
 class TestFetchDailyBars:

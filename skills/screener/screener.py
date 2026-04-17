@@ -24,7 +24,7 @@ from alpaca.data.timeframe import TimeFrame
 
 import config
 from config import Keys, get_redis, get_active_instruments, get_tier, is_crypto, get_entry_threshold
-from indicators import rsi, sma, atr, adx, ibs
+from indicators import rsi, sma, atr, adx, ibs, donchian_channel
 from notify import notify, fmt_et
 
 
@@ -148,13 +148,30 @@ def scan_instrument(symbol, data, regime_info, threshold):
         elif latest_ibs < config.IBS_ENTRY_THRESHOLD + 0.05:
             ibs_priority = "watch"
 
-    if rsi2_priority is None and ibs_priority is None:
+    # Classify Donchian-BO priority (curated DONCHIAN_SYMBOLS only)
+    donchian_priority = None
+    latest_upper = float('nan')
+    latest_lower = float('nan')
+    if symbol in config.DONCHIAN_SYMBOLS:
+        upper, lower = donchian_channel(
+            high, low,
+            entry_len=config.DONCHIAN_ENTRY_LEN,
+            exit_len=config.DONCHIAN_EXIT_LEN,
+        )
+        latest_upper = upper[-1]
+        latest_lower = lower[-1]
+        if (above_sma
+                and not np.isnan(latest_upper)
+                and latest_close > latest_upper):
+            donchian_priority = "signal"
+
+    if rsi2_priority is None and ibs_priority is None and donchian_priority is None:
         return None
 
-    # Top-level priority = best of the two (strong_signal > signal > watch)
+    # Top-level priority = best of the three (strong_signal > signal > watch)
     _rank = {"strong_signal": 0, "signal": 1, "watch": 2}
     priority = min(
-        [p for p in (rsi2_priority, ibs_priority) if p is not None],
+        [p for p in (rsi2_priority, ibs_priority, donchian_priority) if p is not None],
         key=lambda p: _rank[p],
     )
 
@@ -183,6 +200,9 @@ def scan_instrument(symbol, data, regime_info, threshold):
         "rsi2_priority": rsi2_priority,
         "ibs": None if np.isnan(latest_ibs) else round(float(latest_ibs), 4),
         "ibs_priority": ibs_priority,
+        "donchian_priority": donchian_priority,
+        "donchian_upper": None if np.isnan(latest_upper) else round(float(latest_upper), 2),
+        "donchian_lower": None if np.isnan(latest_lower) else round(float(latest_lower), 2),
         "entry_threshold": threshold,
         "volume_ratio": round(latest_volume / avg_volume_20d, 2) if avg_volume_20d > 0 else None,
         "divergence": divergence,

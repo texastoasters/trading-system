@@ -56,7 +56,8 @@ def make_redis(store: dict = None):
 def make_watchlist_item(symbol="SPY", priority="signal", rsi2=7.0, close=500.0,
                         atr14=2.0, sma200=480.0, tier=1, entry_threshold=10.0,
                         prev_high=None, ibs=0.5, ibs_priority=None,
-                        rsi2_priority=None):
+                        rsi2_priority=None, donchian_priority=None,
+                        donchian_upper=None, donchian_lower=None):
     # Default per-strategy priority mirrors the top-level priority for
     # back-compat with tests written before the IBS split: if a test sets
     # priority="signal" without specifying strategy, RSI-2 fires.
@@ -70,6 +71,9 @@ def make_watchlist_item(symbol="SPY", priority="signal", rsi2=7.0, close=500.0,
         "tier": tier, "entry_threshold": entry_threshold,
         "ibs": ibs, "ibs_priority": ibs_priority,
         "rsi2_priority": rsi2_priority,
+        "donchian_priority": donchian_priority,
+        "donchian_upper": donchian_upper,
+        "donchian_lower": donchian_lower,
     }
 
 
@@ -744,6 +748,140 @@ class TestGenerateEntrySignalsIbs:
         assert signals[0]["primary_strategy"] == "IBS"
 
 
+# ── generate_entry_signals Donchian-BO (Wave 4 #4c) ──────────
+
+class TestGenerateEntrySignalsDonchian:
+    def _make_r(self, item):
+        return make_redis({Keys.WATCHLIST: json.dumps([item])})
+
+    def test_donchian_only_emits_one_donchian_signal(self):
+        item = make_watchlist_item(
+            symbol="NVDA", priority="watch",
+            rsi2_priority=None, ibs_priority=None,
+            donchian_priority="signal", donchian_upper=495.0,
+        )
+        r = self._make_r(item)
+        with patch('watcher.is_market_hours', return_value=True), \
+             patch('watcher.check_whipsaw', return_value=False):
+            from watcher import generate_entry_signals
+            signals = generate_entry_signals(r, MagicMock(), MagicMock())
+        assert len(signals) == 1
+        assert signals[0]["strategies"] == ["DONCHIAN"]
+        assert signals[0]["primary_strategy"] == "DONCHIAN"
+
+    def test_donchian_signal_stop_uses_donchian_atr_mult(self):
+        # stop = close - DONCHIAN_ATR_MULT * atr14 = 500 - 3.0 * 2.0 = 494.0
+        item = make_watchlist_item(
+            symbol="NVDA", priority="watch",
+            rsi2_priority=None, ibs_priority=None,
+            donchian_priority="signal", donchian_upper=495.0,
+            close=500.0, atr14=2.0,
+        )
+        r = self._make_r(item)
+        with patch('watcher.is_market_hours', return_value=True), \
+             patch('watcher.check_whipsaw', return_value=False):
+            from watcher import generate_entry_signals
+            signals = generate_entry_signals(r, MagicMock(), MagicMock())
+        assert signals[0]["suggested_stop"] == pytest.approx(
+            500.0 - config.DONCHIAN_ATR_MULT * 2.0
+        )
+
+    def test_donchian_signal_has_donchian_upper_in_indicators(self):
+        item = make_watchlist_item(
+            symbol="NVDA", priority="watch",
+            rsi2_priority=None, ibs_priority=None,
+            donchian_priority="signal", donchian_upper=495.5,
+        )
+        r = self._make_r(item)
+        with patch('watcher.is_market_hours', return_value=True), \
+             patch('watcher.check_whipsaw', return_value=False):
+            from watcher import generate_entry_signals
+            signals = generate_entry_signals(r, MagicMock(), MagicMock())
+        assert signals[0]["indicators"]["donchian_upper"] == 495.5
+
+    def test_stacked_rsi2_and_donchian_primary_is_rsi2(self):
+        # RSI-2 hold=5d, DONCHIAN hold=30d → primary=RSI2 (tighter)
+        item = make_watchlist_item(
+            symbol="NVDA", priority="strong_signal",
+            rsi2_priority="strong_signal",
+            ibs_priority=None,
+            donchian_priority="signal", donchian_upper=495.0,
+        )
+        r = self._make_r(item)
+        with patch('watcher.is_market_hours', return_value=True), \
+             patch('watcher.check_whipsaw', return_value=False):
+            from watcher import generate_entry_signals
+            signals = generate_entry_signals(r, MagicMock(), MagicMock())
+        assert sorted(signals[0]["strategies"]) == ["DONCHIAN", "RSI2"]
+        assert signals[0]["primary_strategy"] == "RSI2"
+
+    def test_stacked_ibs_and_donchian_primary_is_ibs(self):
+        # IBS hold=3d, DONCHIAN hold=30d → primary=IBS
+        item = make_watchlist_item(
+            symbol="NVDA", priority="watch",
+            rsi2_priority="watch",
+            ibs=0.10, ibs_priority="signal",
+            donchian_priority="signal", donchian_upper=495.0,
+        )
+        r = self._make_r(item)
+        with patch('watcher.is_market_hours', return_value=True), \
+             patch('watcher.check_whipsaw', return_value=False):
+            from watcher import generate_entry_signals
+            signals = generate_entry_signals(r, MagicMock(), MagicMock())
+        assert sorted(signals[0]["strategies"]) == ["DONCHIAN", "IBS"]
+        assert signals[0]["primary_strategy"] == "IBS"
+
+    def test_stacked_all_three_primary_is_ibs(self):
+        # IBS=3d < RSI2=5d < DONCHIAN=30d → primary=IBS
+        item = make_watchlist_item(
+            symbol="NVDA", priority="strong_signal",
+            rsi2_priority="strong_signal",
+            ibs=0.10, ibs_priority="signal",
+            donchian_priority="signal", donchian_upper=495.0,
+        )
+        r = self._make_r(item)
+        with patch('watcher.is_market_hours', return_value=True), \
+             patch('watcher.check_whipsaw', return_value=False):
+            from watcher import generate_entry_signals
+            signals = generate_entry_signals(r, MagicMock(), MagicMock())
+        assert sorted(signals[0]["strategies"]) == ["DONCHIAN", "IBS", "RSI2"]
+        assert signals[0]["primary_strategy"] == "IBS"
+
+    def test_donchian_whipsaw_blocks_only_donchian(self):
+        # DONCHIAN whipsaw hit → RSI-2 still fires
+        item = make_watchlist_item(
+            symbol="NVDA", priority="strong_signal",
+            rsi2_priority="strong_signal",
+            ibs_priority=None,
+            donchian_priority="signal", donchian_upper=495.0,
+        )
+        r = self._make_r(item)
+
+        def whipsaw_side_effect(_r, _sym, strategy="RSI2"):
+            return strategy == "DONCHIAN"
+
+        with patch('watcher.is_market_hours', return_value=True), \
+             patch('watcher.check_whipsaw', side_effect=whipsaw_side_effect):
+            from watcher import generate_entry_signals
+            signals = generate_entry_signals(r, MagicMock(), MagicMock())
+        assert len(signals) == 1
+        assert signals[0]["strategies"] == ["RSI2"]
+        assert signals[0]["primary_strategy"] == "RSI2"
+
+    def test_donchian_only_with_whipsaw_emits_no_signal(self):
+        item = make_watchlist_item(
+            symbol="NVDA", priority="watch",
+            rsi2_priority=None, ibs_priority=None,
+            donchian_priority="signal", donchian_upper=495.0,
+        )
+        r = self._make_r(item)
+        with patch('watcher.is_market_hours', return_value=True), \
+             patch('watcher.check_whipsaw', return_value=True):
+            from watcher import generate_entry_signals
+            signals = generate_entry_signals(r, MagicMock(), MagicMock())
+        assert signals == []
+
+
 # ── generate_exit_signals ─────────────────────────────────────
 
 class TestGenerateExitSignals:
@@ -1173,6 +1311,196 @@ class TestGenerateExitSignalsIbs:
             signals = generate_exit_signals(r, MagicMock(), MagicMock())
         assert signals[0]["strategies"] == ["IBS"]
         assert signals[0]["primary_strategy"] == "IBS"
+
+
+class TestGenerateExitSignalsDonchian:
+    """DONCHIAN primary exits: stop_loss, close<lower chandelier, 30d time-stop."""
+
+    def _entry_date_days_ago(self, days):
+        return (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+
+    def _donchian_ret(self, upper=600.0, lower=480.0):
+        # donchian_channel returns (upper_arr, lower_arr); only [-1] is read.
+        return (np.array([upper]), np.array([lower]))
+
+    def test_donchian_position_exits_on_stop_loss(self):
+        pos = {"NVDA": make_position(
+            entry_price=500.0, stop_price=485.0,
+            entry_date=self._entry_date_days_ago(5), strategy="DONCHIAN",
+        )}
+        r = make_redis({Keys.POSITIONS: json.dumps(pos)})
+        with patch('watcher.fetch_intraday_bars',
+                   return_value=make_intraday(close=490.0, low=484.0)), \
+             patch('watcher.fetch_recent_bars',
+                   return_value=make_daily(close=490.0, prev_high=495.0)), \
+             patch('watcher.rsi', return_value=np.array([50.0])), \
+             patch('watcher.donchian_channel',
+                   return_value=self._donchian_ret(lower=470.0)), \
+             patch('watcher.is_market_hours', return_value=True):
+            from watcher import generate_exit_signals
+            signals = generate_exit_signals(r, MagicMock(), MagicMock())
+        assert len(signals) == 1
+        assert signals[0]["signal_type"] == "stop_loss"
+        assert signals[0]["primary_strategy"] == "DONCHIAN"
+
+    def test_donchian_position_exits_when_close_below_lower_chandelier(self):
+        pos = {"NVDA": make_position(
+            entry_price=500.0, stop_price=470.0,
+            entry_date=self._entry_date_days_ago(5), strategy="DONCHIAN",
+        )}
+        r = make_redis({Keys.POSITIONS: json.dumps(pos)})
+        with patch('watcher.fetch_intraday_bars',
+                   return_value=make_intraday(close=479.0, low=478.0)), \
+             patch('watcher.fetch_recent_bars',
+                   return_value=make_daily(close=479.0, prev_high=495.0)), \
+             patch('watcher.rsi', return_value=np.array([50.0])), \
+             patch('watcher.donchian_channel',
+                   return_value=self._donchian_ret(lower=480.0)), \
+             patch('watcher.is_market_hours', return_value=True):
+            from watcher import generate_exit_signals
+            signals = generate_exit_signals(r, MagicMock(), MagicMock())
+        assert len(signals) == 1
+        assert signals[0]["signal_type"] == "take_profit"
+        assert signals[0]["primary_strategy"] == "DONCHIAN"
+        assert "480" in signals[0]["reason"] or "chandelier" in signals[0]["reason"].lower()
+
+    def test_donchian_position_no_exit_when_close_above_lower(self):
+        pos = {"NVDA": make_position(
+            entry_price=500.0, stop_price=470.0,
+            entry_date=self._entry_date_days_ago(5), strategy="DONCHIAN",
+        )}
+        r = make_redis({Keys.POSITIONS: json.dumps(pos)})
+        with patch('watcher.fetch_intraday_bars',
+                   return_value=make_intraday(close=505.0, low=498.0)), \
+             patch('watcher.fetch_recent_bars',
+                   return_value=make_daily(close=505.0, prev_high=510.0)), \
+             patch('watcher.rsi', return_value=np.array([50.0])), \
+             patch('watcher.donchian_channel',
+                   return_value=self._donchian_ret(lower=480.0)), \
+             patch('watcher.is_market_hours', return_value=True):
+            from watcher import generate_exit_signals
+            signals = generate_exit_signals(r, MagicMock(), MagicMock())
+        assert signals == []
+
+    def test_donchian_position_ignores_rsi2_above_60_rule(self):
+        # Primary=DONCHIAN → RSI-2>60 exit must NOT fire
+        pos = {"NVDA": make_position(
+            entry_price=500.0, stop_price=470.0,
+            entry_date=self._entry_date_days_ago(5), strategy="DONCHIAN",
+        )}
+        r = make_redis({Keys.POSITIONS: json.dumps(pos)})
+        with patch('watcher.fetch_intraday_bars',
+                   return_value=make_intraday(close=505.0, low=499.0)), \
+             patch('watcher.fetch_recent_bars',
+                   return_value=make_daily(close=505.0, prev_high=510.0)), \
+             patch('watcher.rsi', return_value=np.array([75.0])), \
+             patch('watcher.donchian_channel',
+                   return_value=self._donchian_ret(lower=480.0)), \
+             patch('watcher.is_market_hours', return_value=True):
+            from watcher import generate_exit_signals
+            signals = generate_exit_signals(r, MagicMock(), MagicMock())
+        assert signals == []
+
+    def test_donchian_position_ignores_close_above_prev_high_rule(self):
+        # Primary=DONCHIAN is trend-following — ride past prev highs.
+        # Close > prev_high exit is RSI-2/IBS only; must not fire for DONCHIAN.
+        pos = {"NVDA": make_position(
+            entry_price=500.0, stop_price=470.0,
+            entry_date=self._entry_date_days_ago(5), strategy="DONCHIAN",
+        )}
+        r = make_redis({Keys.POSITIONS: json.dumps(pos)})
+        with patch('watcher.fetch_intraday_bars',
+                   return_value=make_intraday(close=520.0, low=515.0)), \
+             patch('watcher.fetch_recent_bars',
+                   return_value=make_daily(close=520.0, prev_high=510.0)), \
+             patch('watcher.rsi', return_value=np.array([50.0])), \
+             patch('watcher.donchian_channel',
+                   return_value=self._donchian_ret(lower=480.0)), \
+             patch('watcher.is_market_hours', return_value=True):
+            from watcher import generate_exit_signals
+            signals = generate_exit_signals(r, MagicMock(), MagicMock())
+        assert signals == []
+
+    def test_donchian_position_time_stops_at_30_days(self):
+        pos = {"NVDA": make_position(
+            entry_price=500.0, stop_price=470.0,
+            entry_date=self._entry_date_days_ago(30), strategy="DONCHIAN",
+        )}
+        r = make_redis({Keys.POSITIONS: json.dumps(pos)})
+        with patch('watcher.fetch_intraday_bars',
+                   return_value=make_intraday(close=495.0, low=493.0)), \
+             patch('watcher.fetch_recent_bars',
+                   return_value=make_daily(close=495.0, prev_high=500.0)), \
+             patch('watcher.rsi', return_value=np.array([50.0])), \
+             patch('watcher.donchian_channel',
+                   return_value=self._donchian_ret(lower=480.0)), \
+             patch('watcher.is_market_hours', return_value=True):
+            from watcher import generate_exit_signals
+            signals = generate_exit_signals(r, MagicMock(), MagicMock())
+        assert len(signals) == 1
+        assert signals[0]["signal_type"] == "time_stop"
+        assert signals[0]["primary_strategy"] == "DONCHIAN"
+
+    def test_donchian_position_does_not_time_stop_at_29_days(self):
+        pos = {"NVDA": make_position(
+            entry_price=500.0, stop_price=470.0,
+            entry_date=self._entry_date_days_ago(29), strategy="DONCHIAN",
+        )}
+        r = make_redis({Keys.POSITIONS: json.dumps(pos)})
+        with patch('watcher.fetch_intraday_bars',
+                   return_value=make_intraday(close=495.0, low=493.0)), \
+             patch('watcher.fetch_recent_bars',
+                   return_value=make_daily(close=495.0, prev_high=500.0)), \
+             patch('watcher.rsi', return_value=np.array([50.0])), \
+             patch('watcher.donchian_channel',
+                   return_value=self._donchian_ret(lower=480.0)), \
+             patch('watcher.is_market_hours', return_value=True):
+            from watcher import generate_exit_signals
+            signals = generate_exit_signals(r, MagicMock(), MagicMock())
+        assert signals == []
+
+    def test_donchian_exit_payload_carries_strategy_marker(self):
+        pos = {"NVDA": make_position(
+            entry_price=500.0, stop_price=470.0,
+            entry_date=self._entry_date_days_ago(5), strategy="DONCHIAN",
+        )}
+        r = make_redis({Keys.POSITIONS: json.dumps(pos)})
+        with patch('watcher.fetch_intraday_bars',
+                   return_value=make_intraday(close=479.0, low=478.0)), \
+             patch('watcher.fetch_recent_bars',
+                   return_value=make_daily(close=479.0, prev_high=495.0)), \
+             patch('watcher.rsi', return_value=np.array([50.0])), \
+             patch('watcher.donchian_channel',
+                   return_value=self._donchian_ret(lower=480.0)), \
+             patch('watcher.is_market_hours', return_value=True):
+            from watcher import generate_exit_signals
+            signals = generate_exit_signals(r, MagicMock(), MagicMock())
+        assert signals[0]["strategy"] == "DONCHIAN"
+        assert signals[0]["primary_strategy"] == "DONCHIAN"
+        assert signals[0]["strategies"] == ["DONCHIAN"]
+
+    def test_stacked_rsi2_donchian_position_routes_by_primary_rsi2(self):
+        # Stacked RSI2+DONCHIAN, primary=RSI2 → uses RSI-2 rules (chandelier off,
+        # RSI>60 exit on, 5d time-stop). 5-day time_stop fires.
+        pos = {"NVDA": make_position(
+            entry_price=500.0, stop_price=470.0,
+            entry_date=self._entry_date_days_ago(5), strategy="RSI2",
+            strategies=["DONCHIAN", "RSI2"], primary_strategy="RSI2",
+        )}
+        r = make_redis({Keys.POSITIONS: json.dumps(pos)})
+        with patch('watcher.fetch_intraday_bars',
+                   return_value=make_intraday(close=495.0, low=493.0)), \
+             patch('watcher.fetch_recent_bars',
+                   return_value=make_daily(close=495.0, prev_high=500.0)), \
+             patch('watcher.rsi', return_value=np.array([50.0])), \
+             patch('watcher.donchian_channel',
+                   return_value=self._donchian_ret(lower=480.0)), \
+             patch('watcher.is_market_hours', return_value=True):
+            from watcher import generate_exit_signals
+            signals = generate_exit_signals(r, MagicMock(), MagicMock())
+        assert len(signals) == 1
+        assert signals[0]["signal_type"] == "time_stop"
+        assert signals[0]["primary_strategy"] == "RSI2"
 
 
 # ── publish_signals ───────────────────────────────────────────
