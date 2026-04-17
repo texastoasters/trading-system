@@ -29,7 +29,7 @@ from alpaca.trading.client import TradingClient
 
 import config
 from config import Keys, get_redis, get_simulated_equity, is_crypto
-from indicators import rsi, sma, atr
+from indicators import rsi, sma, atr, donchian_channel
 from notify import notify, fmt_et
 
 
@@ -263,12 +263,14 @@ def generate_entry_signals(r, stock_client, crypto_client):
         if not is_crypto(symbol) and not market_open:
             continue
 
-        # Any strategy must qualify — quick reject if neither priority is a signal.
+        # Any strategy must qualify — quick reject if no priority is a signal.
         rsi2_prio = item.get("rsi2_priority", item.get("priority"))
         ibs_prio = item.get("ibs_priority")
+        donchian_prio = item.get("donchian_priority")
         rsi2_qualifies = rsi2_prio in ("signal", "strong_signal")
         ibs_qualifies = ibs_prio in ("signal", "strong_signal")
-        if not (rsi2_qualifies or ibs_qualifies):
+        donchian_qualifies = donchian_prio in ("signal", "strong_signal")
+        if not (rsi2_qualifies or ibs_qualifies or donchian_qualifies):
             continue
 
         # Same-day exit cooldown: block re-entry if this symbol was sold today
@@ -366,12 +368,29 @@ def generate_entry_signals(r, stock_client, crypto_client):
         elif ibs_qualifies:
             print(f"  [Watcher] {symbol}/IBS: skipped (whipsaw cooldown)")
 
+        # Donchian-BO candidate (trend slot)
+        if donchian_qualifies and not check_whipsaw(r, symbol, "DONCHIAN"):
+            candidates.append({
+                "strategy": "DONCHIAN",
+                "atr_mult": config.DONCHIAN_ATR_MULT,
+                "stop": round(item["close"] - (config.DONCHIAN_ATR_MULT * item["atr14"]), 2),
+                "confidence": 1.0,
+            })
+        elif donchian_qualifies:
+            print(f"  [Watcher] {symbol}/DONCHIAN: skipped (whipsaw cooldown)")
+
         if not candidates:
             continue
 
         strategies_list = [c["strategy"] for c in candidates]
-        # Primary = tighter exit: IBS (3d hold) wins over RSI-2 (5d) when stacked
-        primary = "IBS" if "IBS" in strategies_list else "RSI2"
+        # Primary = strategy with tightest exit (shortest max_hold):
+        # IBS (3d) > RSI-2 (5d) > DONCHIAN (30d).
+        if "IBS" in strategies_list:
+            primary = "IBS"
+        elif "RSI2" in strategies_list:
+            primary = "RSI2"
+        else:
+            primary = "DONCHIAN"
         # Tighter stop = smallest ATR multiplier → highest stop price
         best_atr_mult = min(c["atr_mult"] for c in candidates)
         best_stop = max(c["stop"] for c in candidates)
@@ -390,6 +409,8 @@ def generate_entry_signals(r, stock_client, crypto_client):
             indicators["rsi2"] = item["rsi2"]
         if "IBS" in strategies_list:
             indicators["ibs"] = item.get("ibs")
+        if "DONCHIAN" in strategies_list:
+            indicators["donchian_upper"] = item.get("donchian_upper")
 
         merged = {
             "time": datetime.now().isoformat(),
@@ -486,9 +507,26 @@ def generate_exit_signals(r, stock_client, crypto_client):
 
         pos_primary = pos.get("primary_strategy", pos.get("strategy", "RSI2"))
         pos_strategies = list(pos.get("strategies") or [pos_primary])
-        max_hold = (config.IBS_MAX_HOLD_DAYS
-                    if pos_primary == "IBS"
-                    else config.get_max_hold_days(r, symbol))
+        if pos_primary == "IBS":
+            max_hold = config.IBS_MAX_HOLD_DAYS
+        elif pos_primary == "DONCHIAN":
+            max_hold = config.DONCHIAN_MAX_HOLD_DAYS
+        else:
+            max_hold = config.get_max_hold_days(r, symbol)
+
+        # Donchian chandelier pre-computation (primary=DONCHIAN only).
+        # Turtle-style trail: ride the trend until it breaks the prior 10-day low.
+        donchian_chandelier_lower = None
+        if pos_primary == "DONCHIAN":
+            _upper, _lower = donchian_channel(
+                high, daily_data['low'],
+                entry_len=config.DONCHIAN_ENTRY_LEN,
+                exit_len=config.DONCHIAN_EXIT_LEN,
+            )
+            if len(_lower):
+                _lv = _lower[-1]
+                if not np.isnan(_lv):
+                    donchian_chandelier_lower = _lv
 
         exit_signal = None
 
@@ -514,15 +552,25 @@ def generate_exit_signals(r, stock_client, crypto_client):
                 "reason": f"RSI-2 at {rsi2_val:.1f} > {config.RSI2_EXIT}",
             }
 
-        # Close > previous day's high (both strategies)
-        elif latest_close > prev_high:
+        # Donchian chandelier: close < 10-day low — DONCHIAN primary only.
+        elif (donchian_chandelier_lower is not None
+              and latest_close < donchian_chandelier_lower):
+            exit_signal = {
+                "signal_type": "take_profit",
+                "exit_price": latest_close,
+                "reason": f"Chandelier: close {latest_close} < 10d low {donchian_chandelier_lower:.2f}",
+            }
+
+        # Close > previous day's high — RSI-2/IBS only.
+        # DONCHIAN is trend-following and must ride past prior highs.
+        elif pos_primary != "DONCHIAN" and latest_close > prev_high:
             exit_signal = {
                 "signal_type": "take_profit",
                 "exit_price": latest_close,
                 "reason": f"Close {latest_close} > prev high {prev_high}",
             }
 
-        # Time stop (per-strategy: RSI-2=5, IBS=3)
+        # Time stop (per-strategy: RSI-2=5, IBS=3, DONCHIAN=30)
         elif hold_days >= max_hold:
             exit_signal = {
                 "signal_type": "time_stop",

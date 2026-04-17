@@ -43,10 +43,10 @@ Actionable items from `docs/STRATEGY_REVIEW.md` + `docs/ALTERNATE_STRATEGIES.md`
   - [x] 3a: offline walk-forward `max_hold` sweep harness (`scripts/sweep_rsi2_max_hold.py`) — v0.32.5
   - [x] 3b: fold into existing `supervisor --refit-thresholds` job + `get_max_hold_days(r, symbol)` helper — v0.32.6
   - [x] 3c: wire watcher time-stop through helper (fallback → global const) — v0.32.6
-- [ ] **Donchian-BO trend slot** — Phase 2 multi-strategy. For DG, GOOGL, NVDA, AMGN, SMH, LIN, XLY where RSI-2 stays idle. Requires wider position-sizing (22d avg hold).
+- [x] **Donchian-BO trend slot** — Phase 2 multi-strategy. For DG, GOOGL, NVDA, AMGN, SMH, LIN, XLY where RSI-2 stays idle. Requires wider position-sizing (22d avg hold).
   - [x] 4a: `donchian_channel` indicator + `DONCHIAN_SYMBOLS` / params in config — v0.32.7
-  - [ ] 4b: screener publishes Donchian-BO breakout candidates to watchlist w/ strategy marker
-  - [ ] 4c: watcher entry (stacking) + exit (new DONCHIAN primary branch) + PM/executor strategy-marker persist
+  - [x] 4b: screener publishes Donchian-BO breakout candidates to watchlist w/ strategy marker — v0.33.0
+  - [x] 4c: watcher entry (stacking) + exit (new DONCHIAN primary branch) + PM/executor strategy-marker persist — v0.33.0
 - [x] **Exclude META and TSLA from routing** — Flat/negative across all backtested strategies in the 2y window. ✅ Shipped in v0.32.1
 
 ### Deferred / informational

@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.33.0] - 2026-04-17
+
+### Added
+- **Wave 4 #4b + #4c: Donchian-BO screener + watcher + PM wiring** — Third strategy now trades end-to-end on the 7 curated `DONCHIAN_SYMBOLS`. `screener.scan_instrument` computes `donchian_channel` for enabled symbols and publishes `donchian_priority="signal"` when `close > upper[i]` (prior 20d high, current-bar excluded) AND `close > sma200`. The watchlist row carries `donchian_upper` / `donchian_lower` alongside the existing RSI-2 / IBS fields, and the 3-way priority OR-gate admits rows where any strategy qualifies. `watcher.generate_entry_signals` grows a DONCHIAN candidate branch: stop at `close − DONCHIAN_ATR_MULT × ATR14` (3.0×), confidence 1.0 fixed, whipsaw-scoped to `trading:whipsaw:{symbol}:DONCHIAN`. Multi-strategy stacking primary selector extends to `IBS > RSI2 > DONCHIAN` (tightest-hold-wins: 3d > 5d > 30d). `watcher.generate_exit_signals` adds a DONCHIAN primary branch — turtle chandelier (`close < lower[i]` on 10d prior low), 30d time-stop, shared stop-loss; RSI-2>60 and `close > prev_high` take-profit rules are both gated off for DONCHIAN (trend-following must ride past prior highs). `portfolio_manager._position_max_hold` now branches on DONCHIAN → `DONCHIAN_MAX_HOLD_DAYS` (30) so displacement-ranking proximity is computed correctly for trend positions; executor and PM signal payload passthrough already strategy-agnostic, no change needed. Closes Wave 4 #4.
+
+---
+
 ## [0.32.7] - 2026-04-17
 
 ### Added
