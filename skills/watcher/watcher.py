@@ -233,10 +233,10 @@ def generate_entry_signals(r, stock_client, crypto_client):
     regime_raw = r.get(Keys.REGIME)
     regime_info = json.loads(regime_raw) if regime_raw else {"regime": "RANGING"}
 
-    pdt_count = int(r.get(Keys.PDT_COUNT) or 0)
-    if pdt_count >= 3:
-        print(f"  [Watcher] PDT limit reached ({pdt_count}/3) — no new entries today")
-        return []
+    # PDT enforcement lives in the executor (validate_order). The watcher
+    # used to pre-reject all entries when pdt_count >= 3 but that was a
+    # blanket block that wasted strong signals whose intent was overnight.
+    # The executor's surgical gate rejects only true same-day round-trips.
 
     signals = []
     market_open = is_market_hours()

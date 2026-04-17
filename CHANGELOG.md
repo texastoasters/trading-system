@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.33.1] - 2026-04-17
+
+### Fixed
+- **PDT gate was blocking every order when the flag was set** — `executor.validate_order` previously short-circuited on `account.pattern_day_trader` alone, which rejected overnight exits that are not day trades under FINRA rules. On the paper cash account this was catastrophic: Alpaca sets the flag as bookkeeping but does not enforce it (paper account reached `daytrade_count=5` with `pattern_day_trader=True` while `multiplier=1`, meaning no day-trade buying power is evaluated), and the gate silently stuck on. Today 11 WMB take-profit signals (RSI-2 > 60) were generated, PM-approved, and all rejected by the executor's blanket block — none would have been rejected by Alpaca. The gate is now surgical: it fires only when `pdt_count >= 3` AND the order would complete a same-session round-trip. For sells, "round-trip" means the held position has `entry_date == today`. For buys, it means the symbol is present in the new `trading:closed_today` hash that the executor writes on every sell fill. Non-round-trip orders (overnight exits, new buys of symbols not touched today) are allowed regardless of the flag. Watcher's mirror gate (`pdt_count >= 3 → no new entries`) is removed outright — the executor is the single source of truth; pre-rejecting in the watcher wasted strong signals (today: KNSA rsi2=2.0, PAGP rsi2=0.52) whose intent was overnight holds the PDT rule would never block. `supervisor.reset_daily` now deletes `trading:closed_today` at session start so yesterday's closes don't falsely trigger today's gate. Coverage remains 100% across all 13 production modules (806 passing tests).
+
+---
+
 ## [0.33.0] - 2026-04-17
 
 ### Added

@@ -853,6 +853,16 @@ class TestResetDaily:
         # SYSTEM_STATUS should NOT be set (already active, not daily_halt)
         assert Keys.SYSTEM_STATUS not in set_calls
 
+    def test_clears_closed_today_hash(self):
+        """The executor populates trading:closed_today on every sell fill.
+        reset_daily must delete the hash so yesterday's closes don't falsely
+        trip the same-day-round-trip gate on today's buys."""
+        r = self._make()
+        with patch("supervisor.notify"):
+            from supervisor import reset_daily
+            reset_daily(r)
+        r.delete.assert_any_call(Keys.CLOSED_TODAY)
+
     def test_recent_rejected_signals_repushed(self):
         today = datetime.now().strftime("%Y-%m-%d")
         recent = json.dumps({"time": f"{today}T10:00:00", "symbol": "SPY"})

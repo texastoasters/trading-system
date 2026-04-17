@@ -46,7 +46,8 @@ def make_position(symbol="SPY", qty=10, entry=500.0, stop=490.0, stop_order_id="
 
 
 def make_redis(positions: dict, extra: dict = None):
-    """Minimal Redis mock backed by a dict."""
+    """Minimal Redis mock backed by a dict. Hash ops (hset/hexists/hdel/
+    hkeys) are backed by JSON-serialized dicts under the same store."""
     store = {
         "trading:positions": json.dumps(positions),
         "trading:simulated_equity": "5000.0",
@@ -59,11 +60,43 @@ def make_redis(positions: dict, extra: dict = None):
     if extra:
         store.update(extra)
 
+    def _hash(k):
+        return json.loads(store.get(k) or "{}")
+
+    def _save_hash(k, h):
+        store[k] = json.dumps(h)
+
+    def _hset(k, field=None, value=None, mapping=None):
+        h = _hash(k)
+        if mapping:
+            h.update(mapping)
+        else:
+            h[field] = value
+        _save_hash(k, h)
+        return 1
+
+    def _hexists(k, field):
+        return field in _hash(k)
+
+    def _hdel(k, *fields):
+        h = _hash(k)
+        n = 0
+        for f in fields:
+            if f in h:
+                del h[f]
+                n += 1
+        _save_hash(k, h)
+        return n
+
     r = MagicMock()
     r.get = lambda k: store.get(k)
     r.set = lambda k, v, **kw: store.update({k: v})
     r.exists = lambda k: 1 if k in store else 0
-    r.delete = MagicMock()
+    r.delete = MagicMock(side_effect=lambda *ks: [store.pop(k, None) for k in ks])
+    r.hset = _hset
+    r.hexists = _hexists
+    r.hdel = _hdel
+    r.hkeys = lambda k: list(_hash(k).keys())
     return r, store
 
 
@@ -294,13 +327,89 @@ class TestValidateOrder:
         assert not ok
         assert "blocked" in reason
 
-    def test_pdt_flag_blocks(self):
+    def test_pdt_flag_alone_does_not_block(self):
+        """PDT flag on paper cash account is bookkeeping, not enforcement.
+        Blanket blocking caused every overnight exit to fail. The flag
+        alone must not reject orders."""
         from executor import validate_order
         r = self._r()
-        order = {"side": "buy", "quantity": 1, "entry_price": 10.0, "order_value": 10.0}
+        order = {"symbol": "SPY", "side": "buy", "quantity": 1,
+                 "entry_price": 10.0, "order_value": 10.0}
+        ok, _ = validate_order(r, order, make_account(pdt=True))
+        assert ok
+
+    def test_pdt_allows_overnight_sell_when_count_maxed(self):
+        """The bug this gate was supposed to prevent: selling a position
+        held since yesterday is not a day trade. Must pass even at 3/3."""
+        from executor import validate_order
+        from datetime import date, timedelta
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        pos = make_position(symbol="WMB", entry=70.0)
+        pos["entry_date"] = yesterday
+        r, _ = make_redis({"WMB": pos}, extra={"trading:pdt:count": "3"})
+        order = {"symbol": "WMB", "side": "sell", "quantity": 5}
+        ok, _ = validate_order(r, order, make_account(pdt=True))
+        assert ok
+
+    def test_pdt_rejects_sell_of_todays_entry_when_count_maxed(self):
+        """Selling a position opened today with pdt_count already at 3
+        would be the 4th day trade. Must reject."""
+        from executor import validate_order
+        from datetime import date
+        pos = make_position(symbol="WMB", entry=70.0)
+        pos["entry_date"] = date.today().isoformat()
+        r, _ = make_redis({"WMB": pos}, extra={"trading:pdt:count": "3"})
+        order = {"symbol": "WMB", "side": "sell", "quantity": 5}
         ok, reason = validate_order(r, order, make_account(pdt=True))
         assert not ok
         assert "PDT" in reason
+        assert "4th day trade" in reason
+
+    def test_pdt_allows_sell_of_todays_entry_when_count_below_ceiling(self):
+        """Count 2/3 means one day-trade slot is free. Sell of today's
+        entry becomes the 3rd day trade — still allowed."""
+        from executor import validate_order
+        from datetime import date
+        pos = make_position(symbol="WMB", entry=70.0)
+        pos["entry_date"] = date.today().isoformat()
+        r, _ = make_redis({"WMB": pos}, extra={"trading:pdt:count": "2"})
+        order = {"symbol": "WMB", "side": "sell", "quantity": 5}
+        ok, _ = validate_order(r, order, make_account(pdt=True))
+        assert ok
+
+    def test_pdt_rejects_buy_of_symbol_sold_today_when_count_maxed(self):
+        """Buying a symbol we closed earlier today would complete a
+        same-day round-trip. At 3/3, reject."""
+        from executor import validate_order
+        r, _ = make_redis({}, extra={"trading:pdt:count": "3"})
+        r.hset("trading:closed_today", "WMB", "14:00:00")
+        order = {"symbol": "WMB", "side": "buy", "quantity": 1,
+                 "entry_price": 70.0, "order_value": 70.0}
+        ok, reason = validate_order(r, order, make_account(pdt=True))
+        assert not ok
+        assert "PDT" in reason
+        assert "4th day trade" in reason
+
+    def test_pdt_allows_buy_of_symbol_not_sold_today(self):
+        """Symbol absent from closed_today hash → normal buy, no day trade
+        risk. Allow even at 3/3."""
+        from executor import validate_order
+        r, _ = make_redis({}, extra={"trading:pdt:count": "3"})
+        order = {"symbol": "NVDA", "side": "buy", "quantity": 1,
+                 "entry_price": 500.0, "order_value": 500.0}
+        ok, _ = validate_order(r, order, make_account(pdt=True))
+        assert ok
+
+    def test_pdt_allows_buy_of_symbol_sold_today_when_count_below_ceiling(self):
+        """Count 2/3 and we sold this symbol earlier today — buy would
+        be the 3rd day trade. Still allowed."""
+        from executor import validate_order
+        r, _ = make_redis({}, extra={"trading:pdt:count": "2"})
+        r.hset("trading:closed_today", "WMB", "14:00:00")
+        order = {"symbol": "WMB", "side": "buy", "quantity": 1,
+                 "entry_price": 70.0, "order_value": 70.0}
+        ok, _ = validate_order(r, order, make_account(pdt=True))
+        assert ok
 
     def test_all_clear_returns_ok(self):
         from executor import validate_order
@@ -2509,6 +2618,20 @@ class TestExecuteSellNewBehavior:
                      if call[0][0].startswith("trading:exited_today:")]
         assert len(set_calls) == 1
         assert set_calls[0][1]["ex"] == 3600
+
+    def test_successful_sell_adds_symbol_to_closed_today(self):
+        """After a fill, the symbol must be written to trading:closed_today
+        so that a same-session re-buy is blocked by the executor PDT gate
+        when pdt_count is maxed."""
+        r, store, trading_client = self._make_successful_sell()
+
+        with patch("time.sleep"), patch("notify.exit_alert"), \
+             patch("executor._wait_for_order_cancelled", return_value=True), \
+             patch("executor._seconds_until_midnight_et", return_value=3600):
+            from executor import execute_sell
+            execute_sell(r, trading_client, make_sell_signal())
+
+        assert r.hexists("trading:closed_today", "SPY")
 
     def test_sell_sends_pdt_warning_notify_at_count_2(self):
         pos = make_position(entry=500.0)

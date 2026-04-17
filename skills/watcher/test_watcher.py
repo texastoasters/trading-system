@@ -1786,15 +1786,33 @@ class TestGenerateEntrySignalsNewGuards:
             signals = generate_entry_signals(r, MagicMock(), MagicMock())
         assert len(signals) == 1
 
-    def test_returns_empty_when_pdt_at_limit(self):
+    def test_generates_entry_when_pdt_at_limit(self):
+        """Watcher no longer gates on PDT count. The executor is the
+        single source of truth and rejects only true same-day round-trips.
+        Pre-rejecting in the watcher wasted strong signals when the
+        intent was an overnight hold."""
         r = make_redis({
             Keys.WATCHLIST: json.dumps([make_watchlist_item()]),
             Keys.PDT_COUNT: "3",
         })
-        with patch('watcher.is_market_hours', return_value=True):
+        with patch('watcher.is_market_hours', return_value=True), \
+             patch('watcher.check_whipsaw', return_value=False):
             from watcher import generate_entry_signals
             signals = generate_entry_signals(r, MagicMock(), MagicMock())
-        assert signals == []
+        assert len(signals) == 1
+
+    def test_generates_entry_when_pdt_above_limit(self):
+        """Count over ceiling (e.g., Alpaca paper's advisory 5/3 count)
+        must not short-circuit the watcher. Executor still owns enforcement."""
+        r = make_redis({
+            Keys.WATCHLIST: json.dumps([make_watchlist_item()]),
+            Keys.PDT_COUNT: "5",
+        })
+        with patch('watcher.is_market_hours', return_value=True), \
+             patch('watcher.check_whipsaw', return_value=False):
+            from watcher import generate_entry_signals
+            signals = generate_entry_signals(r, MagicMock(), MagicMock())
+        assert len(signals) == 1
 
     def test_allows_entry_when_pdt_below_limit(self):
         r = make_redis({
