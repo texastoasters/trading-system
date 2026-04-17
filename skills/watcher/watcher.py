@@ -168,6 +168,11 @@ def check_whipsaw(r, symbol):
     return False
 
 
+def check_exited_today(r, symbol):
+    """Return True if symbol was sold today (key set by executor after fill)."""
+    return r.get(Keys.exited_today(symbol)) is not None
+
+
 def generate_entry_signals(r, stock_client, crypto_client):
     """Check watchlist for entry conditions."""
     watchlist_raw = r.get(Keys.WATCHLIST)
@@ -178,6 +183,11 @@ def generate_entry_signals(r, stock_client, crypto_client):
     watchlist = json.loads(watchlist_raw)
     regime_raw = r.get(Keys.REGIME)
     regime_info = json.loads(regime_raw) if regime_raw else {"regime": "RANGING"}
+
+    pdt_count = int(r.get(Keys.PDT_COUNT) or 0)
+    if pdt_count >= 3:
+        print(f"  [Watcher] PDT limit reached ({pdt_count}/3) — no new entries today")
+        return []
 
     signals = []
     market_open = is_market_hours()
@@ -212,6 +222,18 @@ def generate_entry_signals(r, stock_client, crypto_client):
         # Whipsaw check
         if check_whipsaw(r, symbol):
             print(f"  [Watcher] {symbol}: skipped (whipsaw cooldown)")
+            continue
+
+        # Same-day exit cooldown: block re-entry if this symbol was sold today
+        if check_exited_today(r, symbol):
+            print(f"  [Watcher] {symbol}: skipped (exited today — no same-day rebuy)")
+            continue
+
+        # Entry filter: skip if current price already above yesterday's high.
+        # The "close > prev_day_high" exit would fire immediately at a loss.
+        if item["close"] > item["prev_high"]:
+            print(f"  [Watcher] {symbol}: skipped (close ${item['close']:.2f} > "
+                  f"prev-day-high ${item['prev_high']:.2f})")
             continue
 
         # Earnings avoidance

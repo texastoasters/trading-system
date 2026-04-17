@@ -26,7 +26,7 @@ These are known issues documented in HANDOFF.md that can cause real harm.
 - [x] **Dashboard: current regime prominently displayed** — Show RANGING/UPTREND/DOWNTREND with ADX, +DI, -DI values and a colored badge. Currently data is in Redis but not prominently surfaced.
 - [x] **Dashboard: whipsaw/cooldown indicator** — Show which symbols are in 24h whipsaw cooldown or manual-exit cooldown, and when each lifts. Prevents user confusion about why signals are being skipped.
 - [x] **Dashboard: per-agent log tail** — Live-scrolling last N lines of each agent's log file. Removes need to SSH in and `tail -f`. PR #100.
-- [ ] **Dashboard: simulated equity history chart** — Plot `trading:simulated_equity` over time. Even a sparkline showing today's trend would be useful.
+- [x] **Dashboard: simulated equity history chart** — Plot `trading:simulated_equity` over time. Even a sparkline showing today's trend would be useful. Intraday sparkline added above open positions: samples equity every 30s (every 15 Redis polls), newest-first buffer capped at 800 pts, hand-rolled SVG polyline (blue=up, red=down).
 
 ### Alerts & Notifications
 - [x] **Weekly summary actually sent** — `run_weekly_summary(r)` queries 7-day rollup from TimescaleDB (trades, P&L, best/worst trade, universe size). Cron at `35 16 * * 5` (Friday 4:35 PM ET, after EOD). PR #62.
@@ -63,12 +63,12 @@ These are known issues documented in HANDOFF.md that can cause real harm.
 
 ### Screener & Signal Quality
 - [x] **Volume filter on entries** — `scan_instrument` skips today's volume < 50% of 20d ADV. `volume_ratio` in watchlist payload. feat/volume-filter.
-- [ ] **RSI-2 divergence detection** — Flag when price makes a new low but RSI-2 makes a higher low (bullish divergence) — stronger entry signal than raw RSI-2 threshold alone.
+- [x] **RSI-2 divergence detection** — Flag when price makes a new low but RSI-2 makes a higher low (bullish divergence) — stronger entry signal than raw RSI-2 threshold alone. PR #119.
 - [ ] **Multi-timeframe confirmation** — Require RSI-2 < threshold on both daily AND 4-hour charts before generating a `strong_signal`. Reduces false positives.
-- [ ] **Entry filter: skip if price > prev-day-high** — If entry price is already above yesterday's high, the "close > prev_day_high" exit fires at a loss. Guard: skip entry when `current_price > prev_day_high`. Observed on KMI (entry $32.66, prev high $31.85 → exit at -2.2%).
+- [x] **Entry filter: skip if price > prev-day-high** — If entry price is already above yesterday's high, the "close > prev_day_high" exit fires at a loss. Guard: skip entry when `current_price > prev_day_high`. Observed on KMI (entry $32.66, prev high $31.85 → exit at -2.2%).
 - [ ] **Broader strategy review** — RSI-2 exit rules (prev-day-high, RSI>60, time stop) need holistic evaluation against real trade history. Losing trades like KMI suggest some exit conditions may fire prematurely or at wrong price levels. Backtest alternative exits (5-day MA cross, entry-price minimum, combined RSI>65 only).
-- [ ] **Same-day exit cooldown** — After any exit (not just stop-loss), block re-entry until next day via Redis key `trading:exited_today:{symbol}` with TTL until midnight ET. Prevents same-day rebuy and PDT burn (observed: CLMT bought/sold 3x in one day).
-- [ ] **PDT day-trade counter** — Track day trades in `trading:day_trades_today` (reset at midnight). Block new entries when count ≥ 3. Fire Telegram alert when approaching limit.
+- [x] **Same-day exit cooldown** — After any exit (not just stop-loss), block re-entry until next day via Redis key `trading:exited_today:{symbol}` with TTL until midnight ET. Prevents same-day rebuy and PDT burn (observed: CLMT bought/sold 3x in one day).
+- [x] **PDT day-trade counter** — Watcher blocks all new entries when `trading:pdt:count` ≥ 3. Executor sends Telegram warning when count reaches 2. Count already tracked and Alpaca-synced by executor.
 - [x] **Earnings avoidance** — Query Alpaca's calendar or a public earnings API. Block entry signals for any symbol within 2 days of its earnings release.
 - [x] **Economic calendar awareness** — Block entries on FOMC, CPI, and NFP days. Dates in `scripts/economic_calendar.json`, updated annually. PR #84.
 

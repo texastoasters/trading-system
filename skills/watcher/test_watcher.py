@@ -54,11 +54,13 @@ def make_redis(store: dict = None):
 
 
 def make_watchlist_item(symbol="SPY", priority="signal", rsi2=7.0, close=500.0,
-                        atr14=2.0, sma200=480.0, tier=1, entry_threshold=10.0):
+                        atr14=2.0, sma200=480.0, tier=1, entry_threshold=10.0,
+                        prev_high=None):
     return {
         "symbol": symbol, "priority": priority, "rsi2": rsi2,
         "sma200": sma200, "atr14": atr14, "close": close,
-        "prev_high": close - 1.0, "above_sma": True,
+        "prev_high": prev_high if prev_high is not None else close + 1.0,
+        "above_sma": True,
         "tier": tier, "entry_threshold": entry_threshold,
     }
 
@@ -838,3 +840,87 @@ class TestRunCycle:
             from watcher import run_cycle
             run_cycle()
         mock_load.assert_called_once_with(r)
+
+
+# ── check_exited_today ────────────────────────────────────────
+
+class TestCheckExitedToday:
+    def test_returns_true_when_key_set(self):
+        r = make_redis({Keys.exited_today("SPY"): "1"})
+        from watcher import check_exited_today
+        assert check_exited_today(r, "SPY") is True
+
+    def test_returns_false_when_key_absent(self):
+        r = make_redis()
+        from watcher import check_exited_today
+        assert check_exited_today(r, "SPY") is False
+
+
+# ── generate_entry_signals: new guards ───────────────────────
+
+class TestGenerateEntrySignalsNewGuards:
+    def _make_standard_patches(self):
+        return [
+            patch('watcher.is_market_hours', return_value=True),
+            patch('watcher.check_whipsaw', return_value=False),
+            patch('watcher.is_near_earnings', return_value=False),
+            patch('watcher.is_macro_event_day', return_value=False),
+        ]
+
+    def test_skips_entry_when_close_above_prev_day_high(self):
+        item = make_watchlist_item(close=500.0, prev_high=498.0)  # close > prev_high
+        r = make_redis({Keys.WATCHLIST: json.dumps([item])})
+        with patch('watcher.is_market_hours', return_value=True), \
+             patch('watcher.check_whipsaw', return_value=False):
+            from watcher import generate_entry_signals
+            signals = generate_entry_signals(r, MagicMock(), MagicMock())
+        assert signals == []
+
+    def test_allows_entry_when_close_below_prev_day_high(self):
+        item = make_watchlist_item(close=500.0, prev_high=502.0)  # close < prev_high
+        r = make_redis({Keys.WATCHLIST: json.dumps([item])})
+        with patch('watcher.is_market_hours', return_value=True), \
+             patch('watcher.check_whipsaw', return_value=False):
+            from watcher import generate_entry_signals
+            signals = generate_entry_signals(r, MagicMock(), MagicMock())
+        assert len(signals) == 1
+
+    def test_skips_entry_when_exited_today(self):
+        r = make_redis({
+            Keys.WATCHLIST: json.dumps([make_watchlist_item()]),
+            Keys.exited_today("SPY"): "1",
+        })
+        with patch('watcher.is_market_hours', return_value=True), \
+             patch('watcher.check_whipsaw', return_value=False):
+            from watcher import generate_entry_signals
+            signals = generate_entry_signals(r, MagicMock(), MagicMock())
+        assert signals == []
+
+    def test_allows_entry_when_not_exited_today(self):
+        r = make_redis({Keys.WATCHLIST: json.dumps([make_watchlist_item()])})
+        with patch('watcher.is_market_hours', return_value=True), \
+             patch('watcher.check_whipsaw', return_value=False):
+            from watcher import generate_entry_signals
+            signals = generate_entry_signals(r, MagicMock(), MagicMock())
+        assert len(signals) == 1
+
+    def test_returns_empty_when_pdt_at_limit(self):
+        r = make_redis({
+            Keys.WATCHLIST: json.dumps([make_watchlist_item()]),
+            Keys.PDT_COUNT: "3",
+        })
+        with patch('watcher.is_market_hours', return_value=True):
+            from watcher import generate_entry_signals
+            signals = generate_entry_signals(r, MagicMock(), MagicMock())
+        assert signals == []
+
+    def test_allows_entry_when_pdt_below_limit(self):
+        r = make_redis({
+            Keys.WATCHLIST: json.dumps([make_watchlist_item()]),
+            Keys.PDT_COUNT: "2",
+        })
+        with patch('watcher.is_market_hours', return_value=True), \
+             patch('watcher.check_whipsaw', return_value=False):
+            from watcher import generate_entry_signals
+            signals = generate_entry_signals(r, MagicMock(), MagicMock())
+        assert len(signals) == 1
