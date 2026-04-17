@@ -4,7 +4,7 @@ defmodule DashboardWeb.DashboardLiveTest do
   describe "mount" do
     test "renders page title", %{conn: conn} do
       {:ok, _view, html} = live(conn, "/")
-      assert html =~ "RSI-2 Trading System"
+      assert html =~ "T² Trade Dashboard"
     end
 
     test "initial assigns have safe defaults", %{conn: conn} do
@@ -130,7 +130,7 @@ defmodule DashboardWeb.DashboardLiveTest do
     test "does not crash on refresh", %{conn: conn} do
       {:ok, view, _} = live(conn, "/")
       send(view.pid, :refresh_db)
-      assert render(view) =~ "RSI-2 Trading System"
+      assert render(view) =~ "T² Trade Dashboard"
     end
   end
 
