@@ -38,7 +38,7 @@ Actionable items from `docs/STRATEGY_REVIEW.md` + `docs/ALTERNATE_STRATEGIES.md`
 - [ ] **Per-instrument RSI-2 entry thresholds** — Sweep `{3, 5, 7, 10, 12}` × regime with walk-forward validation. Persist to `trading:thresholds:{symbol}`. (§5 rec #7)
 - [ ] **Per-instrument time-stop sweep** — Same harness, sweep `max_hold_days`. Today's global value is untested against live data (zero time_stop exits in production). (§5 rec #8)
 - [ ] **Donchian-BO trend slot** — Phase 2 multi-strategy. For DG, GOOGL, NVDA, AMGN, SMH, LIN, XLY where RSI-2 stays idle. Requires wider position-sizing (22d avg hold).
-- [ ] **Exclude META and TSLA from routing** — Flat/negative across all backtested strategies in the 2y window.
+- [x] **Exclude META and TSLA from routing** — Flat/negative across all backtested strategies in the 2y window. ✅ Shipped in v0.32.1
 
 ### Deferred / informational
 - [ ] **`agent_decisions` table populated** — PM "escalates to Sonnet 4" claim in CLAUDE.md is unverifiable until this is written. Either implement or remove the claim. (§5 rec #6)
