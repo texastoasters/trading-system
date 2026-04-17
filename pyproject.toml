@@ -11,6 +11,7 @@ omit = [
     "scripts/backtest_rsi2_expanded.py",
     "scripts/backtest_rsi2_universe.py",
     "scripts/discover_universe.py",
+    "scripts/sweep_rsi2_thresholds.py",
     "scripts/verify_alpaca.py",
 ]
 
