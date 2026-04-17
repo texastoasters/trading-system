@@ -1173,6 +1173,14 @@ class TestVerifyStartup:
         mock_alert.assert_called_once()
         assert "SPY" not in json.loads(store["trading:positions"])
 
+    def test_pdt_flag_set_does_not_abort(self):
+        """PDT flag on paper account is a warning, not a hard failure — startup must continue."""
+        r, _ = make_redis({})
+        tc = self._make_tc(account=make_account(pdt=True))
+        from executor import verify_startup
+        account = verify_startup(tc, r)
+        assert account is not None
+
     def test_checks_failed_exits(self):
         r, _ = make_redis({})
         tc = self._make_tc(account=make_account(blocked=True))
