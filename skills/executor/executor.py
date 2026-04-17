@@ -15,7 +15,7 @@ import json
 import sys
 import time
 import argparse
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import (
@@ -669,6 +669,17 @@ def execute_buy(r, trading_client, order):
         return False
 
 
+def _seconds_until_midnight_et():  # pragma: no cover
+    """Seconds from now until midnight US/Eastern."""
+    import pytz
+    et = pytz.timezone("US/Eastern")
+    now_et = datetime.now(et)
+    midnight_et = (now_et + timedelta(days=1)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    return max(1, int((midnight_et - now_et).total_seconds()))
+
+
 def execute_sell(r, trading_client, order):
     """Execute a sell order on Alpaca."""
     symbol = order["symbol"]
@@ -848,8 +859,15 @@ def execute_sell(r, trading_client, order):
         # Check if this is a day trade
         if hold_days == 0:
             pdt_count = int(r.get(Keys.PDT_COUNT) or 0)
-            r.set(Keys.PDT_COUNT, str(pdt_count + 1))
-            print(f"  [Executor] ⚠️ Day trade consumed! PDT count: {pdt_count + 1}/3")
+            new_pdt = pdt_count + 1
+            r.set(Keys.PDT_COUNT, str(new_pdt))
+            print(f"  [Executor] ⚠️ Day trade consumed! PDT count: {new_pdt}/3")
+            if new_pdt == 2:
+                notify(f"⚠️ PDT warning: {new_pdt}/3 day trades used today. "
+                       f"One more will trigger the PDT limit.")
+
+        # Mark symbol as exited today — Watcher will block re-entry until midnight ET
+        r.set(Keys.exited_today(symbol), "1", ex=_seconds_until_midnight_et())
 
         # Send Telegram notification
         exit_alert(

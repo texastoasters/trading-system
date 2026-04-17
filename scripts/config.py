@@ -271,6 +271,12 @@ class Keys:
         return f"trading:manual_exit:{symbol}"
 
     @staticmethod
+    def exited_today(symbol: str) -> str:
+        """Set by executor after any sell fill. Watcher blocks re-entry until
+        key expires at midnight ET, preventing same-day rebuy and PDT burn."""
+        return f"trading:exited_today:{symbol}"
+
+    @staticmethod
     def age_alert(symbol: str) -> str:
         """Set when a position age nudge has been sent for this symbol today.
         24h TTL prevents repeat alerts within the same calendar day."""

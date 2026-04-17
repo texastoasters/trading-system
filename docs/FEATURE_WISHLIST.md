@@ -63,12 +63,12 @@ These are known issues documented in HANDOFF.md that can cause real harm.
 
 ### Screener & Signal Quality
 - [x] **Volume filter on entries** — `scan_instrument` skips today's volume < 50% of 20d ADV. `volume_ratio` in watchlist payload. feat/volume-filter.
-- [ ] **RSI-2 divergence detection** — Flag when price makes a new low but RSI-2 makes a higher low (bullish divergence) — stronger entry signal than raw RSI-2 threshold alone.
+- [x] **RSI-2 divergence detection** — Flag when price makes a new low but RSI-2 makes a higher low (bullish divergence) — stronger entry signal than raw RSI-2 threshold alone. PR #119.
 - [ ] **Multi-timeframe confirmation** — Require RSI-2 < threshold on both daily AND 4-hour charts before generating a `strong_signal`. Reduces false positives.
-- [ ] **Entry filter: skip if price > prev-day-high** — If entry price is already above yesterday's high, the "close > prev_day_high" exit fires at a loss. Guard: skip entry when `current_price > prev_day_high`. Observed on KMI (entry $32.66, prev high $31.85 → exit at -2.2%).
+- [x] **Entry filter: skip if price > prev-day-high** — If entry price is already above yesterday's high, the "close > prev_day_high" exit fires at a loss. Guard: skip entry when `current_price > prev_day_high`. Observed on KMI (entry $32.66, prev high $31.85 → exit at -2.2%).
 - [ ] **Broader strategy review** — RSI-2 exit rules (prev-day-high, RSI>60, time stop) need holistic evaluation against real trade history. Losing trades like KMI suggest some exit conditions may fire prematurely or at wrong price levels. Backtest alternative exits (5-day MA cross, entry-price minimum, combined RSI>65 only).
-- [ ] **Same-day exit cooldown** — After any exit (not just stop-loss), block re-entry until next day via Redis key `trading:exited_today:{symbol}` with TTL until midnight ET. Prevents same-day rebuy and PDT burn (observed: CLMT bought/sold 3x in one day).
-- [ ] **PDT day-trade counter** — Track day trades in `trading:day_trades_today` (reset at midnight). Block new entries when count ≥ 3. Fire Telegram alert when approaching limit.
+- [x] **Same-day exit cooldown** — After any exit (not just stop-loss), block re-entry until next day via Redis key `trading:exited_today:{symbol}` with TTL until midnight ET. Prevents same-day rebuy and PDT burn (observed: CLMT bought/sold 3x in one day).
+- [x] **PDT day-trade counter** — Watcher blocks all new entries when `trading:pdt:count` ≥ 3. Executor sends Telegram warning when count reaches 2. Count already tracked and Alpaca-synced by executor.
 - [x] **Earnings avoidance** — Query Alpaca's calendar or a public earnings API. Block entry signals for any symbol within 2 days of its earnings release.
 - [x] **Economic calendar awareness** — Block entries on FOMC, CPI, and NFP days. Dates in `scripts/economic_calendar.json`, updated annually. PR #84.
 

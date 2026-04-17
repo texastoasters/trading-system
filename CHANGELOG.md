@@ -12,6 +12,9 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ### Added
 - **Dashboard: intraday equity sparkline** — SVG polyline above open positions showing `trading:simulated_equity` trend since process start. Samples every 30s (every 15 Redis polls at 2s), newest-first buffer capped at 800 points. Blue when equity is above session open, red when below. Shows "Collecting data…" until enough samples accumulate.
+- **Signal: entry filter (price > prev-day-high)** — watcher skips entry if close exceeds previous day's high, avoiding late entries into already-extended moves.
+- **Signal: same-day exit cooldown** — executor sets `trading:exited_today:{symbol}` (TTL until midnight ET) after any sell fill; watcher blocks re-entry on that symbol for the rest of the session, preventing whipsaw same-day rebuy.
+- **Risk: PDT day-trade counter block** — watcher reads `trading:pdt:count` and hard-blocks all new entries when count ≥ 3; executor sends Telegram warning when count reaches 2, giving one-trade notice before the limit triggers.
 
 ---
 

@@ -61,7 +61,7 @@ def make_redis(positions: dict, extra: dict = None):
 
     r = MagicMock()
     r.get = lambda k: store.get(k)
-    r.set = lambda k, v: store.update({k: v})
+    r.set = lambda k, v, **kw: store.update({k: v})
     r.exists = lambda k: 1 if k in store else 0
     r.delete = MagicMock()
     return r, store
@@ -575,7 +575,8 @@ class TestExecuteSell:
         trading_client.get_order_by_id.return_value = filled_order
 
         with patch("time.sleep"), patch("notify.exit_alert"), \
-             patch("executor._wait_for_order_cancelled", return_value=True):
+             patch("executor._wait_for_order_cancelled", return_value=True), \
+             patch("executor._seconds_until_midnight_et", return_value=3600):
             from executor import execute_sell
             result = execute_sell(r, trading_client, make_sell_signal())
 
@@ -685,7 +686,8 @@ class TestExecuteSell:
         tc.get_order_by_id.return_value = filled
 
         with patch("time.sleep"), patch("notify.exit_alert"), \
-             patch("executor._wait_for_order_cancelled", return_value=True):
+             patch("executor._wait_for_order_cancelled", return_value=True), \
+             patch("executor._seconds_until_midnight_et", return_value=3600):
             from executor import execute_sell
             result = execute_sell(r, tc, make_sell_signal(symbol="BTC/USD"))
         assert result is True
@@ -711,7 +713,8 @@ class TestExecuteSell:
         signal = make_sell_signal(signal_type="manual_liquidation")
 
         with patch("time.sleep"), patch("notify.exit_alert"), \
-             patch("executor._wait_for_order_cancelled", return_value=True):
+             patch("executor._wait_for_order_cancelled", return_value=True), \
+             patch("executor._seconds_until_midnight_et", return_value=3600):
             from executor import execute_sell
             result = execute_sell(r, tc, signal)
 
@@ -736,7 +739,8 @@ class TestExecuteSell:
         tc.get_order_by_id.return_value = filled
 
         with patch("time.sleep"), patch("notify.exit_alert"), \
-             patch("executor._wait_for_order_cancelled", return_value=True):
+             patch("executor._wait_for_order_cancelled", return_value=True), \
+             patch("executor._seconds_until_midnight_et", return_value=3600):
             from executor import execute_sell
             result = execute_sell(r, tc, make_sell_signal())
         # Should succeed; hold_days falls back to 0
@@ -825,7 +829,8 @@ class TestExecuteSell:
         # First call: stop-status check → cancelled; subsequent calls: fill poll → filled
         tc.get_order_by_id.side_effect = [stop_check] + [fill_poll] * 5
 
-        with patch("time.sleep"), patch("notify.exit_alert"):
+        with patch("time.sleep"), patch("notify.exit_alert"), \
+             patch("executor._seconds_until_midnight_et", return_value=3600):
             from executor import execute_sell
             result = execute_sell(r, tc, make_sell_signal())
         assert result is True
@@ -880,7 +885,8 @@ class TestExecuteSell:
         # get_order_by_id raises on stop check, then returns filled on poll
         tc.get_order_by_id.side_effect = [Exception("unreachable")] + [fill_poll] * 5
 
-        with patch("time.sleep"), patch("notify.exit_alert"):
+        with patch("time.sleep"), patch("notify.exit_alert"), \
+             patch("executor._seconds_until_midnight_et", return_value=3600):
             from executor import execute_sell
             result = execute_sell(r, tc, make_sell_signal())
 
@@ -2201,6 +2207,7 @@ class TestExecuteSellLogsTrade:
 
         with patch("time.sleep"), patch("notify.exit_alert"), \
              patch("executor._wait_for_order_cancelled", return_value=True), \
+             patch("executor._seconds_until_midnight_et", return_value=3600), \
              patch("executor._log_trade") as mock_log:
             from executor import execute_sell
             result = execute_sell(r, tc, signal)
@@ -2348,3 +2355,69 @@ class TestReconcileStopFilledLogsTrade:
 
         _, kwargs = mock_log.call_args
         assert kwargs["price"] == pytest.approx(488.0)
+
+
+# ── execute_sell: exited_today + PDT notify ──────────────────
+
+class TestExecuteSellNewBehavior:
+    def _make_successful_sell(self, extra_store=None):
+        pos = make_position()
+        r, store = make_redis({"SPY": pos}, extra=extra_store)
+        r.set = MagicMock(side_effect=lambda k, v, **kw: store.update({k: v}))
+
+        filled_order = MagicMock()
+        filled_order.status = "filled"
+        filled_order.filled_avg_price = "505.00"
+        filled_order.filled_qty = "10"
+
+        trading_client = MagicMock()
+        trading_client.get_clock.return_value = make_clock(is_open=True)
+        trading_client.cancel_order_by_id.return_value = None
+        trading_client.submit_order.return_value = make_order(status="accepted")
+        trading_client.get_order_by_id.return_value = filled_order
+
+        return r, store, trading_client
+
+    def test_successful_sell_sets_exited_today_key(self):
+        r, store, trading_client = self._make_successful_sell()
+
+        with patch("time.sleep"), patch("notify.exit_alert"), \
+             patch("executor._wait_for_order_cancelled", return_value=True), \
+             patch("executor._seconds_until_midnight_et", return_value=3600):
+            from executor import execute_sell
+            execute_sell(r, trading_client, make_sell_signal())
+
+        set_calls = [call for call in r.set.call_args_list
+                     if call[0][0].startswith("trading:exited_today:")]
+        assert len(set_calls) == 1
+        assert set_calls[0][1]["ex"] == 3600
+
+    def test_sell_sends_pdt_warning_notify_at_count_2(self):
+        pos = make_position(entry=500.0)
+        pos["entry_date"] = datetime.now().strftime("%Y-%m-%d")  # same day = day trade
+        r, store, trading_client = self._make_successful_sell(
+            extra_store={"trading:pdt:count": "1"}
+        )
+        r, store = make_redis({"SPY": pos}, extra={"trading:pdt:count": "1"})
+        r.set = MagicMock(side_effect=lambda k, v, **kw: store.update({k: v}))
+
+        filled_order = MagicMock()
+        filled_order.status = "filled"
+        filled_order.filled_avg_price = "505.00"
+        filled_order.filled_qty = "10"
+        trading_client = MagicMock()
+        trading_client.get_clock.return_value = make_clock(is_open=True)
+        trading_client.cancel_order_by_id.return_value = None
+        trading_client.submit_order.return_value = make_order(status="accepted")
+        trading_client.get_order_by_id.return_value = filled_order
+
+        with patch("time.sleep"), patch("notify.exit_alert"), \
+             patch("executor._wait_for_order_cancelled", return_value=True), \
+             patch("executor._seconds_until_midnight_et", return_value=3600), \
+             patch("executor.notify") as mock_notify:
+            from executor import execute_sell
+            execute_sell(r, trading_client, make_sell_signal())
+
+        assert mock_notify.called
+        msg = mock_notify.call_args[0][0]
+        assert "PDT" in msg or "day trade" in msg.lower()
