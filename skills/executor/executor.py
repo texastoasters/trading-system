@@ -826,7 +826,7 @@ def execute_sell(r, trading_client, order):
             strategy=pos.get("strategy", "rsi2"),
             asset_class="crypto" if is_crypto(symbol) else "equity",
             realized_pnl=round(pnl_dollar, 2),
-            exit_reason=order.get("signal_type", "unknown"),
+            exit_reason=order.get("reason", order.get("signal_type", "unknown")),
         )
 
         # Update simulated equity

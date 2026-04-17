@@ -8,6 +8,23 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.30.2] - 2026-04-16
+
+### Added
+- **Watcher: gap-up entry guard** — before emitting an entry signal, watcher re-checks the live intraday price against the previous day's high (with a 0.1% buffer). Blocks morning-gap entries that would immediately trigger the "close > prev_high" exit rule at the very next bar.
+- **Watcher: breakeven whipsaw cooldown** — when a take-profit fires same-day with |pnl| < 0.2% (classic bar-timing round-trip), the symbol gets a 4h whipsaw lockout on top of the normal 24h lockout applied to stop-loss exits. Prevents immediate re-entry churn on symbols whose signal inverted within the first bar.
+- **Research: alternate strategies backtest** — `scripts/backtest_alt_strategies.py`, `data/alt_strategies_summary.md`, and `docs/ALTERNATE_STRATEGIES.md` from parallel research. RSI-2 wins aggregate but loses on 20/33 symbols; IBS and Donchian-BO cover those gaps. Roadmap for v0.32+ multi-strategy routing.
+- **Docs: Strategy-Review critical wave** — `docs/FEATURE_WISHLIST.md` now calls out a four-wave prioritization (v0.30.2 cheap fixes → v0.31 foundation → v0.32 multi-strategy phase 1 → v0.33 alpha optimization) synthesized from the strategy review + alternate-strategies research.
+
+### Fixed
+- **Executor: exit_reason logging** — `_log_trade` now records the descriptive `order["reason"]` (e.g. `"RSI-2 at 65.0 > 60"`) rather than the coarse `signal_type` bucket. Preserves attribution detail in TimescaleDB for post-hoc analysis. Falls back to `signal_type` then `"unknown"`.
+- **Screener: honors blacklist** — `get_active_instruments` now filters out `universe.blacklisted` symbols at the canonical helper level. Screener and any other caller inherit the guard (previously only the watcher filtered, so the screener was still producing watchlist entries for blacklisted names).
+
+### Closed (investigated, not shipped)
+- **Multi-timeframe confirmation** — investigated for v0.30.2, deferred. For mean-reversion, daily and 4h RSI-2 are near-perfectly correlated; true multi-timeframe discipline is a momentum technique, not a reversal one. Adding a 4h filter would cost roughly half of our daily RSI-2 signals while removing almost none of the losers.
+
+---
+
 ## [0.30.1] - 2026-04-16
 
 ### Fixed

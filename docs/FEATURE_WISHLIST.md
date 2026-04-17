@@ -17,6 +17,35 @@ These are known issues documented in HANDOFF.md that can cause real harm.
 
 ---
 
+## 🔥 Strategy-Review Critical Wave (2026-04-16)
+
+Actionable items from `docs/STRATEGY_REVIEW.md` + `docs/ALTERNATE_STRATEGIES.md`. The backtest lies: it enters at `close[D]`, live enters at `open[D+1]`. The `close > prev_high` exit fires immediately on gap-up opens — empirically 5/8 recent round-trips closed same-day at ~entry price. Tier/threshold decisions based on existing backtests are optimistic.
+
+### Wave 1 — v0.30.2 cheap quality fixes (<1 day total)
+- [ ] **Watcher gap-up guard** — Fetch intraday price; skip entry if `current_price ≥ prev_high * 1.001`. Complements the v0.30.0 screener-side filter against next-morning gap-up opens. (STRATEGY_REVIEW §5 rec #2)
+- [ ] **Breakeven whipsaw** — 4h cooldown when exit is `take_profit` AND `hold_days == 0` AND `|pnl_pct| < 0.002`. Belt-and-suspenders against churn when the other guards miss. (§5 rec #3)
+- [ ] **`exit_reason` logging bug** — `executor.py:818` uses `order.get("signal_type", "unknown")`; should be `order.get("reason", order.get("signal_type", "unknown"))` to match the Telegram path at `executor.py:862`. Blocks empirical exit analysis. (§5 rec #4)
+- [ ] **Screener blacklist check** — CLMT/OSK appeared as `strong_signal` after being blacklisted and liquidated. Watcher honors `universe.blacklisted` but screener may not; add the filter if absent. (§5 rec #10)
+
+### Wave 2 — v0.31.0 foundation (medium, unblocks multi-strategy alpha)
+- [ ] **Fix backtest entry mechanics** — Change all backtest harnesses to enter at `open[i+1]` instead of `close[i]`. Re-run all tier backtests. Expect PF/WR numbers to drop; live convergence will improve. (§5 rec #9) — Without this, all tier/threshold decisions are built on sand.
+- [ ] **Populate `signals` table** — INSERT in watcher after publish to `trading:signals`. Unlocks downstream signal-distribution analytics and per-tier hit-rate queries. (§5 rec #5)
+
+### Wave 3 — v0.32.0 multi-strategy Phase 1
+- [ ] **Ship IBS as second entry path** — Runs alongside RSI-2 with own cooldown. Best symbols: DIA, XLI, CSCO, XLV, XLF, EA, ABT, IWM, SHOP, V, SPOT. Requires Wave 2 first (honest backtest numbers). Per `docs/ALTERNATE_STRATEGIES.md` backtest: 656 trades, PF 1.43, trades on days RSI-2 does not fire.
+
+### Wave 4 — v0.33+ alpha optimization (hard, large upside if it holds)
+- [ ] **Per-instrument RSI-2 entry thresholds** — Sweep `{3, 5, 7, 10, 12}` × regime with walk-forward validation. Persist to `trading:thresholds:{symbol}`. (§5 rec #7)
+- [ ] **Per-instrument time-stop sweep** — Same harness, sweep `max_hold_days`. Today's global value is untested against live data (zero time_stop exits in production). (§5 rec #8)
+- [ ] **Donchian-BO trend slot** — Phase 2 multi-strategy. For DG, GOOGL, NVDA, AMGN, SMH, LIN, XLY where RSI-2 stays idle. Requires wider position-sizing (22d avg hold).
+- [ ] **Exclude META and TSLA from routing** — Flat/negative across all backtested strategies in the 2y window.
+
+### Deferred / informational
+- [ ] **`agent_decisions` table populated** — PM "escalates to Sonnet 4" claim in CLAUDE.md is unverifiable until this is written. Either implement or remove the claim. (§5 rec #6)
+- [ ] **EOD LLM learning loop** — Either implement or strike from CLAUDE.md. (§5 rec #6)
+
+---
+
 ## ✅ Quick Wins (Low Effort, High Value)
 
 ### Observability & Monitoring
@@ -64,7 +93,7 @@ These are known issues documented in HANDOFF.md that can cause real harm.
 ### Screener & Signal Quality
 - [x] **Volume filter on entries** — `scan_instrument` skips today's volume < 50% of 20d ADV. `volume_ratio` in watchlist payload. feat/volume-filter.
 - [x] **RSI-2 divergence detection** — Flag when price makes a new low but RSI-2 makes a higher low (bullish divergence) — stronger entry signal than raw RSI-2 threshold alone. PR #119.
-- [ ] **Multi-timeframe confirmation** — Require RSI-2 < threshold on both daily AND 4-hour charts before generating a `strong_signal`. Reduces false positives.
+- [x] **Multi-timeframe confirmation** — *Investigated 2026-04-16, not shipped.* For RSI-2 mean reversion, daily and 4h RSI-2 are near-perfectly correlated; divergences (4h recovering while daily still oversold) are the strongest setups, so 4h filtering would reject winners. False-positive root causes are elsewhere (gap-up opens, bar-timing leak — see `docs/STRATEGY_REVIEW.md`). Multi-timeframe alignment is a momentum/trend-following technique, not an MR one.
 - [x] **Entry filter: skip if price > prev-day-high** — If entry price is already above yesterday's high, the "close > prev_day_high" exit fires at a loss. Guard: skip entry when `current_price > prev_day_high`. Observed on KMI (entry $32.66, prev high $31.85 → exit at -2.2%).
 - [ ] **Broader strategy review** — RSI-2 exit rules (prev-day-high, RSI>60, time stop) need holistic evaluation against real trade history. Losing trades like KMI suggest some exit conditions may fire prematurely or at wrong price levels. Backtest alternative exits (5-day MA cross, entry-price minimum, combined RSI>65 only).
 - [x] **Same-day exit cooldown** — After any exit (not just stop-loss), block re-entry until next day via Redis key `trading:exited_today:{symbol}` with TTL until midnight ET. Prevents same-day rebuy and PDT burn (observed: CLMT bought/sold 3x in one day).

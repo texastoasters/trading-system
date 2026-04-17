@@ -236,6 +236,19 @@ def generate_entry_signals(r, stock_client, crypto_client):
                   f"prev-day-high ${item['prev_high']:.2f})")
             continue
 
+        # Gap-up guard: EOD close passed the filter above, but the screener's
+        # snapshot is from yesterday's close. If this morning's open gapped up
+        # above prev_high, the "close > prev_high" exit will fire at fill.
+        # Re-check against live intraday price with a small buffer. Graceful
+        # fallback: if fetch fails, defer to the EOD-only filter above.
+        intraday = fetch_intraday_bars(symbol, stock_client, crypto_client)
+        if intraday is not None and len(intraday["close"]) > 0:
+            current_price = float(intraday["close"][-1])
+            if current_price >= item["prev_high"] * 1.001:
+                print(f"  [Watcher] {symbol}: skipped (intraday ${current_price:.2f} "
+                      f">= prev-day-high ${item['prev_high']:.2f} * 1.001 — gap up)")
+                continue
+
         # Earnings avoidance
         if is_near_earnings(symbol):
             print(f"  [Watcher] {symbol}: skipped (near earnings window)")
@@ -435,6 +448,16 @@ def generate_exit_signals(r, stock_client, crypto_client):
             r.set(Keys.exit_signaled(symbol), exit_signal["signal_type"], ex=ttl)
 
             pnl_pct = (exit_signal["exit_price"] - entry_price) / entry_price * 100
+
+            # Breakeven whipsaw: same-day take_profit at ~breakeven is the
+            # classic bar-timing-leak round-trip (entered at open[D+1], RSI
+            # flipped >60 on first bar). Block re-entry for 4h to avoid
+            # immediate re-fire on the same symbol.
+            if (exit_signal["signal_type"] == "take_profit"
+                    and hold_days == 0
+                    and abs(pnl_pct) < 0.2):
+                r.set(Keys.whipsaw(symbol), datetime.now().isoformat(), ex=14400)
+
             signal = {
                 "time": datetime.now().isoformat(),
                 "symbol": symbol,

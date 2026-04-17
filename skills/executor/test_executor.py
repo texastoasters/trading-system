@@ -721,6 +721,69 @@ class TestExecuteSell:
         assert result is True
         assert "trading:manual_exit:SPY" in store
 
+    def test_exit_reason_logged_uses_descriptive_reason_not_signal_type(self):
+        """_log_trade should record the descriptive reason, not just the signal_type.
+
+        Watcher emits both signal_type ('take_profit') and reason
+        ('RSI-2 at 65.0 > 60'). The descriptive reason is more useful
+        for post-hoc analysis.
+        """
+        pos = make_position()
+        r, _ = make_redis({"SPY": pos})
+
+        filled = MagicMock()
+        filled.status = "filled"
+        filled.filled_avg_price = "505.00"
+        filled.filled_qty = "10"
+
+        tc = MagicMock()
+        tc.get_clock.return_value = make_clock(is_open=True)
+        tc.submit_order.return_value = make_order(status="accepted")
+        tc.get_order_by_id.return_value = filled
+
+        signal = {
+            "symbol": "SPY", "side": "sell",
+            "signal_type": "take_profit",
+            "reason": "RSI-2 at 65.0 > 60",
+        }
+
+        with patch("time.sleep"), patch("notify.exit_alert"), \
+             patch("executor._wait_for_order_cancelled", return_value=True), \
+             patch("executor._seconds_until_midnight_et", return_value=3600), \
+             patch("executor._log_trade") as mock_log:
+            from executor import execute_sell
+            result = execute_sell(r, tc, signal)
+
+        assert result is True
+        mock_log.assert_called_once()
+        assert mock_log.call_args.kwargs["exit_reason"] == "RSI-2 at 65.0 > 60"
+
+    def test_exit_reason_falls_back_to_signal_type_when_reason_missing(self):
+        pos = make_position()
+        r, _ = make_redis({"SPY": pos})
+
+        filled = MagicMock()
+        filled.status = "filled"
+        filled.filled_avg_price = "505.00"
+        filled.filled_qty = "10"
+
+        tc = MagicMock()
+        tc.get_clock.return_value = make_clock(is_open=True)
+        tc.submit_order.return_value = make_order(status="accepted")
+        tc.get_order_by_id.return_value = filled
+
+        signal = {"symbol": "SPY", "side": "sell", "signal_type": "stop_loss"}
+
+        with patch("time.sleep"), patch("notify.exit_alert"), \
+             patch("executor._wait_for_order_cancelled", return_value=True), \
+             patch("executor._seconds_until_midnight_et", return_value=3600), \
+             patch("executor._log_trade") as mock_log:
+            from executor import execute_sell
+            execute_sell(r, tc, signal)
+
+        mock_log.assert_called_once()
+        assert mock_log.call_args.kwargs["exit_reason"] == "stop_loss"
+
     def test_invalid_entry_date_hold_days_zero(self):
         pos = make_position()
         pos["entry_date"] = "not-a-date"
@@ -2226,9 +2289,11 @@ class TestExecuteSellLogsTrade:
         assert kwargs["side"] == "sell"
         assert kwargs["symbol"] == "SPY"
 
-    def test_log_trade_sell_exit_reason_from_signal_type(self):
-        """exit_reason comes from order.get('signal_type', 'unknown')."""
+    def test_log_trade_sell_exit_reason_prefers_reason_over_signal_type(self):
+        """exit_reason prefers descriptive 'reason', falls back to signal_type."""
         r, store, tc, signal, pos = self._setup_successful_sell(signal_type="time_stop")
+        # make_sell_signal sets reason='rsi_exit' by default — the descriptive
+        # reason should win over signal_type when both are present.
 
         with patch("time.sleep"), patch("notify.exit_alert"), \
              patch("executor._wait_for_order_cancelled", return_value=True), \
@@ -2237,7 +2302,7 @@ class TestExecuteSellLogsTrade:
             execute_sell(r, tc, signal)
 
         _, kwargs = mock_log.call_args
-        assert kwargs["exit_reason"] == "time_stop"
+        assert kwargs["exit_reason"] == "rsi_exit"
 
     def test_log_trade_sell_exit_reason_defaults_to_unknown(self):
         """Signal with no signal_type → exit_reason='unknown'."""
