@@ -280,6 +280,14 @@ class Keys:
         return f"trading:heartbeat:{agent}"
 
     @staticmethod
+    def thresholds(symbol: str) -> str:
+        """Per-symbol RSI-2 entry threshold map written by the Wave 4 #2b
+        supervisor refit job. Value is JSON
+        `{"RANGING": int|null, "UPTREND": int|null, "DOWNTREND": int|null,
+          "refit": "YYYY-MM-DD"}`."""
+        return f"trading:thresholds:{symbol}"
+
+    @staticmethod
     def whipsaw(symbol: str, strategy: str = "RSI2") -> str:
         """Per-strategy whipsaw cooldown so an RSI-2 stop-loss whipsaw does not
         block an unrelated IBS entry on the same symbol, and vice versa."""
@@ -359,6 +367,33 @@ def get_tier(r: redis.Redis, symbol: str) -> int:
     """Return tier number for a symbol (1, 2, 3, or 99 if unknown)."""
     tiers = json.loads(r.get(Keys.TIERS) or json.dumps(DEFAULT_TIERS))
     return tiers.get(symbol, 99)
+
+
+def get_entry_threshold(r: redis.Redis, symbol: str, regime: str) -> float:
+    """Return the RSI-2 entry threshold for (symbol, regime). Reads the
+    per-symbol map written by the Wave 4 #2b refit job from
+    `trading:thresholds:{symbol}`; falls back to the global live rule when
+    the key is missing, the regime slot is absent/null, the payload is
+    malformed, or `regime` is outside {RANGING, UPTREND, DOWNTREND}.
+
+    Fallback matches the current live screener logic: UPTREND uses
+    `RSI2_ENTRY_AGGRESSIVE`; RANGING and DOWNTREND use
+    `RSI2_ENTRY_CONSERVATIVE`. A bad refit payload must never change
+    routing — the helper only narrows the threshold when it has a
+    validated per-symbol value."""
+    fallback = (RSI2_ENTRY_AGGRESSIVE if regime == "UPTREND"
+                else RSI2_ENTRY_CONSERVATIVE)
+    raw = r.get(Keys.thresholds(symbol))
+    if not raw:
+        return fallback
+    try:
+        payload = json.loads(raw)
+    except (ValueError, TypeError):
+        return fallback
+    value = payload.get(regime)
+    if value is None:
+        return fallback
+    return value
 
 
 def get_simulated_equity(r: redis.Redis) -> float:

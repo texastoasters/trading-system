@@ -1,20 +1,33 @@
 # Remember
 
-## v0.32.2 — Wave 4 #2a (RSI-2 threshold sweep harness)
+## v0.32.3 — Wave 4 #2b (per-symbol RSI-2 threshold persistence + refit)
 
-`scripts/sweep_rsi2_thresholds.py` — offline walk-forward optimization of per-instrument RSI-2 entry threshold by regime. No prod path touched. Outputs per-symbol JSON at `data/rsi2_thresholds/{symbol}.json`.
+Wires the #2a sweep output into Redis and gives the live helper a stable read
+path. No screener/watcher path consumes this yet — that is #2c.
 
-Design (locked):
-- Grid: `{3, 5, 7, 10, 12}` × {RANGING, UPTREND, DOWNTREND}
-- Walk-forward: 12m train (252d) / 3m OOS (63d) / step quarterly (63d)
-- Metric: profit factor, tiebreak trades ≥ 5
-- Final pick: majority-of-windows winner; tiebreak avg OOS PF
-- Guardrails: cell returns `None` if trades < 5 OR OOS PF < 1.2 → caller falls back to global const
-- Regime: 14-period ADX on entry bar (ADX<20 RANGING; ADX≥20 & +DI>-DI UPTREND; else DOWNTREND)
-- Data: Alpaca daily bars via existing `backtest_rsi2_universe.fetch_stock/crypto`
+Shipped:
+- `Keys.thresholds(symbol)` → `trading:thresholds:{symbol}` namespace.
+- `get_entry_threshold(r, symbol, regime)` in `scripts/config.py`:
+  - Returns per-symbol value when Redis key is present and regime cell is non-null.
+  - Fallback: `RSI2_ENTRY_AGGRESSIVE` on `UPTREND`, else `RSI2_ENTRY_CONSERVATIVE`.
+  - Robust to: missing key, malformed JSON, null regime cell, unknown regime string.
+- `supervisor --refit-thresholds` CLI job:
+  - `run_refit_thresholds(r, symbols=None, fetcher=None, sweeper=None)`.
+  - Walks active universe (tier1+tier2+tier3) when `symbols=None`.
+  - Default fetcher uses Alpaca daily bars (5y, `pragma: no cover`).
+  - Default sweeper is `sweep_rsi2_thresholds.sweep_symbol`.
+  - Symbols that raise on fetch/sweep are logged and skipped; return count is
+    number of successful writes.
+  - Payload: `{"RANGING": int|null, "UPTREND": int|null, "DOWNTREND": int|null,
+    "refit": "YYYY-MM-DD"}`.
 
-File coverage-omitted per repo convention (like other backtest scripts). Unit tests (28) cover `classify_regime_per_bar`, `simulate_threshold`, `walk_forward_windows`, `pick_winner`, plus two smoke tests on `sweep_symbol`.
+Tests: +1 Keys test, +8 helper tests, +6 supervisor refit tests (with fake
+fetcher/sweeper via DI). Full suite 729 passed, 100% coverage preserved.
 
 Next:
-- 2b: Redis persistence layer + `get_entry_threshold(r, symbol, regime)` helper + supervisor quarterly refit job
-- 2c: watcher wiring (fallback → global `RSI2_ENTRY_CONSERVATIVE`/`RSI2_ENTRY_AGGRESSIVE`)
+- 2c: wire screener (not watcher — entry threshold is applied in the watchlist
+  builder on the screener side) RSI-2 entry check through
+  `get_entry_threshold(r, symbol, regime)`. Fallback already matches global
+  const so zero-behavior change when Redis is empty.
+- #3: per-instrument time-stop sweep (shared harness with #2).
+- #4: Donchian-BO trend slot (v0.33.0).

@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.32.3] - 2026-04-16
+
+### Added
+- **Wave 4 #2b: per-symbol RSI-2 threshold persistence + refit job** — `Keys.thresholds(symbol)` namespaces the new `trading:thresholds:{symbol}` Redis key; `get_entry_threshold(r, symbol, regime)` returns the persisted value for `(symbol, regime)` and falls back to `RSI2_ENTRY_AGGRESSIVE` on UPTREND / `RSI2_ENTRY_CONSERVATIVE` elsewhere when the key is missing, malformed, has a null cell, or references an unknown regime. `supervisor --refit-thresholds` is a new quarterly CLI job that walks the active universe, runs `sweep_symbol` per instrument, and writes the JSON payload shape `{"RANGING"|"UPTREND"|"DOWNTREND": int|null, "refit": "YYYY-MM-DD"}`. Symbols whose fetch or sweep raises are skipped (the per-symbol helper falls back at read time). No screener/watcher wiring yet — that lands in #2c.
+
+---
+
 ## [0.32.2] - 2026-04-16
 
 ### Added

@@ -699,6 +699,68 @@ def run_revalidation(r):  # pragma: no cover
     return results
 
 
+# ── Per-symbol RSI-2 threshold refit (Wave 4 #2b) ────────────
+
+def _default_threshold_fetcher(symbol):  # pragma: no cover
+    """Pull 5y of daily bars for `symbol` via Alpaca. Used as the live fetcher
+    for `run_refit_thresholds` when no override is injected."""
+    from backtest_rsi2_universe import fetch_stock, fetch_crypto
+    from alpaca.data.historical import (
+        StockHistoricalDataClient,
+        CryptoHistoricalDataClient,
+    )
+    api_key = os.environ.get("ALPACA_API_KEY")
+    secret_key = os.environ.get("ALPACA_SECRET_KEY")
+    if "/" in symbol:
+        client = CryptoHistoricalDataClient(api_key, secret_key)
+        return fetch_crypto(client, symbol, years=5)
+    client = StockHistoricalDataClient(api_key, secret_key)
+    return fetch_stock(client, symbol, years=5)
+
+
+def run_refit_thresholds(r, symbols=None, fetcher=None, sweeper=None):
+    """Refit per-symbol RSI-2 entry thresholds and persist to Redis.
+
+    For each symbol, pulls bars via `fetcher`, runs `sweeper` (walk-forward
+    threshold sweep), and writes `trading:thresholds:{symbol}` with shape
+    `{"RANGING": int|null, "UPTREND": int|null, "DOWNTREND": int|null,
+    "refit": "YYYY-MM-DD"}`. Symbols with fetch or sweep errors are skipped.
+
+    Returns number of symbols successfully refit.
+    """
+    if symbols is None:
+        universe = json.loads(r.get(Keys.UNIVERSE) or json.dumps(config.DEFAULT_UNIVERSE))
+        symbols = (
+            universe.get("tier1", [])
+            + universe.get("tier2", [])
+            + universe.get("tier3", [])
+        )
+    if fetcher is None:
+        fetcher = _default_threshold_fetcher  # pragma: no cover
+    if sweeper is None:  # pragma: no cover
+        from sweep_rsi2_thresholds import sweep_symbol
+        sweeper = sweep_symbol
+
+    count = 0
+    for sym in symbols:
+        try:
+            bars = fetcher(sym)
+        except Exception as e:
+            print(f"[Supervisor] refit {sym}: fetch failed ({e})")
+            continue
+        try:
+            result = sweeper(bars)
+        except Exception as e:
+            print(f"[Supervisor] refit {sym}: sweep failed ({e})")
+            continue
+        payload = dict(result["thresholds"])
+        payload["refit"] = result["last_refit"]
+        r.set(Keys.thresholds(sym), json.dumps(payload))
+        count += 1
+    print(f"[Supervisor] Threshold refit complete: {count}/{len(symbols)} symbols.")
+    return count
+
+
 # ── Weekly Summary ──────────────────────────────────────────
 
 def run_weekly_summary(r):
@@ -899,6 +961,8 @@ def main():  # pragma: no cover
     parser.add_argument("--briefing", action="store_true", help="Send morning briefing (9:20 AM ET)")
     parser.add_argument("--weekly", action="store_true", help="Send weekly summary (Friday 4:35 PM ET)")
     parser.add_argument("--reconcile", action="store_true", help="Run reconcile --fix (9:15 AM ET)")
+    parser.add_argument("--refit-thresholds", action="store_true",
+                        help="Refit per-symbol RSI-2 thresholds (quarterly)")
     args = parser.parse_args()
 
     r = get_redis()
@@ -930,6 +994,12 @@ def main():  # pragma: no cover
         except Exception as e:
             print(f"[Supervisor] Revalidation error: {e}")
             critical_alert(f"Monthly revalidation failed: {e}")
+    elif args.refit_thresholds:
+        try:
+            run_refit_thresholds(r)
+        except Exception as e:
+            print(f"[Supervisor] Threshold refit error: {e}")
+            critical_alert(f"Quarterly threshold refit failed: {e}")
     elif args.reset_daily:
         reset_daily(r)
     else:
