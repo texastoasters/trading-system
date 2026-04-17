@@ -36,6 +36,9 @@ Actionable items from `docs/STRATEGY_REVIEW.md` + `docs/ALTERNATE_STRATEGIES.md`
 
 ### Wave 4 — v0.33+ alpha optimization (hard, large upside if it holds)
 - [ ] **Per-instrument RSI-2 entry thresholds** — Sweep `{3, 5, 7, 10, 12}` × regime with walk-forward validation. Persist to `trading:thresholds:{symbol}`. (§5 rec #7)
+  - [x] 2a: offline walk-forward sweep harness (`scripts/sweep_rsi2_thresholds.py`) — v0.32.2
+  - [ ] 2b: Redis persistence layer + `get_entry_threshold(r, symbol, regime)` helper + supervisor quarterly refit job
+  - [ ] 2c: wire watcher RSI-2 entry check to call the helper (fallback → global const)
 - [ ] **Per-instrument time-stop sweep** — Same harness, sweep `max_hold_days`. Today's global value is untested against live data (zero time_stop exits in production). (§5 rec #8)
 - [ ] **Donchian-BO trend slot** — Phase 2 multi-strategy. For DG, GOOGL, NVDA, AMGN, SMH, LIN, XLY where RSI-2 stays idle. Requires wider position-sizing (22d avg hold).
 - [x] **Exclude META and TSLA from routing** — Flat/negative across all backtested strategies in the 2y window. ✅ Shipped in v0.32.1

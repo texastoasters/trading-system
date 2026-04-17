@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.32.2] - 2026-04-16
+
+### Added
+- **Wave 4 #2a: RSI-2 threshold walk-forward sweep harness** — `scripts/sweep_rsi2_thresholds.py` runs an offline per-instrument walk-forward optimization of the RSI-2 entry threshold across `{3, 5, 7, 10, 12}` × {RANGING, UPTREND, DOWNTREND} regimes (12m train / 3m OOS / quarterly step, 14-period ADX labelling). Picks the majority-of-windows winner per regime (tiebreak: avg OOS PF); cells failing `trades ≥ 5` or `oos_pf ≥ 1.2` return `None` so the live helper can fall back to the global constant. Writes `data/rsi2_thresholds/{symbol}.json`. No prod path touched — follow-up PRs #2b (Redis persistence + `get_entry_threshold` helper) and #2c (watcher wiring) actually consume the output.
+
+---
+
 ## [0.32.1] - 2026-04-16
 
 ### Changed

@@ -1,12 +1,20 @@
 # Remember
 
-## v0.32.1 — Wave 4 #1 (META/TSLA exclusion) + dashboard rebrand
+## v0.32.2 — Wave 4 #2a (RSI-2 threshold sweep harness)
 
-Dashboard header/layout/title: "T² Trade Dashboard" replaces "RSI-2 Trading System" / "Trading Dashboard". Multi-strategy now — name can't claim one strategy.
+`scripts/sweep_rsi2_thresholds.py` — offline walk-forward optimization of per-instrument RSI-2 entry threshold by regime. No prod path touched. Outputs per-symbol JSON at `data/rsi2_thresholds/{symbol}.json`.
 
-META and TSLA moved from `DEFAULT_UNIVERSE["tier2"]` → `DEFAULT_UNIVERSE["disabled"]`. Flat/negative across every backtested strategy, trailing 2y. `get_active_instruments` now filters `disabled` in addition to `blacklisted` (docstring always claimed it did; code didn't). Revisit on next universe re-validation.
+Design (locked):
+- Grid: `{3, 5, 7, 10, 12}` × {RANGING, UPTREND, DOWNTREND}
+- Walk-forward: 12m train (252d) / 3m OOS (63d) / step quarterly (63d)
+- Metric: profit factor, tiebreak trades ≥ 5
+- Final pick: majority-of-windows winner; tiebreak avg OOS PF
+- Guardrails: cell returns `None` if trades < 5 OR OOS PF < 1.2 → caller falls back to global const
+- Regime: 14-period ADX on entry bar (ADX<20 RANGING; ADX≥20 & +DI>-DI UPTREND; else DOWNTREND)
+- Data: Alpaca daily bars via existing `backtest_rsi2_universe.fetch_stock/crypto`
 
-Next in Wave 4:
-- #2 Per-instrument RSI-2 entry thresholds (walk-forward, 12m train / 3m OOS, quarterly refit; JSON `{regime: threshold}` map at `trading:thresholds:{symbol}`)
-- #3 Per-instrument time-stop sweep (shared harness with #2)
-- #4 Donchian-BO trend slot — hybrid: third stack OR exclusive where RSI-2 idle. v0.33.0.
+File coverage-omitted per repo convention (like other backtest scripts). Unit tests (28) cover `classify_regime_per_bar`, `simulate_threshold`, `walk_forward_windows`, `pick_winner`, plus two smoke tests on `sweep_symbol`.
+
+Next:
+- 2b: Redis persistence layer + `get_entry_threshold(r, symbol, regime)` helper + supervisor quarterly refit job
+- 2c: watcher wiring (fallback → global `RSI2_ENTRY_CONSERVATIVE`/`RSI2_ENTRY_AGGRESSIVE`)
