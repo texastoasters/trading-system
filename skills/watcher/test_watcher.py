@@ -55,23 +55,37 @@ def make_redis(store: dict = None):
 
 def make_watchlist_item(symbol="SPY", priority="signal", rsi2=7.0, close=500.0,
                         atr14=2.0, sma200=480.0, tier=1, entry_threshold=10.0,
-                        prev_high=None):
+                        prev_high=None, ibs=0.5, ibs_priority=None,
+                        rsi2_priority=None):
+    # Default per-strategy priority mirrors the top-level priority for
+    # back-compat with tests written before the IBS split: if a test sets
+    # priority="signal" without specifying strategy, RSI-2 fires.
+    if rsi2_priority is None:
+        rsi2_priority = priority
     return {
         "symbol": symbol, "priority": priority, "rsi2": rsi2,
         "sma200": sma200, "atr14": atr14, "close": close,
         "prev_high": prev_high if prev_high is not None else close + 1.0,
         "above_sma": True,
         "tier": tier, "entry_threshold": entry_threshold,
+        "ibs": ibs, "ibs_priority": ibs_priority,
+        "rsi2_priority": rsi2_priority,
     }
 
 
 def make_position(symbol="SPY", entry_price=490.0, stop_price=480.0,
-                  entry_date="2026-04-01", quantity=10):
-    return {
+                  entry_date="2026-04-01", quantity=10, strategy="RSI2",
+                  strategies=None, primary_strategy=None):
+    pos = {
         "symbol": symbol, "entry_price": entry_price,
         "stop_price": stop_price, "entry_date": entry_date,
-        "quantity": quantity,
+        "quantity": quantity, "strategy": strategy,
     }
+    if strategies is not None:
+        pos["strategies"] = strategies
+    if primary_strategy is not None:
+        pos["primary_strategy"] = primary_strategy
+    return pos
 
 
 def make_intraday(close=500.0, low=498.0, n=10):
@@ -113,6 +127,22 @@ class TestCheckWhipsaw:
         r.get = lambda k: None
         from watcher import check_whipsaw
         assert check_whipsaw(r, "SPY") is False
+
+    def test_scoped_to_strategy_ibs_cooldown_does_not_block_rsi2(self):
+        from watcher import check_whipsaw
+        store = {Keys.whipsaw("SPY", "IBS"): (datetime.now() - timedelta(hours=1)).isoformat()}
+        r = make_redis()
+        r.get = lambda k: store.get(k)
+        assert check_whipsaw(r, "SPY", strategy="IBS") is True
+        assert check_whipsaw(r, "SPY", strategy="RSI2") is False
+
+    def test_scoped_to_strategy_rsi2_cooldown_does_not_block_ibs(self):
+        from watcher import check_whipsaw
+        store = {Keys.whipsaw("SPY", "RSI2"): (datetime.now() - timedelta(hours=1)).isoformat()}
+        r = make_redis()
+        r.get = lambda k: store.get(k)
+        assert check_whipsaw(r, "SPY", strategy="RSI2") is True
+        assert check_whipsaw(r, "SPY", strategy="IBS") is False
 
 
 # ── is_market_hours ───────────────────────────────────────────
@@ -580,6 +610,140 @@ class TestGenerateEntrySignals:
         assert signals == [], f"Expected no signals, got: {signals}"
 
 
+# ── generate_entry_signals IBS ───────────────────────────────
+
+class TestGenerateEntrySignalsIbs:
+    def _make_r(self, item):
+        return make_redis({Keys.WATCHLIST: json.dumps([item])})
+
+    def test_ibs_only_emits_one_ibs_signal(self):
+        item = make_watchlist_item(
+            priority="watch", rsi2_priority=None, ibs=0.10, ibs_priority="signal",
+        )
+        r = self._make_r(item)
+        with patch('watcher.is_market_hours', return_value=True), \
+             patch('watcher.check_whipsaw', return_value=False):
+            from watcher import generate_entry_signals
+            signals = generate_entry_signals(r, MagicMock(), MagicMock())
+        assert len(signals) == 1
+        assert signals[0]["strategies"] == ["IBS"]
+        assert signals[0]["primary_strategy"] == "IBS"
+
+    def test_ibs_signal_has_ibs_indicator_in_payload(self):
+        item = make_watchlist_item(
+            priority="watch", rsi2_priority=None, ibs=0.08, ibs_priority="signal",
+        )
+        r = self._make_r(item)
+        with patch('watcher.is_market_hours', return_value=True), \
+             patch('watcher.check_whipsaw', return_value=False):
+            from watcher import generate_entry_signals
+            signals = generate_entry_signals(r, MagicMock(), MagicMock())
+        assert signals[0]["indicators"]["ibs"] == 0.08
+
+    def test_ibs_signal_stop_uses_ibs_atr_mult(self):
+        # stop_price = close - IBS_ATR_MULT * atr14 = 500 - 2.0*2.0 = 496.0
+        item = make_watchlist_item(
+            priority="watch", rsi2_priority=None, ibs=0.10, ibs_priority="signal",
+            close=500.0, atr14=2.0,
+        )
+        r = self._make_r(item)
+        with patch('watcher.is_market_hours', return_value=True), \
+             patch('watcher.check_whipsaw', return_value=False):
+            from watcher import generate_entry_signals
+            signals = generate_entry_signals(r, MagicMock(), MagicMock())
+        assert signals[0]["suggested_stop"] == pytest.approx(500.0 - config.IBS_ATR_MULT * 2.0)
+
+    def test_stacked_emits_one_merged_signal(self):
+        # Both strategies qualify → single merged signal with strategies=[IBS,RSI2]
+        # Primary = IBS (tighter exit: 3d hold vs RSI-2's 5d)
+        item = make_watchlist_item(
+            priority="strong_signal", rsi2_priority="strong_signal",
+            ibs=0.10, ibs_priority="signal",
+        )
+        r = self._make_r(item)
+        with patch('watcher.is_market_hours', return_value=True), \
+             patch('watcher.check_whipsaw', return_value=False):
+            from watcher import generate_entry_signals
+            signals = generate_entry_signals(r, MagicMock(), MagicMock())
+        assert len(signals) == 1
+        assert sorted(signals[0]["strategies"]) == ["IBS", "RSI2"]
+        assert signals[0]["primary_strategy"] == "IBS"
+
+    def test_stacked_uses_tighter_stop_price(self):
+        # Merged signal takes the higher (tighter) of the two candidate stops.
+        # make_redis pins adx=15 → RSI-2 uses 1.5 ATR (ranging), IBS uses 2.0.
+        # RSI-2 stop=497 > IBS stop=496, so merged = 497.
+        item = make_watchlist_item(
+            priority="strong_signal", rsi2_priority="strong_signal",
+            ibs=0.10, ibs_priority="signal",
+            close=500.0, atr14=2.0,
+        )
+        r = self._make_r(item)
+        with patch('watcher.is_market_hours', return_value=True), \
+             patch('watcher.check_whipsaw', return_value=False):
+            from watcher import generate_entry_signals
+            signals = generate_entry_signals(r, MagicMock(), MagicMock())
+        rsi2_stop = round(500.0 - 1.5 * 2.0, 2)
+        ibs_stop = round(500.0 - config.IBS_ATR_MULT * 2.0, 2)
+        assert signals[0]["suggested_stop"] == pytest.approx(max(rsi2_stop, ibs_stop))
+
+    def test_stacked_boosts_confidence(self):
+        # Stacked signal confidence strictly greater than either single
+        item_stacked = make_watchlist_item(
+            priority="strong_signal", rsi2_priority="strong_signal",
+            ibs=0.10, ibs_priority="signal",
+        )
+        item_rsi2_only = make_watchlist_item(
+            priority="strong_signal", rsi2_priority="strong_signal",
+            ibs=None, ibs_priority=None,
+        )
+        with patch('watcher.is_market_hours', return_value=True), \
+             patch('watcher.check_whipsaw', return_value=False):
+            from watcher import generate_entry_signals
+            r1 = make_redis({Keys.WATCHLIST: json.dumps([item_stacked])})
+            r2 = make_redis({Keys.WATCHLIST: json.dumps([item_rsi2_only])})
+            stacked = generate_entry_signals(r1, MagicMock(), MagicMock())[0]
+            single = generate_entry_signals(r2, MagicMock(), MagicMock())[0]
+        assert stacked["confidence"] > single["confidence"]
+
+    def test_ibs_whipsaw_blocks_only_ibs(self):
+        # IBS blocked → single RSI2-only signal
+        item = make_watchlist_item(
+            priority="strong_signal", rsi2_priority="strong_signal",
+            ibs=0.10, ibs_priority="signal",
+        )
+        r = self._make_r(item)
+
+        def whipsaw_side_effect(_r, _sym, strategy="RSI2"):
+            return strategy == "IBS"
+
+        with patch('watcher.is_market_hours', return_value=True), \
+             patch('watcher.check_whipsaw', side_effect=whipsaw_side_effect):
+            from watcher import generate_entry_signals
+            signals = generate_entry_signals(r, MagicMock(), MagicMock())
+        assert len(signals) == 1
+        assert signals[0]["strategies"] == ["RSI2"]
+        assert signals[0]["primary_strategy"] == "RSI2"
+
+    def test_rsi2_whipsaw_blocks_only_rsi2(self):
+        item = make_watchlist_item(
+            priority="strong_signal", rsi2_priority="strong_signal",
+            ibs=0.10, ibs_priority="signal",
+        )
+        r = self._make_r(item)
+
+        def whipsaw_side_effect(_r, _sym, strategy="RSI2"):
+            return strategy == "RSI2"
+
+        with patch('watcher.is_market_hours', return_value=True), \
+             patch('watcher.check_whipsaw', side_effect=whipsaw_side_effect):
+            from watcher import generate_entry_signals
+            signals = generate_entry_signals(r, MagicMock(), MagicMock())
+        assert len(signals) == 1
+        assert signals[0]["strategies"] == ["IBS"]
+        assert signals[0]["primary_strategy"] == "IBS"
+
+
 # ── generate_exit_signals ─────────────────────────────────────
 
 class TestGenerateExitSignals:
@@ -796,6 +960,177 @@ class TestGenerateExitSignals:
             args, kwargs = call
             if args and args[0] == Keys.whipsaw("SPY"):
                 pytest.fail(f"Unexpected whipsaw set for profitable take_profit: {call}")
+
+
+# ── generate_exit_signals IBS ────────────────────────────────
+
+class TestGenerateExitSignalsIbs:
+    def _entry_date_days_ago(self, days):
+        return (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+
+    def test_ibs_position_time_stops_at_3_days(self):
+        pos = {"SPY": make_position(
+            entry_price=490.0, stop_price=480.0,
+            entry_date=self._entry_date_days_ago(3), strategy="IBS",
+        )}
+        r = make_redis({Keys.POSITIONS: json.dumps(pos)})
+        # RSI-2 at 50 (below 60 so RSI exit does not fire); close ≤ prev_high
+        with patch('watcher.fetch_intraday_bars',
+                   return_value=make_intraday(close=495.0, low=493.0)), \
+             patch('watcher.fetch_recent_bars',
+                   return_value=make_daily(close=495.0, prev_high=500.0)), \
+             patch('watcher.rsi', return_value=np.array([50.0])), \
+             patch('watcher.is_market_hours', return_value=True):
+            from watcher import generate_exit_signals
+            signals = generate_exit_signals(r, MagicMock(), MagicMock())
+        assert len(signals) == 1
+        assert signals[0]["signal_type"] == "time_stop"
+        assert signals[0]["strategy"] == "IBS"
+
+    def test_ibs_position_does_not_time_stop_at_2_days(self):
+        pos = {"SPY": make_position(
+            entry_price=490.0, stop_price=480.0,
+            entry_date=self._entry_date_days_ago(2), strategy="IBS",
+        )}
+        r = make_redis({Keys.POSITIONS: json.dumps(pos)})
+        with patch('watcher.fetch_intraday_bars',
+                   return_value=make_intraday(close=495.0, low=493.0)), \
+             patch('watcher.fetch_recent_bars',
+                   return_value=make_daily(close=495.0, prev_high=500.0)), \
+             patch('watcher.rsi', return_value=np.array([50.0])), \
+             patch('watcher.is_market_hours', return_value=True):
+            from watcher import generate_exit_signals
+            signals = generate_exit_signals(r, MagicMock(), MagicMock())
+        assert signals == []
+
+    def test_ibs_position_ignores_rsi2_above_60_rule(self):
+        # IBS must NOT exit on RSI-2>60 — that rule is RSI-2 specific
+        pos = {"SPY": make_position(
+            entry_price=490.0, stop_price=480.0,
+            entry_date=self._entry_date_days_ago(0), strategy="IBS",
+        )}
+        r = make_redis({Keys.POSITIONS: json.dumps(pos)})
+        with patch('watcher.fetch_intraday_bars',
+                   return_value=make_intraday(close=495.0, low=493.0)), \
+             patch('watcher.fetch_recent_bars',
+                   return_value=make_daily(close=495.0, prev_high=500.0)), \
+             patch('watcher.rsi', return_value=np.array([70.0])), \
+             patch('watcher.is_market_hours', return_value=True):
+            from watcher import generate_exit_signals
+            signals = generate_exit_signals(r, MagicMock(), MagicMock())
+        assert signals == []
+
+    def test_ibs_position_exits_on_close_above_prev_high(self):
+        pos = {"SPY": make_position(
+            entry_price=490.0, stop_price=480.0,
+            entry_date=self._entry_date_days_ago(1), strategy="IBS",
+        )}
+        r = make_redis({Keys.POSITIONS: json.dumps(pos)})
+        with patch('watcher.fetch_intraday_bars',
+                   return_value=make_intraday(close=505.0, low=497.0)), \
+             patch('watcher.fetch_recent_bars',
+                   return_value=make_daily(close=505.0, prev_high=498.0)), \
+             patch('watcher.rsi', return_value=np.array([50.0])), \
+             patch('watcher.is_market_hours', return_value=True):
+            from watcher import generate_exit_signals
+            signals = generate_exit_signals(r, MagicMock(), MagicMock())
+        assert len(signals) == 1
+        assert signals[0]["signal_type"] == "take_profit"
+        assert signals[0]["strategy"] == "IBS"
+
+    def test_ibs_position_exits_on_stop_loss(self):
+        pos = {"SPY": make_position(
+            entry_price=490.0, stop_price=480.0,
+            entry_date=self._entry_date_days_ago(1), strategy="IBS",
+        )}
+        r = make_redis({Keys.POSITIONS: json.dumps(pos)})
+        with patch('watcher.fetch_intraday_bars',
+                   return_value=make_intraday(close=485.0, low=479.0)), \
+             patch('watcher.fetch_recent_bars',
+                   return_value=make_daily(close=485.0, prev_high=500.0)), \
+             patch('watcher.rsi', return_value=np.array([50.0])), \
+             patch('watcher.is_market_hours', return_value=True):
+            from watcher import generate_exit_signals
+            signals = generate_exit_signals(r, MagicMock(), MagicMock())
+        assert len(signals) == 1
+        assert signals[0]["signal_type"] == "stop_loss"
+        assert signals[0]["strategy"] == "IBS"
+
+    def test_rsi2_position_still_time_stops_at_5_days(self):
+        # Regression: RSI-2 MAX_HOLD_DAYS unchanged at 5
+        pos = {"SPY": make_position(
+            entry_price=490.0, stop_price=480.0,
+            entry_date=self._entry_date_days_ago(5), strategy="RSI2",
+        )}
+        r = make_redis({Keys.POSITIONS: json.dumps(pos)})
+        with patch('watcher.fetch_intraday_bars',
+                   return_value=make_intraday(close=495.0, low=493.0)), \
+             patch('watcher.fetch_recent_bars',
+                   return_value=make_daily(close=495.0, prev_high=500.0)), \
+             patch('watcher.rsi', return_value=np.array([50.0])), \
+             patch('watcher.is_market_hours', return_value=True):
+            from watcher import generate_exit_signals
+            signals = generate_exit_signals(r, MagicMock(), MagicMock())
+        assert len(signals) == 1
+        assert signals[0]["signal_type"] == "time_stop"
+
+    def test_stacked_position_routes_by_primary_ibs(self):
+        # Position stacked (both strategies agreed) → primary=IBS drives exits
+        # 3-day hold triggers IBS time_stop even though strategy legacy=RSI2
+        pos = {"SPY": make_position(
+            entry_price=490.0, stop_price=480.0,
+            entry_date=self._entry_date_days_ago(3), strategy="RSI2",
+            strategies=["IBS", "RSI2"], primary_strategy="IBS",
+        )}
+        r = make_redis({Keys.POSITIONS: json.dumps(pos)})
+        with patch('watcher.fetch_intraday_bars',
+                   return_value=make_intraday(close=495.0, low=493.0)), \
+             patch('watcher.fetch_recent_bars',
+                   return_value=make_daily(close=495.0, prev_high=500.0)), \
+             patch('watcher.rsi', return_value=np.array([50.0])), \
+             patch('watcher.is_market_hours', return_value=True):
+            from watcher import generate_exit_signals
+            signals = generate_exit_signals(r, MagicMock(), MagicMock())
+        assert len(signals) == 1
+        assert signals[0]["signal_type"] == "time_stop"
+        assert signals[0]["primary_strategy"] == "IBS"
+        assert sorted(signals[0]["strategies"]) == ["IBS", "RSI2"]
+
+    def test_stacked_position_ignores_rsi2_above_60_rule(self):
+        # Primary=IBS → RSI>60 rule is off, no exit
+        pos = {"SPY": make_position(
+            entry_price=490.0, stop_price=480.0,
+            entry_date=self._entry_date_days_ago(0), strategy="RSI2",
+            strategies=["IBS", "RSI2"], primary_strategy="IBS",
+        )}
+        r = make_redis({Keys.POSITIONS: json.dumps(pos)})
+        with patch('watcher.fetch_intraday_bars',
+                   return_value=make_intraday(close=495.0, low=493.0)), \
+             patch('watcher.fetch_recent_bars',
+                   return_value=make_daily(close=495.0, prev_high=500.0)), \
+             patch('watcher.rsi', return_value=np.array([70.0])), \
+             patch('watcher.is_market_hours', return_value=True):
+            from watcher import generate_exit_signals
+            signals = generate_exit_signals(r, MagicMock(), MagicMock())
+        assert signals == []
+
+    def test_exit_signal_payload_carries_strategies(self):
+        # Single-strategy position → strategies=[strategy], primary=strategy
+        pos = {"SPY": make_position(
+            entry_price=490.0, stop_price=480.0,
+            entry_date=self._entry_date_days_ago(1), strategy="IBS",
+        )}
+        r = make_redis({Keys.POSITIONS: json.dumps(pos)})
+        with patch('watcher.fetch_intraday_bars',
+                   return_value=make_intraday(close=485.0, low=479.0)), \
+             patch('watcher.fetch_recent_bars',
+                   return_value=make_daily(close=485.0, prev_high=500.0)), \
+             patch('watcher.rsi', return_value=np.array([50.0])), \
+             patch('watcher.is_market_hours', return_value=True):
+            from watcher import generate_exit_signals
+            signals = generate_exit_signals(r, MagicMock(), MagicMock())
+        assert signals[0]["strategies"] == ["IBS"]
+        assert signals[0]["primary_strategy"] == "IBS"
 
 
 # ── publish_signals ───────────────────────────────────────────

@@ -207,9 +207,9 @@ def is_macro_event_day(calendar_path=None):
         return False
 
 
-def check_whipsaw(r, symbol):
-    """Check if symbol is in whipsaw cooldown (entry + stop within 24h)."""
-    whipsaw_time = r.get(Keys.whipsaw(symbol))
+def check_whipsaw(r, symbol, strategy="RSI2"):
+    """Check if symbol+strategy is in whipsaw cooldown (entry + stop within 24h)."""
+    whipsaw_time = r.get(Keys.whipsaw(symbol, strategy))
     if whipsaw_time:
         cooldown_end = datetime.fromisoformat(whipsaw_time) + timedelta(hours=24)
         if datetime.now() < cooldown_end:
@@ -247,7 +247,6 @@ def generate_entry_signals(r, stock_client, crypto_client):
 
     for item in watchlist:
         symbol = item["symbol"]
-        priority = item["priority"]
 
         # Don't generate an entry signal if we already hold this symbol.
         if symbol in open_positions:
@@ -264,13 +263,12 @@ def generate_entry_signals(r, stock_client, crypto_client):
         if not is_crypto(symbol) and not market_open:
             continue
 
-        # Only act on actual signals, not watches
-        if priority not in ("signal", "strong_signal"):
-            continue
-
-        # Whipsaw check
-        if check_whipsaw(r, symbol):
-            print(f"  [Watcher] {symbol}: skipped (whipsaw cooldown)")
+        # Any strategy must qualify — quick reject if neither priority is a signal.
+        rsi2_prio = item.get("rsi2_priority", item.get("priority"))
+        ibs_prio = item.get("ibs_priority")
+        rsi2_qualifies = rsi2_prio in ("signal", "strong_signal")
+        ibs_qualifies = ibs_prio in ("signal", "strong_signal")
+        if not (rsi2_qualifies or ibs_qualifies):
             continue
 
         # Same-day exit cooldown: block re-entry if this symbol was sold today
@@ -285,11 +283,9 @@ def generate_entry_signals(r, stock_client, crypto_client):
                   f"prev-day-high ${item['prev_high']:.2f})")
             continue
 
-        # Gap-up guard: EOD close passed the filter above, but the screener's
-        # snapshot is from yesterday's close. If this morning's open gapped up
-        # above prev_high, the "close > prev_high" exit will fire at fill.
-        # Re-check against live intraday price with a small buffer. Graceful
-        # fallback: if fetch fails, defer to the EOD-only filter above.
+        # Gap-up guard (shared): intraday price above yesterday's high would
+        # fire the shared "close > prev_high" exit at fill — applies to both
+        # RSI-2 and IBS.
         intraday = fetch_intraday_bars(symbol, stock_client, crypto_client)
         if intraday is not None and len(intraday["close"]) > 0:
             current_price = float(intraday["close"][-1])
@@ -327,48 +323,96 @@ def generate_entry_signals(r, stock_client, crypto_client):
                 print(f"  [Watcher] {symbol}: manual exit cooldown cleared "
                       f"(price ${current_close:.2f} ≤ required ${required_price:.2f})")
 
-        # Determine RSI-2 config
-        if regime_info["regime"] == "UPTREND":
-            rsi2_config = "aggressive"
-        else:
-            rsi2_config = "conservative"
-
-        # ATR adjustment by regime
+        # ── Per-strategy candidate build, then merge ──
         adx_val = regime_info.get("adx", 20)
-        if adx_val < config.ADX_RANGING_THRESHOLD:
-            atr_mult = 1.5
-        elif adx_val > 40:
-            atr_mult = 2.5
-        else:
-            atr_mult = config.ATR_STOP_MULTIPLIER
-
-        stop_price = round(item["close"] - (atr_mult * item["atr14"]), 2)
         fee_adjusted = is_crypto(symbol)
+        candidates = []
 
-        signal = {
+        # RSI-2 candidate
+        if rsi2_qualifies and not check_whipsaw(r, symbol, "RSI2"):
+            if regime_info["regime"] == "UPTREND":
+                rsi2_config = "aggressive"
+            else:
+                rsi2_config = "conservative"
+            if adx_val < config.ADX_RANGING_THRESHOLD:
+                atr_mult = 1.5
+            elif adx_val > 40:
+                atr_mult = 2.5
+            else:
+                atr_mult = config.ATR_STOP_MULTIPLIER
+            candidates.append({
+                "strategy": "RSI2",
+                "atr_mult": atr_mult,
+                "stop": round(item["close"] - (atr_mult * item["atr14"]), 2),
+                "confidence": round(min(1.0, (item["entry_threshold"] - item["rsi2"]) / item["entry_threshold"]), 4),
+                "rsi2_config": rsi2_config,
+            })
+        elif rsi2_qualifies:
+            print(f"  [Watcher] {symbol}/RSI2: skipped (whipsaw cooldown)")
+
+        # IBS candidate
+        if ibs_qualifies and not check_whipsaw(r, symbol, "IBS"):
+            ibs_val = item.get("ibs")
+            ibs_conf = 0.0
+            if ibs_val is not None and config.IBS_ENTRY_THRESHOLD > 0:
+                ibs_conf = round(min(1.0, max(0.0,
+                    (config.IBS_ENTRY_THRESHOLD - ibs_val) / config.IBS_ENTRY_THRESHOLD)), 4)
+            candidates.append({
+                "strategy": "IBS",
+                "atr_mult": config.IBS_ATR_MULT,
+                "stop": round(item["close"] - (config.IBS_ATR_MULT * item["atr14"]), 2),
+                "confidence": ibs_conf,
+            })
+        elif ibs_qualifies:
+            print(f"  [Watcher] {symbol}/IBS: skipped (whipsaw cooldown)")
+
+        if not candidates:
+            continue
+
+        strategies_list = [c["strategy"] for c in candidates]
+        # Primary = tighter exit: IBS (3d hold) wins over RSI-2 (5d) when stacked
+        primary = "IBS" if "IBS" in strategies_list else "RSI2"
+        # Tighter stop = smallest ATR multiplier → highest stop price
+        best_atr_mult = min(c["atr_mult"] for c in candidates)
+        best_stop = max(c["stop"] for c in candidates)
+        base_conf = max(c["confidence"] for c in candidates)
+        boost = config.STACKED_CONFIDENCE_BOOST if len(candidates) > 1 else 1.0
+        final_conf = round(min(1.0, base_conf * boost), 4)
+
+        indicators = {
+            "sma200": item["sma200"],
+            "atr14": item["atr14"],
+            "close": item["close"],
+            "prev_high": item["prev_high"],
+            "adx": adx_val,
+        }
+        if "RSI2" in strategies_list:
+            indicators["rsi2"] = item["rsi2"]
+        if "IBS" in strategies_list:
+            indicators["ibs"] = item.get("ibs")
+
+        merged = {
             "time": datetime.now().isoformat(),
             "symbol": symbol,
-            "strategy": "RSI2",
+            "strategies": strategies_list,
+            "primary_strategy": primary,
+            "strategy": primary,
             "signal_type": "entry",
             "direction": "long",
-            "confidence": round(min(1.0, (item["entry_threshold"] - item["rsi2"]) / item["entry_threshold"]), 4),
+            "confidence": final_conf,
             "regime": regime_info["regime"],
-            "rsi2_config": rsi2_config,
             "is_day_trade": False,
             "fee_adjusted": fee_adjusted,
             "tier": item["tier"],
-            "indicators": {
-                "rsi2": item["rsi2"],
-                "sma200": item["sma200"],
-                "atr14": item["atr14"],
-                "close": item["close"],
-                "prev_high": item["prev_high"],
-                "adx": adx_val,
-            },
-            "suggested_stop": stop_price,
-            "atr_multiplier": atr_mult,
+            "indicators": indicators,
+            "suggested_stop": best_stop,
+            "atr_multiplier": best_atr_mult,
         }
-        signals.append(signal)
+        rsi2_cand = next((c for c in candidates if c["strategy"] == "RSI2"), None)
+        if rsi2_cand:
+            merged["rsi2_config"] = rsi2_cand["rsi2_config"]
+
+        signals.append(merged)
 
     return signals
 
@@ -440,6 +484,12 @@ def generate_exit_signals(r, stock_client, crypto_client):
         if not is_crypto(symbol) and not market_open:
             continue
 
+        pos_primary = pos.get("primary_strategy", pos.get("strategy", "RSI2"))
+        pos_strategies = list(pos.get("strategies") or [pos_primary])
+        max_hold = (config.IBS_MAX_HOLD_DAYS
+                    if pos_primary == "IBS"
+                    else config.RSI2_MAX_HOLD_DAYS)
+
         exit_signal = None
 
         # Stop-loss hit (check intraday low for responsive detection)
@@ -450,18 +500,21 @@ def generate_exit_signals(r, stock_client, crypto_client):
                 "exit_price": stop_price,
                 "reason": f"Stop-loss hit at {stop_price}",
             }
-            # Set whipsaw cooldown (auto-expires after 24h)
-            r.set(Keys.whipsaw(symbol), datetime.now().isoformat(), ex=86400)
+            # Set whipsaw cooldown scoped to primary strategy (auto-expires 24h)
+            r.set(Keys.whipsaw(symbol, pos_primary),
+                  datetime.now().isoformat(), ex=86400)
 
-        # RSI-2 exit (> 60) - using daily RSI-2
-        elif not np.isnan(rsi2_val) and rsi2_val > config.RSI2_EXIT:
+        # RSI-2 exit (> 60) - RSI-2 primary only
+        elif (pos_primary == "RSI2"
+              and not np.isnan(rsi2_val)
+              and rsi2_val > config.RSI2_EXIT):
             exit_signal = {
                 "signal_type": "take_profit",
                 "exit_price": latest_close,
                 "reason": f"RSI-2 at {rsi2_val:.1f} > {config.RSI2_EXIT}",
             }
 
-        # Close > previous day's high (using daily bars for consistency)
+        # Close > previous day's high (both strategies)
         elif latest_close > prev_high:
             exit_signal = {
                 "signal_type": "take_profit",
@@ -469,8 +522,8 @@ def generate_exit_signals(r, stock_client, crypto_client):
                 "reason": f"Close {latest_close} > prev high {prev_high}",
             }
 
-        # Time stop (5 trading days)
-        elif hold_days >= config.RSI2_MAX_HOLD_DAYS:
+        # Time stop (per-strategy: RSI-2=5, IBS=3)
+        elif hold_days >= max_hold:
             exit_signal = {
                 "signal_type": "time_stop",
                 "exit_price": latest_close,
@@ -505,12 +558,15 @@ def generate_exit_signals(r, stock_client, crypto_client):
             if (exit_signal["signal_type"] == "take_profit"
                     and hold_days == 0
                     and abs(pnl_pct) < 0.2):
-                r.set(Keys.whipsaw(symbol), datetime.now().isoformat(), ex=14400)
+                r.set(Keys.whipsaw(symbol, pos_primary),
+                      datetime.now().isoformat(), ex=14400)
 
             signal = {
                 "time": datetime.now().isoformat(),
                 "symbol": symbol,
-                "strategy": "RSI2",
+                "strategy": pos_primary,
+                "strategies": pos_strategies,
+                "primary_strategy": pos_primary,
                 "signal_type": exit_signal["signal_type"],
                 "direction": "close",
                 "exit_price": exit_signal["exit_price"],

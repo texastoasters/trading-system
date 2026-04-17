@@ -8,6 +8,19 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.32.0] - 2026-04-16
+
+### Added
+- **IBS as second entry path** — Internal Bar Strength (`(close - low) / (high - low)`) now fires alongside RSI-2 on every active symbol. Entry when `IBS < IBS_ENTRY_THRESHOLD (0.15)` and `close > SMA(200)`; `IBS_MAX_HOLD_DAYS = 3` (vs RSI-2's 5) and `IBS_ATR_MULT = 2.0`. Per-strategy 24h whipsaw cooldown via new `trading:whipsaw:{symbol}:{strategy}` key so an RSI-2 stop doesn't block an IBS entry (and vice versa). Reuses v0.30.2 gap-up and breakeven-whipsaw guards at symbol level.
+- **Stacked signal merging** — When RSI-2 and IBS both qualify on the same symbol/bar, watcher emits ONE merged signal carrying `strategies[]` and `primary_strategy` (IBS wins primary when stacked — the tighter exit controls the position). Stop is the tighter of the two candidate stops; confidence gets a `STACKED_CONFIDENCE_BOOST = 1.25` multiplier (capped at 1.0). Signal payload still carries `strategy` for back-compat with consumers that haven't adopted the new fields.
+- **Executor position tagging** — Both the TEST symbol and live fill paths now write `strategies` + `primary_strategy` to the Redis position alongside the legacy `strategy` field. Downstream exits route off `primary_strategy`.
+
+### Changed
+- **PM: sell-to-make-room replaces tier-based displacement** — New `pick_displacement_target(r)` ranks open positions by (b) highest unrealized pnl% → (a) closest-to-exit (held / strategy max_hold) → (c) longest held, with a smallest-loser fallback when nothing is at breakeven or better. Tier no longer gates displacement. PDT cap guard: when the chosen target was entered today and `trading:pdt:count >= PDT_MAX_DAY_TRADES (3)`, the displacement is blocked instead of burning a day-trade slot. Old `find_weakest_position` removed.
+- **Watcher exits route by primary strategy** — `generate_exit_signals` reads `pos.primary_strategy` (falling back to legacy `pos.strategy`) and selects max-hold from the matching config constant; RSI-2's `rsi2 > 60` exit only fires when primary is RSI-2. Whipsaw and re-entry cooldowns are set against the position's primary strategy so an IBS exit doesn't block a later RSI-2 entry.
+
+---
+
 ## [0.31.0] - 2026-04-16
 
 ### Fixed

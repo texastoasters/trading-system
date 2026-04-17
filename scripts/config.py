@@ -133,6 +133,30 @@ HEATMAP_DAYS = 14
 # the current bar has a lower price low AND a higher RSI-2 low than any bar in this window.
 DIVERGENCE_WINDOW = 10
 
+# ── IBS (Internal Bar Strength) Strategy Parameters ─────────
+
+# Second entry path alongside RSI-2. Fires on days RSI-2 misses. Lower max_hold
+# because IBS exits on close > prev_high or next-day mean revert rather than
+# waiting for RSI-2 > 60.
+# Entry: IBS < IBS_ENTRY_THRESHOLD AND close > SMA(200).
+IBS_ENTRY_THRESHOLD = 0.15
+# Max calendar days to hold an IBS trade before watcher emits a time-stop exit.
+IBS_MAX_HOLD_DAYS = 3
+# Stop-loss ATR multiple used when IBS entry fills. Same formula as RSI-2 but a
+# distinct constant to allow tuning the two strategies independently.
+IBS_ATR_MULT = 2.0
+
+# When both RSI-2 and IBS qualify on the same symbol/bar the watcher merges
+# them into a single stacked signal. This multiplier bumps the signal
+# confidence above the stronger single-strategy value so downstream ranking
+# in the Portfolio Manager can prefer stacked entries.
+STACKED_CONFIDENCE_BOOST = 1.25
+
+# FINRA's Pattern Day Trader rule caps same-day round-trip closes at 3 per
+# rolling 5 business days on sub-$25K accounts. Portfolio Manager blocks a
+# displacement close when the target was entered today and this cap is hit.
+PDT_MAX_DAY_TRADES = 3
+
 # ── Regime ──────────────────────────────────────────────────
 
 # ADX indicator lookback period (days). ADX measures trend strength regardless of
@@ -254,8 +278,10 @@ class Keys:
         return f"trading:heartbeat:{agent}"
 
     @staticmethod
-    def whipsaw(symbol: str) -> str:
-        return f"trading:whipsaw:{symbol}"
+    def whipsaw(symbol: str, strategy: str = "RSI2") -> str:
+        """Per-strategy whipsaw cooldown so an RSI-2 stop-loss whipsaw does not
+        block an unrelated IBS entry on the same symbol, and vice versa."""
+        return f"trading:whipsaw:{symbol}:{strategy}"
 
     @staticmethod
     def exit_signaled(symbol: str) -> str:

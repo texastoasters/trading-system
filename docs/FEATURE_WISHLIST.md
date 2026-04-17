@@ -27,12 +27,12 @@ Actionable items from `docs/STRATEGY_REVIEW.md` + `docs/ALTERNATE_STRATEGIES.md`
 - [x] **`exit_reason` logging** — `_log_trade` now prefers `order["reason"]` over `signal_type` for attribution.
 - [x] **Screener blacklist check** — `get_active_instruments` filters `universe.blacklisted` at the canonical helper.
 
-### Wave 2 — v0.31.0 foundation ✅ shipped 2026-04-16 (PR TBD)
+### Wave 2 — v0.31.0 foundation ✅ shipped 2026-04-16 (PR #126)
 - [x] **Fix backtest entry mechanics** — `scripts/discover_universe.py`, `scripts/backtest_rsi2.py`, `scripts/backtest_rsi2_expanded.py`, `scripts/backtest_rsi2_universe.py` now fill at `open[i+1]` to match live executor. Guards final-bar edge case. Universe scanner `Result` exposes `entries` for live-parity verification.
 - [x] **Populate `signals` table** — `watcher._log_signal` persists every published signal to TimescaleDB `signals` (symbol, strategy, signal_type, direction, confidence, regime, indicators JSONB, acted_on). Exit metadata folded into `indicators` JSONB. Non-fatal on DB failure. PM/executor `acted_on` / `rejection_reason` population deferred.
 
-### Wave 3 — v0.32.0 multi-strategy Phase 1
-- [ ] **Ship IBS as second entry path** — Runs alongside RSI-2 with own cooldown. Best symbols: DIA, XLI, CSCO, XLV, XLF, EA, ABT, IWM, SHOP, V, SPOT. Requires Wave 2 first (honest backtest numbers). Per `docs/ALTERNATE_STRATEGIES.md` backtest: 656 trades, PF 1.43, trades on days RSI-2 does not fire.
+### Wave 3 — v0.32.0 multi-strategy Phase 1 ✅ shipped 2026-04-16 (PR #127)
+- [x] **Ship IBS as second entry path** — Runs alongside RSI-2 with per-strategy 24h whipsaw cooldown. Entry: `IBS < 0.15 AND close > SMA(200)` (max_hold 3d, atr_mult 2.0). Watcher merges same-bar RSI-2 + IBS candidates into ONE stacked signal (`strategies[]`, `primary_strategy`, tighter stop, confidence × 1.25); IBS wins primary when stacked so the tighter exit controls. Per-strategy whipsaw via `trading:whipsaw:{symbol}:{strategy}`. Exit routing keyed off `primary_strategy`: max-hold and whipsaw cooldowns use the position's primary; RSI-2 `rsi2 > 60` exit only fires when primary is RSI-2. PM tier-based displacement replaced with sell-to-make-room: highest pnl% → closest-to-exit (held / max_hold) → longest held; fallback smallest loser; PDT cap blocks displacement of same-day entries. Executor writes `strategies` + `primary_strategy` to every position at fill. All v0.30.2 guards (gap-up re-check, breakeven whipsaw) reused at symbol level.
 
 ### Wave 4 — v0.33+ alpha optimization (hard, large upside if it holds)
 - [ ] **Per-instrument RSI-2 entry thresholds** — Sweep `{3, 5, 7, 10, 12}` × regime with walk-forward validation. Persist to `trading:thresholds:{symbol}`. (§5 rec #7)

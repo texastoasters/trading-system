@@ -6,6 +6,7 @@ Run from repo root:
 """
 import json
 import sys
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -185,38 +186,112 @@ class TestCountCryptoPositions:
         assert count_crypto_positions(r) == 0
 
 
-# ── find_weakest_position ─────────────────────────────────────
+# ── pick_displacement_target ──────────────────────────────────
 
-class TestFindWeakestPosition:
-    def test_returns_none_when_no_lower_tier_candidates(self):
-        r = make_redis({Keys.POSITIONS: json.dumps(
-            {"SPY": {"symbol": "SPY", "quantity": 10, "value": 5000.0}}
-        )})
-        from portfolio_manager import find_weakest_position
-        assert find_weakest_position(r, tier_threshold=1) is None
+def _pos(symbol, pnl_pct=0.0, held_days=1, primary="RSI2", quantity=5, value=1000.0):
+    """Build a position dict with entry_date derived from held_days."""
+    entry = (datetime.now() - timedelta(days=held_days)).strftime("%Y-%m-%d")
+    return {
+        "symbol": symbol,
+        "quantity": quantity,
+        "value": value,
+        "unrealized_pnl_pct": pnl_pct,
+        "entry_date": entry,
+        "primary_strategy": primary,
+        "strategies": [primary],
+    }
 
-    def test_finds_tier3_position_for_tier1_signal(self):
+
+class TestPickDisplacementTarget:
+    """Sell-to-make-room rule: (b) highest profit → (a) closest-to-exit
+    (held/max_hold) → (c) longest held. Fallback = smallest loser."""
+
+    def test_returns_none_when_no_positions(self):
+        r = make_redis()
+        from portfolio_manager import pick_displacement_target
+        assert pick_displacement_target(r) is None
+
+    def test_picks_highest_profit(self):
         positions = {
-            "SPY": {"symbol": "SPY", "quantity": 10, "value": 5000.0},
-            "V": {"symbol": "V", "quantity": 5, "value": 1000.0, "unrealized_pnl_pct": 2.0},
+            "SPY": _pos("SPY", pnl_pct=2.0, held_days=2),
+            "QQQ": _pos("QQQ", pnl_pct=5.0, held_days=1),
+            "IWM": _pos("IWM", pnl_pct=1.0, held_days=3),
         }
         r = make_redis({Keys.POSITIONS: json.dumps(positions)})
-        from portfolio_manager import find_weakest_position
-        result = find_weakest_position(r, tier_threshold=1)
-        assert result is not None
-        _, pos, tier = result
-        assert pos["symbol"] == "V"
-        assert tier == 3
+        from portfolio_manager import pick_displacement_target
+        _, pos = pick_displacement_target(r)
+        assert pos["symbol"] == "QQQ"
 
-    def test_picks_lowest_pnl_among_same_tier(self):
+    def test_closest_to_exit_breaks_pnl_tie(self):
+        # Both 2.0% pnl. SPY RSI2 held 4/5 = 0.80. QQQ RSI2 held 2/5 = 0.40.
+        # SPY closer to exit → displace SPY first.
         positions = {
-            "IWM": {"symbol": "IWM", "quantity": 5, "value": 1000.0, "unrealized_pnl_pct": 3.0},
-            "V": {"symbol": "V", "quantity": 5, "value": 1000.0, "unrealized_pnl_pct": -1.0},
+            "SPY": _pos("SPY", pnl_pct=2.0, held_days=4, primary="RSI2"),
+            "QQQ": _pos("QQQ", pnl_pct=2.0, held_days=2, primary="RSI2"),
         }
         r = make_redis({Keys.POSITIONS: json.dumps(positions)})
-        from portfolio_manager import find_weakest_position
-        _, pos, _ = find_weakest_position(r, tier_threshold=1)
-        assert pos["symbol"] == "V"
+        from portfolio_manager import pick_displacement_target
+        _, pos = pick_displacement_target(r)
+        assert pos["symbol"] == "SPY"
+
+    def test_ibs_proximity_uses_tighter_max_hold(self):
+        # Both 2.0% pnl. IBS held 2 of 3 = 0.667. RSI2 held 2 of 5 = 0.40.
+        # IBS closer to exit → displace IBS position.
+        positions = {
+            "RSI": _pos("RSI", pnl_pct=2.0, held_days=2, primary="RSI2"),
+            "IBS": _pos("IBS", pnl_pct=2.0, held_days=2, primary="IBS"),
+        }
+        r = make_redis({Keys.POSITIONS: json.dumps(positions)})
+        from portfolio_manager import pick_displacement_target
+        _, pos = pick_displacement_target(r)
+        assert pos["symbol"] == "IBS"
+
+    def test_longest_held_breaks_remaining_tie(self):
+        # Both 2.0% pnl. Both proximity 1.0 (at time-stop limit).
+        # RSI2 held=5 days, IBS held=3 days. Longer held = RSI2 → displace RSI2.
+        positions = {
+            "RSI": _pos("RSI", pnl_pct=2.0, held_days=5, primary="RSI2"),
+            "IBS": _pos("IBS", pnl_pct=2.0, held_days=3, primary="IBS"),
+        }
+        r = make_redis({Keys.POSITIONS: json.dumps(positions)})
+        from portfolio_manager import pick_displacement_target
+        _, pos = pick_displacement_target(r)
+        assert pos["symbol"] == "RSI"
+
+    def test_falls_back_to_smallest_loser_when_none_profitable(self):
+        # All losers. Smallest loser = least negative pnl% = -0.5.
+        positions = {
+            "A": _pos("A", pnl_pct=-5.0, held_days=2),
+            "B": _pos("B", pnl_pct=-0.5, held_days=2),
+            "C": _pos("C", pnl_pct=-3.0, held_days=2),
+        }
+        r = make_redis({Keys.POSITIONS: json.dumps(positions)})
+        from portfolio_manager import pick_displacement_target
+        _, pos = pick_displacement_target(r)
+        assert pos["symbol"] == "B"
+
+    def test_breakeven_counts_as_profitable(self):
+        # One at exactly 0.0%, one losing. Breakeven wins (>= 0 is profitable).
+        positions = {
+            "FLAT": _pos("FLAT", pnl_pct=0.0, held_days=2),
+            "LOSS": _pos("LOSS", pnl_pct=-0.1, held_days=2),
+        }
+        r = make_redis({Keys.POSITIONS: json.dumps(positions)})
+        from portfolio_manager import pick_displacement_target
+        _, pos = pick_displacement_target(r)
+        assert pos["symbol"] == "FLAT"
+
+    def test_tolerates_missing_entry_date(self):
+        # Pre-v0.32.0 positions have no entry_date. Must not crash — treat as
+        # held=0 days so ranking still works.
+        positions = {
+            "OLD": {"symbol": "OLD", "quantity": 5, "value": 1000.0,
+                    "unrealized_pnl_pct": 2.0},
+        }
+        r = make_redis({Keys.POSITIONS: json.dumps(positions)})
+        from portfolio_manager import pick_displacement_target
+        _, pos = pick_displacement_target(r)
+        assert pos["symbol"] == "OLD"
 
 
 # ── Drawdown circuit breakers ─────────────────────────────────
@@ -271,39 +346,59 @@ class TestDisabledInstrument:
 
 # ── Position limits ───────────────────────────────────────────
 
-def _five_tier1_positions():
-    return {s: {"symbol": s, "quantity": 10, "value": 1000.0, "unrealized_pnl_pct": 2.0}
-            for s in ["SPY", "QQQ", "NVDA", "XLK", "XLY"]}
-
 
 class TestPositionLimits:
-    def test_max_positions_all_same_tier_rejected(self):
-        r = make_redis({Keys.POSITIONS: json.dumps(_five_tier1_positions())})
-        from portfolio_manager import evaluate_entry_signal
-        order, reason = evaluate_entry_signal(r, make_signal(symbol="XLI", tier=1))
-        assert order is None
-        assert "same" in reason.lower() or "higher" in reason.lower()
-
-    def test_max_positions_displaces_profitable_lower_tier(self):
-        positions = _five_tier1_positions()
-        del positions["XLY"]
-        positions["V"] = {"symbol": "V", "quantity": 5, "value": 1000.0, "unrealized_pnl_pct": 2.0}
+    def test_max_positions_displaces_highest_gainer(self):
+        # Five full positions, one is the clear biggest gainer → displaced.
+        positions = {s: _pos(s, pnl_pct=1.0, held_days=2) for s in ["SPY", "QQQ", "NVDA", "XLK"]}
+        positions["XLY"] = _pos("XLY", pnl_pct=8.0, held_days=2)
         r = make_redis({Keys.POSITIONS: json.dumps(positions)})
         from portfolio_manager import evaluate_entry_signal
         order, reason = evaluate_entry_signal(r, make_signal(symbol="XLI", tier=1))
         assert order is None
         assert "displac" in reason.lower()
+        # Published the displacement exit signal for the highest gainer.
         r.publish.assert_called_once()
+        published = json.loads(r.publish.call_args[0][1])
+        assert published["symbol"] == "XLY"
 
-    def test_max_positions_wont_displace_loss_position(self):
-        positions = _five_tier1_positions()
-        del positions["XLY"]
-        positions["V"] = {"symbol": "V", "quantity": 5, "value": 1000.0, "unrealized_pnl_pct": -2.0}
+    def test_max_positions_displaces_smallest_loser_when_none_profitable(self):
+        # All five positions in loss — smallest loser (least negative) gets displaced.
+        positions = {
+            "SPY": _pos("SPY", pnl_pct=-3.0, held_days=2),
+            "QQQ": _pos("QQQ", pnl_pct=-5.0, held_days=2),
+            "NVDA": _pos("NVDA", pnl_pct=-1.5, held_days=2),
+            "XLK": _pos("XLK", pnl_pct=-0.8, held_days=2),
+            "XLY": _pos("XLY", pnl_pct=-2.0, held_days=2),
+        }
         r = make_redis({Keys.POSITIONS: json.dumps(positions)})
         from portfolio_manager import evaluate_entry_signal
         order, reason = evaluate_entry_signal(r, make_signal(symbol="XLI", tier=1))
         assert order is None
-        assert "loss" in reason.lower()
+        assert "displac" in reason.lower()
+        published = json.loads(r.publish.call_args[0][1])
+        assert published["symbol"] == "XLK"
+
+    def test_pdt_maxed_blocks_displacement_of_same_day_entry(self):
+        # Target is profitable but was entered today — closing = day trade.
+        # PDT already at limit → block displacement instead.
+        positions = {s: _pos(s, pnl_pct=1.0, held_days=2) for s in ["SPY", "QQQ", "NVDA", "XLK"]}
+        # XLY entered today; largest gainer → would be picked, but same-day close blocked
+        today = datetime.now().strftime("%Y-%m-%d")
+        positions["XLY"] = {
+            "symbol": "XLY", "quantity": 5, "value": 1000.0,
+            "unrealized_pnl_pct": 8.0, "entry_date": today,
+            "primary_strategy": "RSI2", "strategies": ["RSI2"],
+        }
+        r = make_redis({
+            Keys.POSITIONS: json.dumps(positions),
+            Keys.PDT_COUNT: str(config.PDT_MAX_DAY_TRADES),
+        })
+        from portfolio_manager import evaluate_entry_signal
+        order, reason = evaluate_entry_signal(r, make_signal(symbol="XLI", tier=1))
+        assert order is None
+        assert "pdt" in reason.lower()
+        r.publish.assert_not_called()
 
     def test_max_crypto_positions_rejected(self):
         positions = {
@@ -404,6 +499,42 @@ class TestPositionSizingEdgeCases:
         order, _ = evaluate_entry_signal(r, make_signal(close=100.0, stop=95.0))
         assert order is not None
         assert order["quantity"] == 5
+
+
+# ── Multi-strategy plumbing ───────────────────────────────────
+
+class TestApprovedOrderStrategies:
+    """Order payload must carry the signal's strategies array and primary
+    strategy through to the executor so the position can be tagged at fill."""
+
+    def test_order_carries_strategies_from_stacked_signal(self):
+        r = make_redis()
+        sig = make_signal()
+        sig["strategies"] = ["IBS", "RSI2"]
+        sig["primary_strategy"] = "IBS"
+        from portfolio_manager import evaluate_entry_signal
+        order, _ = evaluate_entry_signal(r, sig)
+        assert order is not None
+        assert sorted(order["strategies"]) == ["IBS", "RSI2"]
+        assert order["primary_strategy"] == "IBS"
+
+    def test_order_single_strategy_signal(self):
+        r = make_redis()
+        sig = make_signal()
+        sig["strategies"] = ["IBS"]
+        sig["primary_strategy"] = "IBS"
+        from portfolio_manager import evaluate_entry_signal
+        order, _ = evaluate_entry_signal(r, sig)
+        assert order["strategies"] == ["IBS"]
+        assert order["primary_strategy"] == "IBS"
+
+    def test_order_defaults_to_rsi2_when_signal_lacks_strategies(self):
+        # Back-compat: legacy signals without strategies[] assume RSI-2
+        r = make_redis()
+        from portfolio_manager import evaluate_entry_signal
+        order, _ = evaluate_entry_signal(r, make_signal())
+        assert order["strategies"] == ["RSI2"]
+        assert order["primary_strategy"] == "RSI2"
 
 
 # ── evaluate_exit_signal ──────────────────────────────────────

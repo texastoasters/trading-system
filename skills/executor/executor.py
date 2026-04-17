@@ -521,13 +521,17 @@ def execute_buy(r, trading_client, order):
     if symbol == TEST_SYMBOL:
         fill_price = order["entry_price"]
         fill_qty = order["quantity"]
+        order_strategies = list(order.get("strategies") or [order["strategy"]])
+        order_primary = order.get("primary_strategy") or order["strategy"]
         position_data = {
             "symbol": symbol,
             "quantity": int(fill_qty),
             "entry_price": fill_price,
             "entry_date": datetime.now().strftime("%Y-%m-%d"),
             "stop_price": order["stop_price"],
-            "strategy": order["strategy"],
+            "strategy": order_primary,
+            "strategies": order_strategies,
+            "primary_strategy": order_primary,
             "tier": order.get("tier", 99),
             "order_id": "TEST-ORDER",
             "stop_order_id": None,
@@ -612,13 +616,17 @@ def execute_buy(r, trading_client, order):
         stop_order_id = submit_stop_loss(trading_client, symbol, fill_qty, order["stop_price"])
 
         # Record position in Redis
+        order_strategies = list(order.get("strategies") or [order["strategy"]])
+        order_primary = order.get("primary_strategy") or order["strategy"]
         position_data = {
             "symbol": symbol,
             "quantity": fill_qty if is_crypto(symbol) else int(fill_qty),
             "entry_price": fill_price,
             "entry_date": datetime.now().strftime("%Y-%m-%d"),
             "stop_price": order["stop_price"],
-            "strategy": order["strategy"],
+            "strategy": order_primary,
+            "strategies": order_strategies,
+            "primary_strategy": order_primary,
             "tier": order.get("tier", 99),
             "order_id": str(alpaca_order.id),
             "stop_order_id": stop_order_id,

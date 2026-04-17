@@ -242,6 +242,74 @@ class TestScanInstrument:
         assert result['volume_ratio'] == 0.8  # 800k / 1M (prior-20d avg, excludes today)
 
 
+# ── scan_instrument IBS enrichment ───────────────────────────
+
+class TestScanInstrumentIbs:
+    def _scan(self, rsi2_val=50.0, ibs_val=0.5, close_val=110.0, sma200_val=100.0,
+              regime=None, atr_val=2.0):
+        data = make_price_data(close_val=close_val)
+        if regime is None:
+            regime = ranging_regime()
+        with patch('screener.rsi', return_value=np.array([rsi2_val])), \
+             patch('screener.sma', return_value=np.array([sma200_val])), \
+             patch('screener.atr', return_value=np.array([atr_val])), \
+             patch('screener.ibs', return_value=np.array([ibs_val])):
+            from screener import scan_instrument
+            return scan_instrument("SPY", data, regime)
+
+    def test_result_includes_ibs_fields(self):
+        result = self._scan(rsi2_val=3.0, ibs_val=0.10)
+        assert result is not None
+        assert 'ibs' in result
+        assert 'ibs_priority' in result
+        assert 'rsi2_priority' in result
+
+    def test_ibs_signal_when_below_threshold_above_sma(self):
+        # rsi2=50 → no rsi2 signal; ibs=0.10 < 0.15 → ibs signal
+        result = self._scan(rsi2_val=50.0, ibs_val=0.10,
+                            close_val=110.0, sma200_val=100.0)
+        assert result is not None
+        assert result['ibs_priority'] == 'signal'
+        assert result['rsi2_priority'] is None
+
+    def test_ibs_watch_when_between_threshold_and_threshold_plus_005(self):
+        # ibs=0.18 → 0.15 <= 0.18 < 0.20 → watch
+        result = self._scan(rsi2_val=50.0, ibs_val=0.18)
+        assert result is not None
+        assert result['ibs_priority'] == 'watch'
+
+    def test_ibs_no_signal_when_below_sma(self):
+        # below sma → even low IBS must not qualify
+        result = self._scan(rsi2_val=50.0, ibs_val=0.10,
+                            close_val=90.0, sma200_val=100.0)
+        assert result is None
+
+    def test_admits_row_when_only_ibs_qualifies(self):
+        # rsi2=50 (none), ibs=0.10 (signal) → row must be admitted
+        result = self._scan(rsi2_val=50.0, ibs_val=0.10)
+        assert result is not None
+
+    def test_admits_row_when_only_rsi2_qualifies(self):
+        # rsi2=3 (strong), ibs=0.80 (none) → row admitted (back-compat)
+        result = self._scan(rsi2_val=3.0, ibs_val=0.80)
+        assert result is not None
+        assert result['rsi2_priority'] == 'strong_signal'
+        assert result['ibs_priority'] is None
+
+    def test_both_strategies_qualify_stacked(self):
+        # Both fire → both priorities set; top-level priority reflects best
+        result = self._scan(rsi2_val=3.0, ibs_val=0.10)
+        assert result is not None
+        assert result['rsi2_priority'] == 'strong_signal'
+        assert result['ibs_priority'] == 'signal'
+
+    def test_nan_ibs_treated_as_no_signal(self):
+        result = self._scan(rsi2_val=3.0, ibs_val=float('nan'))
+        assert result is not None
+        assert result['ibs_priority'] is None
+        assert result['rsi2_priority'] == 'strong_signal'
+
+
 # ── fetch_daily_bars ──────────────────────────────────────────
 
 class TestFetchDailyBars:
