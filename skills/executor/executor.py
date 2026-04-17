@@ -984,8 +984,12 @@ def verify_startup(trading_client, r):
     print("[Executor] Running startup verification...")
     account = trading_client.get_account()
 
+    if account.pattern_day_trader:
+        print("  ⚠️  PDT flag set on account (paper account — watcher enforces ≥3 block)")
+    else:
+        print("  ✅ PDT flag is clean")
+
     checks = [
-        (not account.pattern_day_trader, "PDT flag is clean"),
         (not account.trading_blocked, "Trading not blocked"),
         (not account.account_blocked, "Account not blocked"),
     ]

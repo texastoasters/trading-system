@@ -1,19 +1,20 @@
 # Handoff
 
 ## State
-Branch `feat/intraday-equity-sparkline`, PR #123 open. 614 Python tests + 400 Elixir tests passing.
+Branch `fix/pdt-flag-startup-check`, PR open. 209 Python executor+watcher tests passing.
+v0.30.0 merged to main (PR #123). v0.30.1 in progress.
 
 ## Last Completed
-v0.30.0 signal quality features (all on PR #123):
-1. Entry filter — watcher skips if close > prev-day-high
-2. Same-day exit cooldown — executor writes `trading:exited_today:{symbol}` (TTL midnight ET); watcher blocks re-entry
-3. PDT day-trade counter block — watcher blocks at ≥3; executor notifies via Telegram at count 2
+v0.30.1 bugfix: `account.pattern_day_trader` downgraded from hard-fail to warning in
+`verify_startup`. Paper accounts get flagged PDT by Alpaca even with >$25k equity;
+watcher's ≥3 block is the real enforcement. Startup was aborting on live VPS.
 
 ## Next
-- Merge PR #123 → tag v0.30.0 → deploy VPS (`docker compose up --build -d dashboard`)
+- Merge v0.30.1 PR → tag v0.30.1 → restart agents on VPS
+- VPS: `docker compose up --build -d dashboard` (for sparkline — from v0.30.0 merge)
 - Multi-timeframe confirmation (v0.31, medium effort, needs 4h bar data from Alpaca)
-- Review `docs/STRATEGY_REVIEW.md` findings and decide which recommendations to act on
+- Review `docs/STRATEGY_REVIEW.md` findings
 
 ## Context
-VPS needs `docker compose up --build -d dashboard` after merge (dashboard changes in sparkline).
-Python agents restart automatically; no manual restart needed for watcher/executor changes.
+`docs/ALTERNATE_STRATEGIES.md` + `scripts/backtest_alt_strategies.py` exist untracked (from
+parallel agent session) — not yet committed.

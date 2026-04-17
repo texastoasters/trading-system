@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.30.1] - 2026-04-16
+
+### Fixed
+- **Executor: PDT flag startup check** — `account.pattern_day_trader` is now a warning rather than a hard-failure gate. Paper accounts can be flagged PDT by Alpaca even with >$25k equity; the watcher's ≥3 day-trade block is the real enforcement mechanism.
+
+---
+
 ## [0.30.0] - 2026-04-16
 
 ### Added
