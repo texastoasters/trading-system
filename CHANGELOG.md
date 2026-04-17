@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.32.5] - 2026-04-16
+
+### Added
+- **Wave 4 #3a: RSI-2 time-stop (`max_hold_days`) walk-forward sweep harness** — `scripts/sweep_rsi2_max_hold.py` runs an offline per-instrument walk-forward optimization of `max_hold_bars` across `{2, 3, 5, 7, 10}` (12m train / 3m OOS / quarterly step). Regime-agnostic: single winner per symbol, not per regime. Entry gate mirrors live prod (aggressive threshold on UPTREND bars, conservative elsewhere); other exits (stop / rsi_exit / prev_high) unchanged from the threshold sweep. Guardrails: train trades ≥ 5, OOS trades ≥ 5, OOS PF ≥ 1.2 — cells below return `None` so the live helper can fall back to the global `RSI2_MAX_HOLD_DAYS` const. Writes `data/rsi2_max_hold/{symbol}.json`. No prod path touched — follow-up PRs #3b (fold into `supervisor --refit-thresholds` + `get_max_hold_days` helper) and #3c (watcher wiring) consume the output.
+
+---
+
 ## [0.32.4] - 2026-04-16
 
 ### Changed
