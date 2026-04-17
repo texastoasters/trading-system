@@ -1,33 +1,37 @@
 # Remember
 
-## v0.32.3 — Wave 4 #2b (per-symbol RSI-2 threshold persistence + refit)
+## v0.32.4 — Wave 4 #2c (screener reads per-symbol RSI-2 thresholds)
 
-Wires the #2a sweep output into Redis and gives the live helper a stable read
-path. No screener/watcher path consumes this yet — that is #2c.
+Closes Wave 4 #2 end-to-end. Screener now consults Redis for the per-symbol
+RSI-2 entry threshold before building watchlist rows; quarterly supervisor
+refit job (#2b) populates those keys.
 
 Shipped:
-- `Keys.thresholds(symbol)` → `trading:thresholds:{symbol}` namespace.
-- `get_entry_threshold(r, symbol, regime)` in `scripts/config.py`:
-  - Returns per-symbol value when Redis key is present and regime cell is non-null.
-  - Fallback: `RSI2_ENTRY_AGGRESSIVE` on `UPTREND`, else `RSI2_ENTRY_CONSERVATIVE`.
-  - Robust to: missing key, malformed JSON, null regime cell, unknown regime string.
-- `supervisor --refit-thresholds` CLI job:
-  - `run_refit_thresholds(r, symbols=None, fetcher=None, sweeper=None)`.
-  - Walks active universe (tier1+tier2+tier3) when `symbols=None`.
-  - Default fetcher uses Alpaca daily bars (5y, `pragma: no cover`).
-  - Default sweeper is `sweep_rsi2_thresholds.sweep_symbol`.
-  - Symbols that raise on fetch/sweep are logged and skipped; return count is
-    number of successful writes.
-  - Payload: `{"RANGING": int|null, "UPTREND": int|null, "DOWNTREND": int|null,
-    "refit": "YYYY-MM-DD"}`.
+- `screener.run_scan` calls `get_entry_threshold(r, symbol, regime)` per
+  instrument and passes the resolved threshold into `scan_instrument`.
+- `scan_instrument(symbol, data, regime_info, threshold)` — `threshold`
+  is now a required positional param. Float-cast on entry. No Redis
+  coupling in `scan_instrument` itself (q1-b: hoist lookup to caller).
+- `entry_threshold` field in watchlist rows is the resolved per-symbol
+  (or fallback) threshold, always float-typed now.
+- `strong_signal` boundary left hardcoded at `rsi2 < 5` — extreme-oversold
+  semantic tier, not per-symbol tunable (q2-a).
 
-Tests: +1 Keys test, +8 helper tests, +6 supervisor refit tests (with fake
-fetcher/sweeper via DI). Full suite 729 passed, 100% coverage preserved.
+Backward compat: when Redis has no `trading:thresholds:{symbol}` key (or
+the payload is malformed / null cell / unknown regime), `get_entry_threshold`
+falls back to `RSI2_ENTRY_AGGRESSIVE` on UPTREND / `RSI2_ENTRY_CONSERVATIVE`
+elsewhere. So running #2c before the refit job has populated keys yields
+zero behavior change.
+
+Tests: +3 `TestRunScan` cases (persisted per-symbol wins, ranging-empty
+fallback, uptrend-empty fallback). Existing `scan_instrument` callsites
+updated to pass threshold explicitly. Full suite 732 passed, 100% coverage.
+
+Watcher intentionally untouched — already consumes `row["entry_threshold"]`
+from the watchlist payload and has no independent RSI-2 gate.
 
 Next:
-- 2c: wire screener (not watcher — entry threshold is applied in the watchlist
-  builder on the screener side) RSI-2 entry check through
-  `get_entry_threshold(r, symbol, regime)`. Fallback already matches global
-  const so zero-behavior change when Redis is empty.
-- #3: per-instrument time-stop sweep (shared harness with #2).
-- #4: Donchian-BO trend slot (v0.33.0).
+- Wave 4 #3: per-instrument time-stop sweep (shared walk-forward harness
+  with #2a, sweep `max_hold_days` grid).
+- Wave 4 #4: Donchian-BO trend slot (v0.33.0 — new minor, Phase 2 multi-
+  strategy).

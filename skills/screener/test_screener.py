@@ -108,7 +108,9 @@ class TestScanInstrument:
              patch('screener.sma', return_value=np.array([sma200_val])), \
              patch('screener.atr', return_value=np.array([atr_val])):
             from screener import scan_instrument
-            return scan_instrument("SPY", data, regime)
+            threshold = (config.RSI2_ENTRY_AGGRESSIVE if regime["regime"] == "UPTREND"
+                         else config.RSI2_ENTRY_CONSERVATIVE)
+            return scan_instrument("SPY", data, regime, threshold)
 
     def test_strong_signal_when_rsi2_below_5_above_sma(self):
         result = self._scan(rsi2_val=3.0, close_val=110.0, sma200_val=100.0)
@@ -142,7 +144,7 @@ class TestScanInstrument:
              patch('screener.sma', return_value=np.array([100.0])), \
              patch('screener.atr', return_value=np.array([2.0])):
             from screener import scan_instrument
-            result = scan_instrument("SPY", data, ranging_regime())
+            result = scan_instrument("SPY", data, ranging_regime(), config.RSI2_ENTRY_CONSERVATIVE)
         assert result is None
 
     def test_uptrend_uses_aggressive_threshold(self):
@@ -170,7 +172,7 @@ class TestScanInstrument:
              patch('screener.sma', return_value=np.array([100.0])), \
              patch('screener.atr', return_value=np.array([2.0])):
             from screener import scan_instrument
-            result = scan_instrument("SPY", data, ranging_regime())
+            result = scan_instrument("SPY", data, ranging_regime(), config.RSI2_ENTRY_CONSERVATIVE)
         assert result is None
 
     def test_normal_volume_passes(self):
@@ -180,7 +182,7 @@ class TestScanInstrument:
              patch('screener.sma', return_value=np.array([100.0])), \
              patch('screener.atr', return_value=np.array([2.0])):
             from screener import scan_instrument
-            result = scan_instrument("SPY", data, ranging_regime())
+            result = scan_instrument("SPY", data, ranging_regime(), config.RSI2_ENTRY_CONSERVATIVE)
         assert result is not None
 
     def test_zero_avg_volume_does_not_filter(self):
@@ -190,7 +192,7 @@ class TestScanInstrument:
              patch('screener.sma', return_value=np.array([100.0])), \
              patch('screener.atr', return_value=np.array([2.0])):
             from screener import scan_instrument
-            result = scan_instrument("SPY", data, ranging_regime())
+            result = scan_instrument("SPY", data, ranging_regime(), config.RSI2_ENTRY_CONSERVATIVE)
         assert result is not None
 
     def test_result_includes_volume_ratio(self):
@@ -199,7 +201,7 @@ class TestScanInstrument:
              patch('screener.sma', return_value=np.array([100.0])), \
              patch('screener.atr', return_value=np.array([2.0])):
             from screener import scan_instrument
-            result = scan_instrument("SPY", data, ranging_regime())
+            result = scan_instrument("SPY", data, ranging_regime(), config.RSI2_ENTRY_CONSERVATIVE)
         assert result is not None
         assert 'volume_ratio' in result
         assert result['volume_ratio'] == 1.0  # today == avg
@@ -213,7 +215,7 @@ class TestScanInstrument:
              patch('screener.sma', return_value=np.array([100.0])), \
              patch('screener.atr', return_value=np.array([2.0])):
             from screener import scan_instrument
-            result = scan_instrument("SPY", data, ranging_regime())
+            result = scan_instrument("SPY", data, ranging_regime(), config.RSI2_ENTRY_CONSERVATIVE)
         assert result is not None  # 0.5 is NOT < 0.5; should pass
 
     def test_volume_ratio_none_when_avg_volume_zero(self):
@@ -222,7 +224,7 @@ class TestScanInstrument:
              patch('screener.sma', return_value=np.array([100.0])), \
              patch('screener.atr', return_value=np.array([2.0])):
             from screener import scan_instrument
-            result = scan_instrument("SPY", data, ranging_regime())
+            result = scan_instrument("SPY", data, ranging_regime(), config.RSI2_ENTRY_CONSERVATIVE)
         assert result is not None
         assert result['volume_ratio'] is None
 
@@ -237,7 +239,7 @@ class TestScanInstrument:
              patch('screener.sma', return_value=np.array([100.0])), \
              patch('screener.atr', return_value=np.array([2.0])):
             from screener import scan_instrument
-            result = scan_instrument("SPY", data, ranging_regime())
+            result = scan_instrument("SPY", data, ranging_regime(), config.RSI2_ENTRY_CONSERVATIVE)
         assert result is not None
         assert result['volume_ratio'] == 0.8  # 800k / 1M (prior-20d avg, excludes today)
 
@@ -255,7 +257,9 @@ class TestScanInstrumentIbs:
              patch('screener.atr', return_value=np.array([atr_val])), \
              patch('screener.ibs', return_value=np.array([ibs_val])):
             from screener import scan_instrument
-            return scan_instrument("SPY", data, regime)
+            threshold = (config.RSI2_ENTRY_AGGRESSIVE if regime["regime"] == "UPTREND"
+                         else config.RSI2_ENTRY_CONSERVATIVE)
+            return scan_instrument("SPY", data, regime, threshold)
 
     def test_result_includes_ibs_fields(self):
         result = self._scan(rsi2_val=3.0, ibs_val=0.10)
@@ -490,6 +494,72 @@ class TestRunScan:
             run_scan()
         mock_load.assert_called_once_with(r)
 
+    def test_passes_per_symbol_threshold_when_redis_key_present(self):
+        """run_scan resolves threshold via get_entry_threshold and passes it
+        into scan_instrument — per-symbol value wins over global const."""
+        base = {
+            Keys.SYSTEM_STATUS: "active",
+            Keys.TIERS: json.dumps(config.DEFAULT_TIERS),
+            Keys.UNIVERSE: json.dumps(config.DEFAULT_UNIVERSE),
+            Keys.thresholds("SPY"): json.dumps({
+                "RANGING": 7, "UPTREND": 3, "DOWNTREND": None, "refit": "2026-04-16",
+            }),
+        }
+        r = MagicMock()
+        r.get = lambda k: base.get(k)
+        r.set = MagicMock()
+        spy_data = make_price_data(close_val=500.0)
+
+        with patch('screener.get_redis', return_value=r), \
+             patch('screener.config.init_redis_state'), \
+             patch('screener.get_active_instruments', return_value=["SPY"]), \
+             patch('screener.fetch_daily_bars', return_value=spy_data), \
+             patch('screener.compute_regime', return_value=ranging_regime()), \
+             patch('screener.scan_instrument', return_value=None) as mock_scan, \
+             patch('screener.notify'):
+            from screener import run_scan
+            run_scan()
+
+        assert mock_scan.call_count == 1
+        threshold_arg = mock_scan.call_args[0][3]
+        assert threshold_arg == 7.0
+
+    def test_passes_fallback_threshold_when_redis_key_absent(self):
+        """Empty trading:thresholds → fallback to global const via helper."""
+        r = self._make_redis()
+        spy_data = make_price_data(close_val=500.0)
+
+        with patch('screener.get_redis', return_value=r), \
+             patch('screener.config.init_redis_state'), \
+             patch('screener.get_active_instruments', return_value=["SPY"]), \
+             patch('screener.fetch_daily_bars', return_value=spy_data), \
+             patch('screener.compute_regime', return_value=ranging_regime()), \
+             patch('screener.scan_instrument', return_value=None) as mock_scan, \
+             patch('screener.notify'):
+            from screener import run_scan
+            run_scan()
+
+        threshold_arg = mock_scan.call_args[0][3]
+        assert threshold_arg == float(config.RSI2_ENTRY_CONSERVATIVE)
+
+    def test_uptrend_fallback_uses_aggressive_when_redis_empty(self):
+        """UPTREND regime with no Redis key → aggressive const."""
+        r = self._make_redis()
+        spy_data = make_price_data(close_val=500.0)
+
+        with patch('screener.get_redis', return_value=r), \
+             patch('screener.config.init_redis_state'), \
+             patch('screener.get_active_instruments', return_value=["SPY"]), \
+             patch('screener.fetch_daily_bars', return_value=spy_data), \
+             patch('screener.compute_regime', return_value=uptrend_regime()), \
+             patch('screener.scan_instrument', return_value=None) as mock_scan, \
+             patch('screener.notify'):
+            from screener import run_scan
+            run_scan()
+
+        threshold_arg = mock_scan.call_args[0][3]
+        assert threshold_arg == float(config.RSI2_ENTRY_AGGRESSIVE)
+
 
 class TestRunScanHeatmap:
     def _make_redis(self, status="active"):
@@ -620,7 +690,7 @@ class TestScanInstrumentDivergence:
              patch('screener.sma', return_value=np.array([sma200_val])), \
              patch('screener.atr', return_value=np.array([atr_val])):
             from screener import scan_instrument
-            return scan_instrument("SPY", data, ranging_regime())
+            return scan_instrument("SPY", data, ranging_regime(), config.RSI2_ENTRY_CONSERVATIVE)
 
     def test_divergence_true_when_price_lower_low_and_rsi_higher_low(self):
         # 12 bars; prior 11: close=100, rsi2=3; current: close=90 (lower), rsi2=7 (higher)
