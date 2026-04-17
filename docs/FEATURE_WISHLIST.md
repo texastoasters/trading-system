@@ -21,15 +21,15 @@ These are known issues documented in HANDOFF.md that can cause real harm.
 
 Actionable items from `docs/STRATEGY_REVIEW.md` + `docs/ALTERNATE_STRATEGIES.md`. The backtest lies: it enters at `close[D]`, live enters at `open[D+1]`. The `close > prev_high` exit fires immediately on gap-up opens — empirically 5/8 recent round-trips closed same-day at ~entry price. Tier/threshold decisions based on existing backtests are optimistic.
 
-### Wave 1 — v0.30.2 cheap quality fixes (<1 day total)
-- [ ] **Watcher gap-up guard** — Fetch intraday price; skip entry if `current_price ≥ prev_high * 1.001`. Complements the v0.30.0 screener-side filter against next-morning gap-up opens. (STRATEGY_REVIEW §5 rec #2)
-- [ ] **Breakeven whipsaw** — 4h cooldown when exit is `take_profit` AND `hold_days == 0` AND `|pnl_pct| < 0.002`. Belt-and-suspenders against churn when the other guards miss. (§5 rec #3)
-- [ ] **`exit_reason` logging bug** — `executor.py:818` uses `order.get("signal_type", "unknown")`; should be `order.get("reason", order.get("signal_type", "unknown"))` to match the Telegram path at `executor.py:862`. Blocks empirical exit analysis. (§5 rec #4)
-- [ ] **Screener blacklist check** — CLMT/OSK appeared as `strong_signal` after being blacklisted and liquidated. Watcher honors `universe.blacklisted` but screener may not; add the filter if absent. (§5 rec #10)
+### Wave 1 — v0.30.2 cheap quality fixes ✅ shipped 2026-04-16 (PR #125)
+- [x] **Watcher gap-up guard** — live intraday price vs `prev_high * 1.001` re-check before entry signal.
+- [x] **Breakeven whipsaw** — 4h cooldown when `take_profit` fires same-day at `|pnl_pct| < 0.2%` (×100 scale).
+- [x] **`exit_reason` logging** — `_log_trade` now prefers `order["reason"]` over `signal_type` for attribution.
+- [x] **Screener blacklist check** — `get_active_instruments` filters `universe.blacklisted` at the canonical helper.
 
-### Wave 2 — v0.31.0 foundation (medium, unblocks multi-strategy alpha)
-- [ ] **Fix backtest entry mechanics** — Change all backtest harnesses to enter at `open[i+1]` instead of `close[i]`. Re-run all tier backtests. Expect PF/WR numbers to drop; live convergence will improve. (§5 rec #9) — Without this, all tier/threshold decisions are built on sand.
-- [ ] **Populate `signals` table** — INSERT in watcher after publish to `trading:signals`. Unlocks downstream signal-distribution analytics and per-tier hit-rate queries. (§5 rec #5)
+### Wave 2 — v0.31.0 foundation ✅ shipped 2026-04-16 (PR TBD)
+- [x] **Fix backtest entry mechanics** — `scripts/discover_universe.py`, `scripts/backtest_rsi2.py`, `scripts/backtest_rsi2_expanded.py`, `scripts/backtest_rsi2_universe.py` now fill at `open[i+1]` to match live executor. Guards final-bar edge case. Universe scanner `Result` exposes `entries` for live-parity verification.
+- [x] **Populate `signals` table** — `watcher._log_signal` persists every published signal to TimescaleDB `signals` (symbol, strategy, signal_type, direction, confidence, regime, indicators JSONB, acted_on). Exit metadata folded into `indicators` JSONB. Non-fatal on DB failure. PM/executor `acted_on` / `rejection_reason` population deferred.
 
 ### Wave 3 — v0.32.0 multi-strategy Phase 1
 - [ ] **Ship IBS as second entry path** — Runs alongside RSI-2 with own cooldown. Best symbols: DIA, XLI, CSCO, XLV, XLF, EA, ABT, IWM, SHOP, V, SPOT. Requires Wave 2 first (honest backtest numbers). Per `docs/ALTERNATE_STRATEGIES.md` backtest: 656 trades, PF 1.43, trades on days RSI-2 does not fire.

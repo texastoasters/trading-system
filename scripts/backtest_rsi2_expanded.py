@@ -157,6 +157,7 @@ def run_rsi2(
     close = data['close']
     high = data['high']
     low = data['low']
+    open_ = data['open']
     dates = data['dates']
     n = len(close)
 
@@ -250,11 +251,14 @@ def run_rsi2(
 
         else:
             if rsi2[i] < rsi_entry and close[i] > trend[i]:
-                entry_price = close[i]
-                entry_date = dates[i]
-                entry_idx = i
+                # Signal fires EOD; executor fills at next-bar open.
+                if i + 1 >= n:
+                    continue
+                entry_price = open_[i + 1]
+                entry_date = dates[i + 1]
+                entry_idx = i + 1
 
-                stop_price = entry_price - (atr_stop_mult * atr14[i])
+                stop_price = entry_price - (atr_stop_mult * atr14[entry_idx])
                 risk_per_share = entry_price - stop_price
 
                 if risk_per_share <= 0:

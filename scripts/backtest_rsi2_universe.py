@@ -107,6 +107,7 @@ class Result:
     trades_per_year: float = 0.0
     passed: bool = False
     fail_reasons: list = field(default_factory=list)
+    entries: list = field(default_factory=list)
 
 
 def run_rsi2(data, symbol, asset_type="equity", account_size=5000.0,
@@ -114,6 +115,7 @@ def run_rsi2(data, symbol, asset_type="equity", account_size=5000.0,
     close = data['close']
     high = data['high']
     low = data['low']
+    open_ = data['open']
     dates = data['dates']
     n = len(close)
 
@@ -173,9 +175,12 @@ def run_rsi2(data, symbol, asset_type="equity", account_size=5000.0,
                 in_pos = False
         else:
             if rsi2[i] < 10 and close[i] > sma200[i]:
-                entry_p = close[i]
-                entry_i = i
-                stop_dist = 2.0 * atr14[i]
+                # Signal fires EOD; executor fills at next-bar open.
+                if i + 1 >= n:
+                    continue
+                entry_p = open_[i + 1]
+                entry_i = i + 1
+                stop_dist = 2.0 * atr14[entry_i]
                 if stop_dist <= 0:
                     continue
                 stop_p = entry_p - stop_dist
@@ -185,6 +190,7 @@ def run_rsi2(data, symbol, asset_type="equity", account_size=5000.0,
                 shares = min(shares, max_s)
                 if shares * entry_p < 1.0:
                     continue
+                r.entries.append({"entry_price": entry_p, "entry_i": entry_i})
                 in_pos = True
 
     if not returns:
