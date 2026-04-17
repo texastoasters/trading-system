@@ -1102,3 +1102,95 @@ class TestApplyHardFails:
         ]
         removed, _ = self._call(results)
         assert set(removed) == {"CLMT", "OSK"}
+
+
+# ── run_refit_thresholds (Wave 4 #2b) ─────────────────────────
+
+def make_sweep_result(symbol, thresholds=None, last_refit="2026-04-16"):
+    return {
+        "symbol": symbol,
+        "last_refit": last_refit,
+        "windows_tested": 8,
+        "thresholds": thresholds or {"RANGING": 7, "UPTREND": 5, "DOWNTREND": None},
+        "oos_pf_avg": {"RANGING": 1.84, "UPTREND": 2.10, "DOWNTREND": 0.0},
+        "trades_per_regime": {"RANGING": 42, "UPTREND": 18, "DOWNTREND": 3},
+    }
+
+
+class TestRefitThresholds:
+    def test_writes_per_symbol_key_for_each_symbol(self):
+        r = make_redis()
+        fetcher = lambda sym: [{"symbol": sym}]
+        sweeper = lambda bars: make_sweep_result(bars[0]["symbol"])
+        from supervisor import run_refit_thresholds
+        run_refit_thresholds(r, symbols=["SPY", "QQQ"], fetcher=fetcher, sweeper=sweeper)
+        keys_written = [c.args[0] for c in r.set.call_args_list]
+        assert Keys.thresholds("SPY") in keys_written
+        assert Keys.thresholds("QQQ") in keys_written
+
+    def test_payload_shape_includes_regimes_and_refit(self):
+        r = make_redis()
+        fetcher = lambda sym: [{"symbol": sym}]
+        sweeper = lambda bars: make_sweep_result(
+            bars[0]["symbol"],
+            thresholds={"RANGING": 10, "UPTREND": 3, "DOWNTREND": None},
+            last_refit="2026-04-16",
+        )
+        from supervisor import run_refit_thresholds
+        run_refit_thresholds(r, symbols=["SPY"], fetcher=fetcher, sweeper=sweeper)
+        call = r.set.call_args_list[0]
+        payload = json.loads(call.args[1])
+        assert payload["RANGING"] == 10
+        assert payload["UPTREND"] == 3
+        assert payload["DOWNTREND"] is None
+        assert payload["refit"] == "2026-04-16"
+
+    def test_skips_symbol_when_fetcher_raises(self):
+        r = make_redis()
+        def fetcher(sym):
+            if sym == "SPY":
+                raise RuntimeError("api down")
+            return [{"symbol": sym}]
+        sweeper = lambda bars: make_sweep_result(bars[0]["symbol"])
+        from supervisor import run_refit_thresholds
+        run_refit_thresholds(r, symbols=["SPY", "QQQ"], fetcher=fetcher, sweeper=sweeper)
+        keys_written = [c.args[0] for c in r.set.call_args_list]
+        assert Keys.thresholds("SPY") not in keys_written
+        assert Keys.thresholds("QQQ") in keys_written
+
+    def test_skips_symbol_when_sweeper_raises(self):
+        r = make_redis()
+        fetcher = lambda sym: [{"symbol": sym}]
+        def sweeper(bars):
+            if bars[0]["symbol"] == "QQQ":
+                raise ValueError("bad data")
+            return make_sweep_result(bars[0]["symbol"])
+        from supervisor import run_refit_thresholds
+        run_refit_thresholds(r, symbols=["SPY", "QQQ"], fetcher=fetcher, sweeper=sweeper)
+        keys_written = [c.args[0] for c in r.set.call_args_list]
+        assert Keys.thresholds("QQQ") not in keys_written
+        assert Keys.thresholds("SPY") in keys_written
+
+    def test_returns_count_of_successful_refits(self):
+        r = make_redis()
+        fetcher = lambda sym: [{"symbol": sym}]
+        def sweeper(bars):
+            if bars[0]["symbol"] == "QQQ":
+                raise ValueError("bad data")
+            return make_sweep_result(bars[0]["symbol"])
+        from supervisor import run_refit_thresholds
+        count = run_refit_thresholds(
+            r, symbols=["SPY", "QQQ", "NVDA"], fetcher=fetcher, sweeper=sweeper
+        )
+        assert count == 2
+
+    def test_symbols_none_uses_redis_universe(self):
+        r = make_redis(store={Keys.UNIVERSE: json.dumps({
+            "tier1": ["SPY"], "tier2": ["GOOGL"], "tier3": []
+        })})
+        calls = []
+        fetcher = lambda sym: (calls.append(sym), [{"symbol": sym}])[1]
+        sweeper = lambda bars: make_sweep_result(bars[0]["symbol"])
+        from supervisor import run_refit_thresholds
+        run_refit_thresholds(r, symbols=None, fetcher=fetcher, sweeper=sweeper)
+        assert set(calls) == {"SPY", "GOOGL"}

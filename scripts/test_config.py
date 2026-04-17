@@ -23,10 +23,12 @@ from config import (
     Keys, _load_trading_env,
     get_redis, init_redis_state,
     get_active_instruments, get_tier,
+    get_entry_threshold,
     get_simulated_equity, get_drawdown,
     is_crypto, get_sector,
     load_overrides,
     DEFAULT_UNIVERSE, DEFAULT_TIERS, INITIAL_CAPITAL,
+    RSI2_ENTRY_CONSERVATIVE, RSI2_ENTRY_AGGRESSIVE,
 )
 
 
@@ -193,6 +195,68 @@ class TestGetActiveInstruments:
         universe = {"tier1": ["SPY"], "tier2": [], "tier3": [], "disabled": None}
         r = make_r(store={Keys.UNIVERSE: json.dumps(universe)})
         assert get_active_instruments(r) == ["SPY"]
+
+
+class TestKeysThresholds:
+    def test_namespaces_per_symbol(self):
+        """`Keys.thresholds(symbol)` returns `trading:thresholds:{symbol}`."""
+        assert Keys.thresholds("SPY") == "trading:thresholds:SPY"
+        assert Keys.thresholds("BTC/USD") == "trading:thresholds:BTC/USD"
+
+
+class TestGetEntryThreshold:
+    """Wave 4 #2b helper. Returns the per-symbol, per-regime RSI-2 entry
+    threshold from Redis when present and valid; otherwise falls back to the
+    global live rule (UPTREND → AGGRESSIVE, else CONSERVATIVE). Any malformed
+    or partial Redis data must fall back silently — a bad refit payload
+    cannot break live routing."""
+
+    def test_returns_global_aggressive_for_uptrend_when_no_key(self):
+        r = make_r(store={})
+        assert get_entry_threshold(r, "SPY", "UPTREND") == RSI2_ENTRY_AGGRESSIVE
+
+    def test_returns_global_conservative_for_ranging_when_no_key(self):
+        r = make_r(store={})
+        assert get_entry_threshold(r, "SPY", "RANGING") == RSI2_ENTRY_CONSERVATIVE
+
+    def test_returns_global_conservative_for_downtrend_when_no_key(self):
+        r = make_r(store={})
+        assert get_entry_threshold(r, "SPY", "DOWNTREND") == RSI2_ENTRY_CONSERVATIVE
+
+    def test_returns_per_symbol_value_when_key_present(self):
+        payload = {"RANGING": 7, "UPTREND": 3, "DOWNTREND": 5,
+                   "refit": "2026-04-16"}
+        r = make_r(store={Keys.thresholds("SPY"): json.dumps(payload)})
+        assert get_entry_threshold(r, "SPY", "RANGING") == 7
+        assert get_entry_threshold(r, "SPY", "UPTREND") == 3
+        assert get_entry_threshold(r, "SPY", "DOWNTREND") == 5
+
+    def test_falls_back_when_regime_value_is_null(self):
+        """A sweep cell that failed guardrails is stored as null. Helper must
+        treat null as 'fall back to global', not 'threshold is zero'."""
+        payload = {"RANGING": 7, "UPTREND": None, "DOWNTREND": None,
+                   "refit": "2026-04-16"}
+        r = make_r(store={Keys.thresholds("SPY"): json.dumps(payload)})
+        assert get_entry_threshold(r, "SPY", "UPTREND") == RSI2_ENTRY_AGGRESSIVE
+        assert get_entry_threshold(r, "SPY", "DOWNTREND") == RSI2_ENTRY_CONSERVATIVE
+        assert get_entry_threshold(r, "SPY", "RANGING") == 7
+
+    def test_falls_back_when_regime_missing_from_payload(self):
+        """Partial payloads (e.g. only one regime written) must not KeyError."""
+        payload = {"RANGING": 7}
+        r = make_r(store={Keys.thresholds("SPY"): json.dumps(payload)})
+        assert get_entry_threshold(r, "SPY", "UPTREND") == RSI2_ENTRY_AGGRESSIVE
+
+    def test_falls_back_on_malformed_json(self):
+        """Invalid JSON must never blow up a live routing decision."""
+        r = make_r(store={Keys.thresholds("SPY"): "{not json"})
+        assert get_entry_threshold(r, "SPY", "RANGING") == RSI2_ENTRY_CONSERVATIVE
+
+    def test_falls_back_on_unknown_regime_string(self):
+        """If watcher somehow passes 'UNKNOWN' or a typo, use the safer
+        (CONSERVATIVE) fallback rather than erroring."""
+        r = make_r(store={})
+        assert get_entry_threshold(r, "SPY", "UNKNOWN") == RSI2_ENTRY_CONSERVATIVE
 
 
 class TestDefaultUniverseExclusions:
