@@ -95,7 +95,7 @@ Actionable items from `docs/STRATEGY_REVIEW.md` + `docs/ALTERNATE_STRATEGIES.md`
 - [x] **RSI-2 divergence detection** — Flag when price makes a new low but RSI-2 makes a higher low (bullish divergence) — stronger entry signal than raw RSI-2 threshold alone. PR #119.
 - [x] **Multi-timeframe confirmation** — *Investigated 2026-04-16, not shipped.* For RSI-2 mean reversion, daily and 4h RSI-2 are near-perfectly correlated; divergences (4h recovering while daily still oversold) are the strongest setups, so 4h filtering would reject winners. False-positive root causes are elsewhere (gap-up opens, bar-timing leak — see `docs/STRATEGY_REVIEW.md`). Multi-timeframe alignment is a momentum/trend-following technique, not an MR one.
 - [x] **Entry filter: skip if price > prev-day-high** — If entry price is already above yesterday's high, the "close > prev_day_high" exit fires at a loss. Guard: skip entry when `current_price > prev_day_high`. Observed on KMI (entry $32.66, prev high $31.85 → exit at -2.2%).
-- [ ] **Broader strategy review** — RSI-2 exit rules (prev-day-high, RSI>60, time stop) need holistic evaluation against real trade history. Losing trades like KMI suggest some exit conditions may fire prematurely or at wrong price levels. Backtest alternative exits (5-day MA cross, entry-price minimum, combined RSI>65 only).
+- [x] **Broader strategy review** — `docs/STRATEGY_REVIEW.md` (exit-rule + tier/threshold audit against real trade history) and `docs/ALTERNATE_STRATEGIES.md` (IBS, Donchian-BO, VWAP-revert benchmarked against RSI-2 per-symbol) shipped via parallel research agent. Output drove the four-wave prioritization now at the top of this file.
 - [x] **Same-day exit cooldown** — After any exit (not just stop-loss), block re-entry until next day via Redis key `trading:exited_today:{symbol}` with TTL until midnight ET. Prevents same-day rebuy and PDT burn (observed: CLMT bought/sold 3x in one day).
 - [x] **PDT day-trade counter** — Watcher blocks all new entries when `trading:pdt:count` ≥ 3. Executor sends Telegram warning when count reaches 2. Count already tracked and Alpaca-synced by executor.
 - [x] **Earnings avoidance** — Query Alpaca's calendar or a public earnings API. Block entry signals for any symbol within 2 days of its earnings release.
@@ -104,7 +104,7 @@ Actionable items from `docs/STRATEGY_REVIEW.md` + `docs/ALTERNATE_STRATEGIES.md`
 ### Dashboard
 - [ ] **Equity curve chart** — Full equity curve from inception. Overlaid with drawdown shading. Shows where circuit breakers would have fired historically.
 - [x] **Per-instrument P&L breakdown** — Table showing each instrument's total trades, win rate, profit factor, and cumulative P&L over rolling 30/90/365 days. Pulled from TimescaleDB. PR #85.
-- [ ] **Signal heatmap** — Grid of all instruments × days showing signal strength (RSI-2 value, color-coded). Makes it easy to spot clusters of oversold conditions.
+- [x] **Signal heatmap** — RSI-2 signal heatmap on `/performance` page (instruments × days, color-coded by RSI-2 value). PR #118.
 - [x] **Strategy attribution** — For each exit, show how much P&L came from RSI-2 reversal vs time-stop vs stop-loss vs manual. Helps tune which exit types are most valuable.
 
 ### Operations
