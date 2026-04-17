@@ -34,7 +34,7 @@ Actionable items from `docs/STRATEGY_REVIEW.md` + `docs/ALTERNATE_STRATEGIES.md`
 ### Wave 3 — v0.32.0 multi-strategy Phase 1 ✅ shipped 2026-04-16 (PR #127)
 - [x] **Ship IBS as second entry path** — Runs alongside RSI-2 with per-strategy 24h whipsaw cooldown. Entry: `IBS < 0.15 AND close > SMA(200)` (max_hold 3d, atr_mult 2.0). Watcher merges same-bar RSI-2 + IBS candidates into ONE stacked signal (`strategies[]`, `primary_strategy`, tighter stop, confidence × 1.25); IBS wins primary when stacked so the tighter exit controls. Per-strategy whipsaw via `trading:whipsaw:{symbol}:{strategy}`. Exit routing keyed off `primary_strategy`: max-hold and whipsaw cooldowns use the position's primary; RSI-2 `rsi2 > 60` exit only fires when primary is RSI-2. PM tier-based displacement replaced with sell-to-make-room: highest pnl% → closest-to-exit (held / max_hold) → longest held; fallback smallest loser; PDT cap blocks displacement of same-day entries. Executor writes `strategies` + `primary_strategy` to every position at fill. All v0.30.2 guards (gap-up re-check, breakeven whipsaw) reused at symbol level.
 
-### Wave 4 — v0.33+ alpha optimization (hard, large upside if it holds)
+### Wave 4 — v0.32.1 – v0.33.0 alpha optimization ✅ shipped 2026-04-17 (PRs #128–#135)
 - [x] **Per-instrument RSI-2 entry thresholds** — Sweep `{3, 5, 7, 10, 12}` × regime with walk-forward validation. Persist to `trading:thresholds:{symbol}`. (§5 rec #7)
   - [x] 2a: offline walk-forward sweep harness (`scripts/sweep_rsi2_thresholds.py`) — v0.32.2
   - [x] 2b: Redis persistence layer + `get_entry_threshold(r, symbol, regime)` helper + supervisor `--refit-thresholds` quarterly job — v0.32.3
@@ -52,6 +52,9 @@ Actionable items from `docs/STRATEGY_REVIEW.md` + `docs/ALTERNATE_STRATEGIES.md`
 ### Deferred / informational
 - [ ] **`agent_decisions` table populated** — PM "escalates to Sonnet 4" claim in CLAUDE.md is unverifiable until this is written. Either implement or remove the claim. (§5 rec #6)
 - [ ] **EOD LLM learning loop** — Either implement or strike from CLAUDE.md. (§5 rec #6)
+- [ ] **Donchian-BO walk-forward sweep** — Current params (`ENTRY_LEN=20`, `EXIT_LEN=10`, `MAX_HOLD_DAYS=30`, `ATR_MULT=3.0`) are static research defaults. Extend the `sweep_rsi2_thresholds` / `sweep_rsi2_max_hold` harness pattern to Donchian for per-symbol tuning with OOS gates.
+- [ ] **Dynamic `DONCHIAN_SYMBOLS`** — Today the set of 7 is hardcoded. Promote/demote symbols from research results (monthly re-validation like the tier system).
+- [ ] **Donchian in tier classification** — `backtest_rsi2_universe.py` currently classifies tiers on RSI-2 performance only. Fold Donchian-BO PF/WR into the tier-assignment heuristic so a symbol that wins on trend gets surfaced.
 
 ---
 
