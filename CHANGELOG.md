@@ -8,6 +8,17 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.32.1] - 2026-04-16
+
+### Changed
+- **Dashboard title rebranded** — Header, layout, and browser title now read "T² Trade Dashboard" in place of "RSI-2 Trading System" / "Trading Dashboard". Name no longer claims a single strategy now that IBS (and planned Donchian-BO) share the pipeline.
+- **Wave 4 #1: META and TSLA excluded from routing** — Both moved from `DEFAULT_UNIVERSE["tier2"]` to `DEFAULT_UNIVERSE["disabled"]`. Flat/negative across every backtested strategy in the trailing 2y window. Revisit on the next universe re-validation.
+
+### Fixed
+- **`get_active_instruments` now honors `disabled`** — Docstring has always claimed "non-disabled, non-blacklisted" but the filter was missing, so anything dropped into `universe["disabled"]` still routed. Screener/watcher now correctly skip disabled symbols.
+
+---
+
 ## [0.32.0] - 2026-04-16
 
 ### Added

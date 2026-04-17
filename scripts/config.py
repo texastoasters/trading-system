@@ -222,9 +222,11 @@ DAEMON_STALE_THRESHOLDS = {
 
 DEFAULT_UNIVERSE = {
     "tier1": ["SPY", "QQQ", "NVDA", "XLK", "XLY", "XLI"],
-    "tier2": ["GOOGL", "XLF", "META", "TSLA", "XLC", "DIA", "BTC/USD"],
+    "tier2": ["GOOGL", "XLF", "XLC", "DIA", "BTC/USD"],
     "tier3": ["V", "XLE", "XLV", "IWM"],
-    "disabled": [],
+    # META, TSLA disabled after Wave 4 alpha review — flat/negative across all
+    # backtested strategies in the 2y window. Revisit on next universe re-validation.
+    "disabled": ["META", "TSLA"],
     "archived": [],
     "last_revalidation": None,
 }
@@ -347,8 +349,10 @@ def get_active_instruments(r: redis.Redis) -> list:
     """Return list of all active (non-disabled, non-blacklisted) instruments."""
     universe = json.loads(r.get(Keys.UNIVERSE) or json.dumps(DEFAULT_UNIVERSE))
     blacklisted = set(universe.get("blacklisted") or [])
+    disabled = set(universe.get("disabled") or [])
+    excluded = blacklisted | disabled
     all_tiers = universe["tier1"] + universe["tier2"] + universe["tier3"]
-    return [s for s in all_tiers if s not in blacklisted]
+    return [s for s in all_tiers if s not in excluded]
 
 
 def get_tier(r: redis.Redis, symbol: str) -> int:

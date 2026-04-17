@@ -173,6 +173,41 @@ class TestGetActiveInstruments:
         r = make_r(store={Keys.UNIVERSE: json.dumps(universe)})
         assert get_active_instruments(r) == ["SPY"]
 
+    def test_excludes_disabled_symbols(self):
+        """Disabled symbols (performance-disabled, not permanently blacklisted)
+        must not appear in the active list. Docstring has always claimed
+        'non-disabled' but the filter was missing."""
+        universe = {
+            "tier1": ["SPY"], "tier2": ["META", "TSLA", "QQQ"], "tier3": ["IWM"],
+            "disabled": ["META", "TSLA"],
+        }
+        r = make_r(store={Keys.UNIVERSE: json.dumps(universe)})
+        result = get_active_instruments(r)
+        assert "META" not in result
+        assert "TSLA" not in result
+        assert "SPY" in result
+        assert "QQQ" in result
+        assert "IWM" in result
+
+    def test_handles_null_disabled_value(self):
+        universe = {"tier1": ["SPY"], "tier2": [], "tier3": [], "disabled": None}
+        r = make_r(store={Keys.UNIVERSE: json.dumps(universe)})
+        assert get_active_instruments(r) == ["SPY"]
+
+
+class TestDefaultUniverseExclusions:
+    def test_meta_is_disabled_by_default(self):
+        """META flat/negative across all backtested strategies in the 2y window;
+        excluded from routing until a re-validation restores it."""
+        assert "META" in DEFAULT_UNIVERSE["disabled"]
+        assert "META" not in DEFAULT_UNIVERSE["tier2"]
+
+    def test_tsla_is_disabled_by_default(self):
+        """TSLA flat/negative across all backtested strategies in the 2y window;
+        excluded from routing until a re-validation restores it."""
+        assert "TSLA" in DEFAULT_UNIVERSE["disabled"]
+        assert "TSLA" not in DEFAULT_UNIVERSE["tier2"]
+
 
 # ── get_tier ──────────────────────────────────────────────────
 

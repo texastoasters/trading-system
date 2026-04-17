@@ -1,12 +1,12 @@
 # Remember
 
-## v0.32.0 — Wave 3 multi-strategy Phase 1
+## v0.32.1 — Wave 4 #1 (META/TSLA exclusion) + dashboard rebrand
 
-IBS is the second entry path beside RSI-2. Both strategies now evaluate every active symbol on every watcher cycle.
+Dashboard header/layout/title: "T² Trade Dashboard" replaces "RSI-2 Trading System" / "Trading Dashboard". Multi-strategy now — name can't claim one strategy.
 
-- IBS entry: `IBS < 0.15` and `close > SMA(200)`. `IBS_MAX_HOLD_DAYS = 3`, `IBS_ATR_MULT = 2.0`.
-- Per-strategy whipsaw key: `trading:whipsaw:{symbol}:{strategy}` — RSI-2 and IBS cooldowns don't cross-contaminate.
-- Stacked signals (both fire same bar) merge into ONE payload carrying `strategies[]` + `primary_strategy`. Primary is IBS when stacked (tighter exit). Stop = tighter of the two candidates. Confidence × 1.25, capped at 1.0.
-- Executor tags every filled position with `strategies` + `primary_strategy`. Watcher exits route off `primary_strategy`: max-hold from that strategy's config; RSI-2's `rsi2 > 60` only fires when primary is RSI-2.
-- PM tier-based displacement is gone. New rule: (b) highest pnl% → (a) closest-to-exit by held/max_hold → (c) longest held; fallback smallest loser. PDT cap blocks displacement of same-day entries.
-- v0.30.2 guards (gap-up re-check, breakeven whipsaw) stay at symbol level — both strategies benefit.
+META and TSLA moved from `DEFAULT_UNIVERSE["tier2"]` → `DEFAULT_UNIVERSE["disabled"]`. Flat/negative across every backtested strategy, trailing 2y. `get_active_instruments` now filters `disabled` in addition to `blacklisted` (docstring always claimed it did; code didn't). Revisit on next universe re-validation.
+
+Next in Wave 4:
+- #2 Per-instrument RSI-2 entry thresholds (walk-forward, 12m train / 3m OOS, quarterly refit; JSON `{regime: threshold}` map at `trading:thresholds:{symbol}`)
+- #3 Per-instrument time-stop sweep (shared harness with #2)
+- #4 Donchian-BO trend slot — hybrid: third stack OR exclusive where RSI-2 idle. v0.33.0.
