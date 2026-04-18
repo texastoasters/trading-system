@@ -8,6 +8,14 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.34.4] - 2026-04-17
+
+### Fixed
+- **CI: skip Coveralls + coverage comment on push to main** — `coveralls-finish` and `comment` jobs now gated on `github.event_name == 'pull_request'`; they serve no purpose on merge commits and the comment job errors on push events (no `issue.number`).
+- **CI: opt into Node.js 24** — `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true` added to both workflow files; Node.js 20 support ends 2026-09-16.
+
+---
+
 ## [0.34.3] - 2026-04-17
 
 ### Added
