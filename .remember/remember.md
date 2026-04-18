@@ -1,37 +1,47 @@
 # Remember
 
-## v0.33.1 — PDT gate surgical rewrite
+## v0.34.0 — Settings page: expand overrideable config + per-field override border
 
-Fix for the silent production stall found in today's log audit: executor rejected 11 WMB take-profit exits with blanket `if account.pattern_day_trader: return False`. None of the rejections were warranted — Alpaca paper cash account had `pattern_day_trader=True` + `daytrade_count=5` + `multiplier=1`, which is bookkeeping only; Alpaca itself enforces nothing because day-trade buying power ($0) is never evaluated on cash.
+Expands the Settings LiveView from 10 fields across 3 cards to 47 inputs across 11 cards, covering nearly every hot-reloadable constant in `scripts/config.py`. Each input that currently differs from its baked-in default receives a yellow border matching the existing "Active overrides" indicator.
 
 ### Shipped
-- **`executor.validate_order`**: blanket `pattern_day_trader` check replaced. New gate fires only when BOTH `pdt_count >= 3` AND the order would complete a same-session round-trip.
-  - sell: round-trip iff `positions[symbol]["entry_date"] == today`.
-  - buy: round-trip iff `r.hexists(Keys.CLOSED_TODAY, symbol)`.
-  - reason strings: `"PDT: sell of today's entry would be 4th day trade"` / `"PDT: buy after today's close would be 4th day trade"`.
-  - non-round-trip orders allowed regardless of the flag.
-- **`executor.execute_sell`**: on every fill writes `r.hset(Keys.CLOSED_TODAY, symbol, HH:MM:SS)` right after the existing `exited_today` set. `exited_today:{symbol}` stays (watcher re-entry gate); `closed_today` is the new PDT-gate input.
-- **`Keys.CLOSED_TODAY = "trading:closed_today"`** added to `config.py`. Hash, no init — empty = no closes today. Not added to `init_redis_state` (test_config already pins `r.set.call_count == 11`; empty-hash semantics mean we don't need to seed).
-- **`watcher.generate_entry_signals`**: mirror gate (`pdt_count >= 3 → return []`) removed outright. Executor owns enforcement. Rationale: pre-rejection wasted overnight-intent signals (today KNSA rsi2=2.0, PAGP rsi2=0.52 both strong_signal, wasted). `Keys.PDT_COUNT` import unused in watcher after this change — not removed from import list to keep diff minimal.
-- **`supervisor.reset_daily`**: `r.delete(Keys.CLOSED_TODAY)` added next to the existing `DAILY_PNL` reset. Wipes yesterday's closes so today's buys aren't falsely classified as round-trips. `PDT_COUNT` is NOT reset here (Alpaca's rolling-5-biz-day count decays naturally; executor startup syncs from Alpaca).
+
+**`scripts/config.py` — `_SPEC` expansion (28 new scalar validators + 3 dict validators + 4 cross-checks)**
+- Added scalar entries to `_SPEC`: `RSI2_SMA_PERIOD`, `RSI2_ATR_PERIOD`, `HEATMAP_DAYS`, `DIVERGENCE_WINDOW`, `MIN_VOLUME_RATIO`, `MAX_EQUITY_POSITIONS`, `MAX_CRYPTO_POSITIONS`, `EQUITY_ALLOCATION_PCT`, `CRYPTO_ALLOCATION_PCT`, `ATR_STOP_MULTIPLIER`, `DAILY_LOSS_LIMIT_PCT`, `MANUAL_EXIT_REENTRY_DROP_PCT`, `ATTRIBUTION_MAX_LOOKBACK_DAYS`, `IBS_ENTRY_THRESHOLD`, `IBS_MAX_HOLD_DAYS`, `IBS_ATR_MULT`, `STACKED_CONFIDENCE_BOOST`, `DONCHIAN_ENTRY_LEN`, `DONCHIAN_EXIT_LEN`, `DONCHIAN_MAX_HOLD_DAYS`, `DONCHIAN_ATR_MULT`, `ADX_PERIOD`, `ADX_RANGING_THRESHOLD`, `ADX_TREND_THRESHOLD`, `BTC_FEE_RATE`, `BTC_MIN_EXPECTED_GAIN`, `EARNINGS_DAYS_BEFORE`, `EARNINGS_DAYS_AFTER`. Each row carries `(cast_fn, min, max)`; load_overrides skips out-of-range values and logs via the existing warning path.
+- Added dict validators for `TRAILING_TRIGGER_PCT`, `TRAILING_TRAIL_PCT` (per-tier floats keyed `"1"/"2"/"3"`) and `DAEMON_STALE_THRESHOLDS` (per-daemon ints). Helpers `_trail_cast`/`_trail_check` enforce `{tier → float in (0, 50]}`; `_daemon_cast`/`_daemon_check` enforce `{daemon name → int in [1, 1440]}`. Partial payloads merge over the defaults; malformed shapes are rejected whole.
+- Added four cross-check blocks after the per-field loop:
+  - **Drawdown ascending** (pre-existing, preserved): `CAUTION < DEFENSIVE < CRITICAL < HALT`.
+  - **ADX thresholds**: `ADX_RANGING_THRESHOLD < ADX_TREND_THRESHOLD` — skipped together if violated so regime classification cannot flip-flop.
+  - **Donchian lens**: `DONCHIAN_EXIT_LEN < DONCHIAN_ENTRY_LEN` — skipped if violated (tight exit on shorter lookback than entry).
+  - **Allocation sum**: `EQUITY_ALLOCATION_PCT + CRYPTO_ALLOCATION_PCT == 1.0` — all-or-nothing; single-side override rejected so the invariant can't drift. Tested with a separate happy-path case that overrides both sides together.
+- **Explicitly excluded from the UI** (user decision): `DONCHIAN_SYMBOLS` (static curated list, wishlist #56 plans automated promotion), `INITIAL_CAPITAL`, `MAX_AUTO_RESTARTS`, `PDT_MAX_DAY_TRADES`.
+
+**`dashboard/lib/dashboard_web/live/settings_live.ex` — rewrite**
+- New module attributes: `@scalar_defaults` (38 keys), `@dict_defaults` (3 nested maps), `@float_keys`, `@int_keys`, `@tiers ~w(1 2 3)`, `@daemons ~w(executor portfolio_manager watcher)`.
+- Public helpers exposed for the template only: `tiers/0`, `daemons/0`. (Unused module-private accessors were dropped to keep coverage at 100%.)
+- `mount/3` returns `{form_params, dict_params, overridden, has_overrides}` where `overridden` is a `MapSet` of keys present in the stored Redis JSON that match a known default.
+- `handle_event("save", ...)` routes through a single `with` pipeline: `parse_scalars → parse_tier_dict(TRAILING_TRIGGER_PCT) → parse_tier_dict(TRAILING_TRAIL_PCT) → parse_daemon_dict(DAEMON_STALE_THRESHOLDS) → validate_drawdown → validate_adx → validate_donchian → validate_allocations → validate_trailing`. Any failure short-circuits with a flash error and Redis is not touched.
+- `input_class/2` is the single point that computes each input's class string: base classes + `border-yellow-400` if `MapSet.member?(overridden, key)`, otherwise base + `border-gray-600`. Called from every input in the template so override status is visually per-field, not global.
+- `load_config/0` handles: missing key (all defaults, empty overridden), malformed JSON (fallback), non-map dict value (fallback for that dict only), partial dict overrides (merged field-by-field with base defaults). All four paths are covered.
+
+**`dashboard/lib/dashboard_web/live/settings_live.html.heex` — new 11-card layout**
+- Cards, in order: RSI Strategy (9 inputs, extended), IBS Strategy (3), Donchian Breakout (4), ADX Regime (3), Position Limits (6, extended), Risk Management (5), Crypto (BTC) (2), Earnings Blackout (2), Trailing Stops per tier (6, 2 dicts × 3 tiers), Daemon Stale Thresholds (3), Drawdown Thresholds (4, existing).
+- Every input calls `class={DashboardWeb.SettingsLive.input_class(@overridden, "KEY")}`. For dict inputs, the class key is the dict's top-level name (e.g. `TRAILING_TRIGGER_PCT`), so overriding any tier paints all three inputs for that dict yellow — consistent with how the override entered Redis (as one JSON object).
+- Nested input names use bracket syntax that Phoenix parses directly into nested maps: `config[TRAILING_TRIGGER_PCT][1]`, `config[DAEMON_STALE_THRESHOLDS][executor]`. No flattening helper needed.
+- `<` inside descriptions uses the `{"<"}` HEEx expression form so Phoenix escapes to `&lt;` on render; test assertions pin this exact escaped form.
 
 ### Design decisions locked
-- **Executor is the single PDT gate**. Watcher removed its mirror because the two gates had different inputs (pdt_count only vs pdt_count + round-trip context) and the watcher's blunter version wasted signal. One rejection point, one semantic.
-- **Flag is not the condition — `pdt_count >= 3` is**. The FINRA rule is about the 4th day trade in 5 biz days, not about whether a flag was ever set. Paper cash accounts leak the flag forever (no reset path); checking it would permanently stick the gate on. Same logic will apply on live — the flag indicates "you've hit PDT in the past," not "you're currently restricted."
-- **Round-trip detection is local to executor, not relying on Alpaca**. `positions[sym]["entry_date"]` (string ISO date, already in use) for the sell side; new `trading:closed_today` hash for the buy side. Avoids an extra Alpaca round-trip per order validation.
-- **Hash over set** for `closed_today`: stores `HH:MM:SS` as value for future diagnostics (e.g., "closed SPY at 14:00 — can we buy again?"). Set would suffice for the current gate; hash is strictly more informative at no extra cost.
-- **No equity-threshold carve-out**. FINRA PDT only applies under $25k equity, but Alpaca paper cash is on a different code path entirely and the simulated `$5k` virtual equity is what actually drives sizing. Easier to mirror Alpaca's own behavior (they check unconditionally once flagged) than introduce a threshold that might drift.
+- **Per-field border, not per-card**. The top-right "Active overrides" badge stays as a global indicator; each overridden input then gets its own yellow border. Non-overridden inputs in a card with overrides show only `border-gray-600`.
+- **Allocation override is all-or-nothing**. Changing just `EQUITY_ALLOCATION_PCT` without also changing `CRYPTO_ALLOCATION_PCT` breaks the sum-to-1.0 invariant, so `load_overrides` rejects single-side overrides and the LiveView validator flashes "must sum to 1.0". Users must submit both sides together.
+- **Dict shape errors reject the dict, not the whole payload**. Non-map or malformed dict entries in Redis fall back to defaults for that dict only; other overrides survive.
+- **`DONCHIAN_SYMBOLS` stays code-only for now**. Alt-strategy research showed only 7 names profitable for Donchian-BO; exposing the full universe as checkboxes would invite misconfiguration. Wishlist item #56 plans automated promotion/demotion from the monthly refit, which is the right long-term home.
+- **No `reset per field`**. The "Reset to Defaults" button wipes the entire `trading:config` key; there's no per-field reset. Matches the current mental model: overrides are one JSON object, not a grab bag.
 
-### Tests added (+10 → 806 passing, 100% coverage on all 13 modules)
-- Executor `TestValidateOrder` gained 7 tests covering: flag alone no longer blocks; overnight sell allowed at 3/3; sell of today's entry rejected at 3/3; sell of today's entry allowed at 2/3; buy of symbol sold today rejected at 3/3; buy of symbol not in `closed_today` allowed at 3/3; buy of symbol sold today allowed at 2/3.
-- Executor `TestExecuteSellNewBehavior` gained 1 test: successful sell writes symbol into `trading:closed_today` hash.
-- Watcher: `test_returns_empty_when_pdt_at_limit` flipped to `test_generates_entry_when_pdt_at_limit` (now asserts signal is generated); new `test_generates_entry_when_pdt_above_limit` for the 5/3 paper-advisory case.
-- Supervisor `TestResetDaily` gained 1 test: `reset_daily(r)` calls `r.delete("trading:closed_today")`.
+### Tests added (+29 Elixir → 45 in settings_live_test; +63 Python in test_config → 180; full suite 424 passing, 100% coverage on 9 Python modules; 100% coverage on settings_live.ex)
+- Python: `TestLoadOverridesExpandedScalars` with per-key happy-path + out-of-range tests (parametrized over all 27 scalar keys); ADX/Donchian/allocation cross-check tests; `TestLoadOverridesDicts` with 11 cases across the three dict keys.
+- Elixir: `expanded scalar fields` (render assertions for all 28 new scalar inputs, grouped by card), `expanded dict fields` (nested name assertions), `expanded field descriptions` (one assertion per description string, matching escaped form), `per-field override border` (MapSet-driven class assertions with both `assert` and `refute` regex), `save expanded form` (7 cases: happy-path writes, dict shape, trailing trail≥trigger, allocation sum, ADX order, Donchian order).
+- Coverage fill tests: tier-dict trailing-garbage + non-numeric; daemon-dict trailing-garbage + non-numeric; non-map dict value in Redis falls back to defaults; added `test_exited_today` in test_config to close the last Python gap.
 
-### Test infrastructure change
-- `skills/executor/test_executor.py::make_redis` mock gained `hset` / `hexists` / `hdel` / `hkeys` backed by JSON-serialized dicts inside the same `store`. Enables the new gate tests to exercise round-trip detection without a real Redis. Existing tests unaffected (the fixture's `r.delete = MagicMock()` override pattern still works — MagicMock with side_effect still records calls).
-
-### Ops follow-ups (deferred)
-- Audit the 11-12 SIGTERM/restart cycles seen on executor + PM in today's logs (daemon watchdog or `--reset-daily` restarting too aggressively). Not a trading-correctness bug, but worth tracing.
-- Dashboard: surface `trading:closed_today` hash on the state panel so the operator can see "SPY was closed 14:00 — PDT gate will block buy" before the executor rejects it.
-- Consider exposing a `scripts/check_pdt.py` helper (one-liner: `get_account().pattern_day_trader + daytrade_count + multiplier`) for quick ops diagnostics.
+### Followups
+- `DONCHIAN_SYMBOLS` dynamic promotion (auto-promote/demote from monthly refit instead of the static curated 7) remains on the wishlist.
+- No existing FEATURE_WISHLIST.md entry for this settings expansion; it was an ad-hoc user request, not a tracked item.

@@ -537,17 +537,65 @@ def load_overrides(r: redis.Redis) -> None:
         print("[config] WARNING: trading:config contains invalid JSON, skipping overrides")
         return
 
+    def _trail_cast(v):
+        if not isinstance(v, dict):
+            raise ValueError("expected dict")
+        return {int(k): float(x) for k, x in v.items()}
+
+    def _trail_check(d):
+        return set(d.keys()) == {1, 2, 3} and all(0 < x <= 50 for x in d.values())
+
+    def _daemon_cast(v):
+        if not isinstance(v, dict):
+            raise ValueError("expected dict")
+        return {str(k): int(x) for k, x in v.items()}
+
+    def _daemon_check(d):
+        return (set(d.keys()) == {"executor", "portfolio_manager", "watcher"}
+                and all(1 <= x <= 1440 for x in d.values()))
+
     _SPEC = {
-        "RSI2_ENTRY_CONSERVATIVE": (float, lambda v: 0 < v <= 30),
-        "RSI2_ENTRY_AGGRESSIVE":    (float, lambda v: 0 < v <= 20),
-        "RSI2_EXIT":                (float, lambda v: 50 <= v <= 95),
-        "RSI2_MAX_HOLD_DAYS":       (int,   lambda v: 1 <= v <= 30),
-        "RISK_PER_TRADE_PCT":       (float, lambda v: 0 < v <= 0.05),
-        "MAX_CONCURRENT_POSITIONS": (int,   lambda v: 1 <= v <= 20),
-        "DRAWDOWN_CAUTION":         (float, lambda v: 0 < v < 100),
-        "DRAWDOWN_DEFENSIVE":       (float, lambda v: 0 < v < 100),
-        "DRAWDOWN_CRITICAL":        (float, lambda v: 0 < v < 100),
-        "DRAWDOWN_HALT":            (float, lambda v: 0 < v < 100),
+        "RSI2_ENTRY_CONSERVATIVE":       (float, lambda v: 0 < v <= 30),
+        "RSI2_ENTRY_AGGRESSIVE":         (float, lambda v: 0 < v <= 20),
+        "RSI2_EXIT":                     (float, lambda v: 50 <= v <= 95),
+        "RSI2_MAX_HOLD_DAYS":            (int,   lambda v: 1 <= v <= 30),
+        "RSI2_SMA_PERIOD":               (int,   lambda v: 20 <= v <= 500),
+        "RSI2_ATR_PERIOD":               (int,   lambda v: 2 <= v <= 60),
+        "HEATMAP_DAYS":                  (int,   lambda v: 1 <= v <= 120),
+        "DIVERGENCE_WINDOW":             (int,   lambda v: 2 <= v <= 60),
+        "MIN_VOLUME_RATIO":              (float, lambda v: 0 <= v <= 5.0),
+        "RISK_PER_TRADE_PCT":            (float, lambda v: 0 < v <= 0.05),
+        "MAX_CONCURRENT_POSITIONS":      (int,   lambda v: 1 <= v <= 20),
+        "MAX_EQUITY_POSITIONS":          (int,   lambda v: 1 <= v <= 20),
+        "MAX_CRYPTO_POSITIONS":          (int,   lambda v: 0 <= v <= 10),
+        "EQUITY_ALLOCATION_PCT":         (float, lambda v: 0 < v <= 1.0),
+        "CRYPTO_ALLOCATION_PCT":         (float, lambda v: 0 <= v < 1.0),
+        "ATR_STOP_MULTIPLIER":           (float, lambda v: 0.5 <= v <= 10.0),
+        "DAILY_LOSS_LIMIT_PCT":          (float, lambda v: 0 < v <= 0.20),
+        "MANUAL_EXIT_REENTRY_DROP_PCT":  (float, lambda v: 0 <= v <= 0.50),
+        "ATTRIBUTION_MAX_LOOKBACK_DAYS": (int,   lambda v: 7 <= v <= 365),
+        "IBS_ENTRY_THRESHOLD":           (float, lambda v: 0 < v < 1),
+        "IBS_MAX_HOLD_DAYS":             (int,   lambda v: 1 <= v <= 30),
+        "IBS_ATR_MULT":                  (float, lambda v: 0.5 <= v <= 10.0),
+        "STACKED_CONFIDENCE_BOOST":      (float, lambda v: 1.0 <= v <= 5.0),
+        "DONCHIAN_ENTRY_LEN":            (int,   lambda v: 5 <= v <= 120),
+        "DONCHIAN_EXIT_LEN":             (int,   lambda v: 3 <= v <= 120),
+        "DONCHIAN_MAX_HOLD_DAYS":        (int,   lambda v: 1 <= v <= 120),
+        "DONCHIAN_ATR_MULT":             (float, lambda v: 0.5 <= v <= 10.0),
+        "ADX_PERIOD":                    (int,   lambda v: 5 <= v <= 60),
+        "ADX_RANGING_THRESHOLD":         (int,   lambda v: 5 <= v <= 50),
+        "ADX_TREND_THRESHOLD":           (int,   lambda v: 10 <= v <= 60),
+        "BTC_FEE_RATE":                  (float, lambda v: 0 <= v <= 0.05),
+        "BTC_MIN_EXPECTED_GAIN":         (float, lambda v: 0 < v <= 0.10),
+        "EARNINGS_DAYS_BEFORE":          (int,   lambda v: 0 <= v <= 14),
+        "EARNINGS_DAYS_AFTER":           (int,   lambda v: 0 <= v <= 14),
+        "DRAWDOWN_CAUTION":              (float, lambda v: 0 < v < 100),
+        "DRAWDOWN_DEFENSIVE":            (float, lambda v: 0 < v < 100),
+        "DRAWDOWN_CRITICAL":             (float, lambda v: 0 < v < 100),
+        "DRAWDOWN_HALT":                 (float, lambda v: 0 < v < 100),
+        "TRAILING_TRIGGER_PCT":          (_trail_cast,  _trail_check),
+        "TRAILING_TRAIL_PCT":            (_trail_cast,  _trail_check),
+        "DAEMON_STALE_THRESHOLDS":       (_daemon_cast, _daemon_check),
     }
 
     validated = {}
@@ -589,6 +637,55 @@ def load_overrides(r: redis.Redis) -> None:
             for k in _dd_keys:
                 validated.pop(k, None)
             break
+
+    # Cross-check: ADX_RANGING_THRESHOLD must be < ADX_TREND_THRESHOLD
+    if "ADX_RANGING_THRESHOLD" in validated or "ADX_TREND_THRESHOLD" in validated:
+        r_val = validated.get("ADX_RANGING_THRESHOLD", getattr(_mod, "ADX_RANGING_THRESHOLD"))
+        t_val = validated.get("ADX_TREND_THRESHOLD",   getattr(_mod, "ADX_TREND_THRESHOLD"))
+        if r_val >= t_val:
+            print(
+                f"[config] WARNING: ADX_RANGING_THRESHOLD={r_val} >= "
+                f"ADX_TREND_THRESHOLD={t_val}, skipping both ADX threshold overrides"
+            )
+            validated.pop("ADX_RANGING_THRESHOLD", None)
+            validated.pop("ADX_TREND_THRESHOLD", None)
+
+    # Cross-check: DONCHIAN_EXIT_LEN must be < DONCHIAN_ENTRY_LEN
+    if "DONCHIAN_ENTRY_LEN" in validated or "DONCHIAN_EXIT_LEN" in validated:
+        e_val = validated.get("DONCHIAN_ENTRY_LEN", getattr(_mod, "DONCHIAN_ENTRY_LEN"))
+        x_val = validated.get("DONCHIAN_EXIT_LEN",  getattr(_mod, "DONCHIAN_EXIT_LEN"))
+        if x_val >= e_val:
+            print(
+                f"[config] WARNING: DONCHIAN_EXIT_LEN={x_val} >= "
+                f"DONCHIAN_ENTRY_LEN={e_val}, skipping both Donchian length overrides"
+            )
+            validated.pop("DONCHIAN_ENTRY_LEN", None)
+            validated.pop("DONCHIAN_EXIT_LEN", None)
+
+    # Cross-check: EQUITY_ALLOCATION_PCT + CRYPTO_ALLOCATION_PCT must sum to 1.0
+    if "EQUITY_ALLOCATION_PCT" in validated or "CRYPTO_ALLOCATION_PCT" in validated:
+        eq = validated.get("EQUITY_ALLOCATION_PCT", getattr(_mod, "EQUITY_ALLOCATION_PCT"))
+        cr = validated.get("CRYPTO_ALLOCATION_PCT", getattr(_mod, "CRYPTO_ALLOCATION_PCT"))
+        if abs((eq + cr) - 1.0) > 1e-9:
+            print(
+                f"[config] WARNING: EQUITY_ALLOCATION_PCT={eq} + CRYPTO_ALLOCATION_PCT={cr} "
+                f"!= 1.0, skipping both allocation overrides"
+            )
+            validated.pop("EQUITY_ALLOCATION_PCT", None)
+            validated.pop("CRYPTO_ALLOCATION_PCT", None)
+
+    # Cross-check: TRAILING_TRAIL_PCT[tier] must be < TRAILING_TRIGGER_PCT[tier] per tier
+    if "TRAILING_TRIGGER_PCT" in validated or "TRAILING_TRAIL_PCT" in validated:
+        trig = validated.get("TRAILING_TRIGGER_PCT", getattr(_mod, "TRAILING_TRIGGER_PCT"))
+        trail = validated.get("TRAILING_TRAIL_PCT",  getattr(_mod, "TRAILING_TRAIL_PCT"))
+        bad = [t for t in (1, 2, 3) if trail[t] >= trig[t]]
+        if bad:
+            print(
+                f"[config] WARNING: TRAILING_TRAIL_PCT >= TRAILING_TRIGGER_PCT for tier(s) {bad}, "
+                f"skipping both trailing-stop overrides"
+            )
+            validated.pop("TRAILING_TRIGGER_PCT", None)
+            validated.pop("TRAILING_TRAIL_PCT", None)
 
     # Apply validated overrides to module globals
     for key, val in validated.items():
