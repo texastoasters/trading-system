@@ -90,13 +90,13 @@ defmodule DashboardWeb.SettingsLive do
   def handle_event("save", %{"config" => params}, socket) do
     case parse_config(params) do
       {:ok, config_map} ->
-        case Redix.command(:redix, ["SET", "trading:config", Jason.encode!(config_map)]) do
+        case Redix.command(:redix, ["SET", "trading:config", Jason.encode!(filter_overrides(config_map))]) do
           {:ok, _} ->
             {form_params, dict_params, overridden} = load_config()
             {:noreply,
              socket
              |> assign(form_params: form_params, dict_params: dict_params,
-                       overridden: overridden, has_overrides: true)
+                       overridden: overridden, has_overrides: overridden != MapSet.new())
              |> put_flash(:info, "Settings saved.")}
           {:error, _} ->
             {:noreply, put_flash(socket, :error, "Failed to save settings.")}
@@ -117,6 +117,42 @@ defmodule DashboardWeb.SettingsLive do
       {:error, _} ->
         {:noreply, put_flash(socket, :error, "Failed to reset settings.")}
     end
+  end
+
+  defp filter_overrides(config_map) do
+    scalar_defaults_parsed =
+      Map.new(@scalar_defaults, fn {k, v} ->
+        parsed =
+          if k in @float_keys,
+            do: elem(Float.parse(v), 0),
+            else: elem(Integer.parse(v), 0)
+        {k, parsed}
+      end)
+
+    dict_keys = Map.keys(@dict_defaults)
+
+    scalars =
+      config_map
+      |> Map.drop(dict_keys)
+      |> Enum.reject(fn {k, v} -> scalar_defaults_parsed[k] == v end)
+      |> Map.new()
+
+    dicts =
+      Enum.reduce(dict_keys, %{}, fn dk, acc ->
+        stored = Map.fetch!(config_map, dk)
+        default = @dict_defaults[dk]
+        default_parsed =
+          Map.new(default, fn {k, v} ->
+            parsed =
+              if dk == "DAEMON_STALE_THRESHOLDS",
+                do: elem(Integer.parse(v), 0),
+                else: elem(Float.parse(v), 0)
+            {k, parsed}
+          end)
+        if stored == default_parsed, do: acc, else: Map.put(acc, dk, stored)
+      end)
+
+    Map.merge(scalars, dicts)
   end
 
   def input_class(overridden, key) do
