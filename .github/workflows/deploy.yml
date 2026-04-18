@@ -49,7 +49,7 @@ jobs:
           DEPLOY_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
         run: |
-          echo "$DEPLOY_KEY" > /tmp/deploy_key
+          echo "$DEPLOY_KEY" | base64 --decode > /tmp/deploy_key
           chmod 600 /tmp/deploy_key
           ssh -i /tmp/deploy_key \
               -o StrictHostKeyChecking=no \
