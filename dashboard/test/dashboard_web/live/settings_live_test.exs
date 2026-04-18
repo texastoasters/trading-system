@@ -61,6 +61,34 @@ defmodule DashboardWeb.SettingsLiveTest do
       assert decoded["RSI2_ENTRY_CONSERVATIVE"] == 8.0
     end
 
+    test "saving all-default values stores only changed fields — no default-equal keys in Redis", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/settings")
+      _ = view |> form("#settings-form", config: full_params()) |> render_submit()
+
+      {:ok, raw} = Redix.command(:redix, ["GET", "trading:config"])
+      decoded = Jason.decode!(raw)
+      assert decoded == %{}, "expected empty map when all values are defaults, got: #{inspect(decoded)}"
+    end
+
+    test "saving all-default values produces no yellow borders", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/settings")
+      html = view |> form("#settings-form", config: full_params()) |> render_submit()
+      refute html =~ "border-yellow-400"
+    end
+
+    test "only changed fields appear in Redis after partial edit", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/settings")
+      params = full_params() |> Map.put("RSI2_EXIT", "70.0") |> Map.put("ADX_PERIOD", "20")
+      _ = view |> form("#settings-form", config: params) |> render_submit()
+
+      {:ok, raw} = Redix.command(:redix, ["GET", "trading:config"])
+      decoded = Jason.decode!(raw)
+      assert decoded["RSI2_EXIT"] == 70.0
+      assert decoded["ADX_PERIOD"] == 20
+      refute Map.has_key?(decoded, "RSI2_ENTRY_CONSERVATIVE")
+      refute Map.has_key?(decoded, "DRAWDOWN_HALT")
+    end
+
     test "shows error flash on non-numeric input", %{conn: conn} do
       {:ok, view, _} = live(conn, "/settings")
       params = full_params() |> Map.put("RSI2_ENTRY_CONSERVATIVE", "not_a_number")
@@ -330,38 +358,46 @@ defmodule DashboardWeb.SettingsLiveTest do
       %{params: full_params()}
     end
 
-    test "writes all scalar overrides to Redis", %{conn: conn, params: params} do
+    test "writes only non-default scalar overrides to Redis", %{conn: conn, params: params} do
+      non_default = params
+        |> Map.put("IBS_ENTRY_THRESHOLD", "0.20")
+        |> Map.put("DONCHIAN_ENTRY_LEN", "25")
+        |> Map.put("BTC_FEE_RATE", "0.005")
+        |> Map.put("EARNINGS_DAYS_BEFORE", "3")
       {:ok, view, _} = live(conn, "/settings")
-      html = view |> form("#settings-form", config: params) |> render_submit()
+      html = view |> form("#settings-form", config: non_default) |> render_submit()
       assert html =~ "saved"
 
       {:ok, raw} = Redix.command(:redix, ["GET", "trading:config"])
       decoded = Jason.decode!(raw)
-      assert decoded["IBS_ENTRY_THRESHOLD"] == 0.15
-      assert decoded["DONCHIAN_ENTRY_LEN"] == 20
-      assert decoded["ADX_RANGING_THRESHOLD"] == 20
-      assert decoded["BTC_FEE_RATE"] == 0.004
-      assert decoded["EARNINGS_DAYS_BEFORE"] == 2
+      assert decoded["IBS_ENTRY_THRESHOLD"] == 0.20
+      assert decoded["DONCHIAN_ENTRY_LEN"] == 25
+      assert decoded["BTC_FEE_RATE"] == 0.005
+      assert decoded["EARNINGS_DAYS_BEFORE"] == 3
+      refute Map.has_key?(decoded, "RSI2_EXIT")
     end
 
-    test "writes trailing stop dicts to Redis with integer tier keys", %{conn: conn, params: params} do
+    test "writes trailing stop dicts to Redis only when non-default", %{conn: conn, params: params} do
+      non_default = put_in(params, ["TRAILING_TRIGGER_PCT", "1"], "7.0")
       {:ok, view, _} = live(conn, "/settings")
-      _ = view |> form("#settings-form", config: params) |> render_submit()
+      _ = view |> form("#settings-form", config: non_default) |> render_submit()
 
       {:ok, raw} = Redix.command(:redix, ["GET", "trading:config"])
       decoded = Jason.decode!(raw)
-      assert decoded["TRAILING_TRIGGER_PCT"] == %{"1" => 5.0, "2" => 5.0, "3" => 4.0}
-      assert decoded["TRAILING_TRAIL_PCT"]   == %{"1" => 2.0, "2" => 2.5, "3" => 3.0}
+      assert decoded["TRAILING_TRIGGER_PCT"] == %{"1" => 7.0, "2" => 5.0, "3" => 4.0}
+      refute Map.has_key?(decoded, "TRAILING_TRAIL_PCT")
     end
 
-    test "writes daemon thresholds dict to Redis", %{conn: conn, params: params} do
+    test "writes daemon thresholds dict to Redis only when non-default", %{conn: conn, params: params} do
+      non_default = put_in(params, ["DAEMON_STALE_THRESHOLDS", "watcher"], "60")
       {:ok, view, _} = live(conn, "/settings")
-      _ = view |> form("#settings-form", config: params) |> render_submit()
+      _ = view |> form("#settings-form", config: non_default) |> render_submit()
 
       {:ok, raw} = Redix.command(:redix, ["GET", "trading:config"])
       decoded = Jason.decode!(raw)
       assert decoded["DAEMON_STALE_THRESHOLDS"] ==
-        %{"executor" => 5, "portfolio_manager" => 5, "watcher" => 35}
+        %{"executor" => 5, "portfolio_manager" => 5, "watcher" => 60}
+      refute Map.has_key?(decoded, "TRAILING_TRIGGER_PCT")
     end
 
     test "rejects trailing trail >= trigger for any tier", %{conn: conn, params: params} do

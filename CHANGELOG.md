@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.34.1] - 2026-04-18
+
+### Fixed
+- **Settings save turned all inputs yellow** — `handle_event("save")` was serialising the complete 38-scalar + 3-dict config map (including every unchanged default) to `trading:config`. `load_config/0` then found all keys present and added them all to the `overridden` MapSet, painting every field's border yellow. `filter_overrides/1` now strips any scalar whose parsed value equals the module-attribute default, and any dict whose parsed values equal the dict default, before the `SET` call. `has_overrides` on the save path is now computed from the actual post-filter `overridden` MapSet rather than hard-coded `true`.
+
+---
+
 ## [0.34.0] - 2026-04-17
 
 ### Added
