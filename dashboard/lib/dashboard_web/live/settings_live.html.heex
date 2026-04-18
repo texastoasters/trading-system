@@ -38,15 +38,15 @@
           <input type="number" name="config[RSI2_ENTRY_CONSERVATIVE]"
             value={@form_params["RSI2_ENTRY_CONSERVATIVE"]}
             step="0.1" min="0.1" max="30"
-            class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500">
-          <p class="text-xs text-gray-500 mt-1">Enter when RSI-2 &lt; this</p>
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "RSI2_ENTRY_CONSERVATIVE")}>
+          <p class="text-xs text-gray-500 mt-1">Enter when RSI-2 {"<"} this</p>
         </div>
         <div>
           <label class="block text-xs text-gray-400 mb-1">Entry Aggressive</label>
           <input type="number" name="config[RSI2_ENTRY_AGGRESSIVE]"
             value={@form_params["RSI2_ENTRY_AGGRESSIVE"]}
             step="0.1" min="0.1" max="20"
-            class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500">
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "RSI2_ENTRY_AGGRESSIVE")}>
           <p class="text-xs text-gray-500 mt-1">Tighter, for strong uptrends</p>
         </div>
         <div>
@@ -54,7 +54,7 @@
           <input type="number" name="config[RSI2_EXIT]"
             value={@form_params["RSI2_EXIT"]}
             step="1" min="50" max="95"
-            class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500">
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "RSI2_EXIT")}>
           <p class="text-xs text-gray-500 mt-1">Exit when RSI-2 recovers above this</p>
         </div>
         <div>
@@ -62,8 +62,149 @@
           <input type="number" name="config[RSI2_MAX_HOLD_DAYS]"
             value={@form_params["RSI2_MAX_HOLD_DAYS"]}
             step="1" min="1" max="30"
-            class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500">
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "RSI2_MAX_HOLD_DAYS")}>
           <p class="text-xs text-gray-500 mt-1">Force exit after N days</p>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">SMA Period</label>
+          <input type="number" name="config[RSI2_SMA_PERIOD]"
+            value={@form_params["RSI2_SMA_PERIOD"]}
+            step="1" min="20" max="500"
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "RSI2_SMA_PERIOD")}>
+          <p class="text-xs text-gray-500 mt-1">SMA lookback (days) for trend filter</p>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">ATR Period</label>
+          <input type="number" name="config[RSI2_ATR_PERIOD]"
+            value={@form_params["RSI2_ATR_PERIOD"]}
+            step="1" min="5" max="50"
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "RSI2_ATR_PERIOD")}>
+          <p class="text-xs text-gray-500 mt-1">ATR lookback (days)</p>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">Heatmap Days</label>
+          <input type="number" name="config[HEATMAP_DAYS]"
+            value={@form_params["HEATMAP_DAYS"]}
+            step="1" min="1" max="90"
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "HEATMAP_DAYS")}>
+          <p class="text-xs text-gray-500 mt-1">Days shown in signal heatmap</p>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">Divergence Window</label>
+          <input type="number" name="config[DIVERGENCE_WINDOW]"
+            value={@form_params["DIVERGENCE_WINDOW"]}
+            step="1" min="2" max="60"
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "DIVERGENCE_WINDOW")}>
+          <p class="text-xs text-gray-500 mt-1">Window (bars) for bullish RSI-2 divergence</p>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">Min Volume Ratio</label>
+          <input type="number" name="config[MIN_VOLUME_RATIO]"
+            value={@form_params["MIN_VOLUME_RATIO"]}
+            step="0.05" min="0" max="5"
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "MIN_VOLUME_RATIO")}>
+          <p class="text-xs text-gray-500 mt-1">Skip entry if today's volume {"<"} this × ADV</p>
+        </div>
+      </div>
+    </div>
+
+    <%!-- IBS Strategy --%>
+    <div class="bg-gray-800 rounded-lg border border-gray-700 p-4 space-y-3">
+      <h2 class="text-sm font-semibold text-gray-200">IBS Strategy</h2>
+      <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">IBS Entry Threshold</label>
+          <input type="number" name="config[IBS_ENTRY_THRESHOLD]"
+            value={@form_params["IBS_ENTRY_THRESHOLD"]}
+            step="0.01" min="0" max="1"
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "IBS_ENTRY_THRESHOLD")}>
+          <p class="text-xs text-gray-500 mt-1">Enter when Internal Bar Strength {"<"} this</p>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">IBS Max Hold Days</label>
+          <input type="number" name="config[IBS_MAX_HOLD_DAYS]"
+            value={@form_params["IBS_MAX_HOLD_DAYS"]}
+            step="1" min="1" max="30"
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "IBS_MAX_HOLD_DAYS")}>
+          <p class="text-xs text-gray-500 mt-1">Force exit after N days (IBS)</p>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">IBS ATR Multiplier</label>
+          <input type="number" name="config[IBS_ATR_MULT]"
+            value={@form_params["IBS_ATR_MULT"]}
+            step="0.1" min="0.5" max="10"
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "IBS_ATR_MULT")}>
+          <p class="text-xs text-gray-500 mt-1">ATR multiple for IBS stop</p>
+        </div>
+      </div>
+    </div>
+
+    <%!-- Donchian Strategy --%>
+    <div class="bg-gray-800 rounded-lg border border-gray-700 p-4 space-y-3">
+      <h2 class="text-sm font-semibold text-gray-200">Donchian Breakout</h2>
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">Entry Length</label>
+          <input type="number" name="config[DONCHIAN_ENTRY_LEN]"
+            value={@form_params["DONCHIAN_ENTRY_LEN"]}
+            step="1" min="5" max="200"
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "DONCHIAN_ENTRY_LEN")}>
+          <p class="text-xs text-gray-500 mt-1">Breakout lookback (prior N-bar high)</p>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">Exit Length</label>
+          <input type="number" name="config[DONCHIAN_EXIT_LEN]"
+            value={@form_params["DONCHIAN_EXIT_LEN"]}
+            step="1" min="2" max="100"
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "DONCHIAN_EXIT_LEN")}>
+          <p class="text-xs text-gray-500 mt-1">Chandelier exit lookback (prior N-bar low)</p>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">Max Hold Days</label>
+          <input type="number" name="config[DONCHIAN_MAX_HOLD_DAYS]"
+            value={@form_params["DONCHIAN_MAX_HOLD_DAYS"]}
+            step="1" min="1" max="365"
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "DONCHIAN_MAX_HOLD_DAYS")}>
+          <p class="text-xs text-gray-500 mt-1">Time-stop bars for Donchian</p>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">ATR Multiplier</label>
+          <input type="number" name="config[DONCHIAN_ATR_MULT]"
+            value={@form_params["DONCHIAN_ATR_MULT"]}
+            step="0.1" min="0.5" max="10"
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "DONCHIAN_ATR_MULT")}>
+          <p class="text-xs text-gray-500 mt-1">ATR multiple for Donchian stop</p>
+        </div>
+      </div>
+    </div>
+
+    <%!-- ADX Regime --%>
+    <div class="bg-gray-800 rounded-lg border border-gray-700 p-4 space-y-3">
+      <h2 class="text-sm font-semibold text-gray-200">ADX Regime</h2>
+      <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">ADX Period</label>
+          <input type="number" name="config[ADX_PERIOD]"
+            value={@form_params["ADX_PERIOD"]}
+            step="1" min="5" max="50"
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "ADX_PERIOD")}>
+          <p class="text-xs text-gray-500 mt-1">ADX lookback period</p>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">Ranging Threshold</label>
+          <input type="number" name="config[ADX_RANGING_THRESHOLD]"
+            value={@form_params["ADX_RANGING_THRESHOLD"]}
+            step="1" min="5" max="60"
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "ADX_RANGING_THRESHOLD")}>
+          <p class="text-xs text-gray-500 mt-1">ADX below this → RANGING regime</p>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">Trend Threshold</label>
+          <input type="number" name="config[ADX_TREND_THRESHOLD]"
+            value={@form_params["ADX_TREND_THRESHOLD"]}
+            step="1" min="10" max="80"
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "ADX_TREND_THRESHOLD")}>
+          <p class="text-xs text-gray-500 mt-1">ADX above this → TRENDING regime</p>
         </div>
       </div>
     </div>
@@ -71,13 +212,13 @@
     <%!-- Position Limits --%>
     <div class="bg-gray-800 rounded-lg border border-gray-700 p-4 space-y-3">
       <h2 class="text-sm font-semibold text-gray-200">Position Limits</h2>
-      <div class="grid grid-cols-2 gap-3 sm:w-1/2">
+      <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
         <div>
           <label class="block text-xs text-gray-400 mb-1">Risk per Trade (%)</label>
           <input type="number" name="config[RISK_PER_TRADE_PCT]"
             value={@form_params["RISK_PER_TRADE_PCT"]}
             step="0.001" min="0.001" max="0.05"
-            class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500">
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "RISK_PER_TRADE_PCT")}>
           <p class="text-xs text-gray-500 mt-1">Equity fraction risked, sized via ATR stop</p>
         </div>
         <div>
@@ -85,9 +226,188 @@
           <input type="number" name="config[MAX_CONCURRENT_POSITIONS]"
             value={@form_params["MAX_CONCURRENT_POSITIONS"]}
             step="1" min="1" max="20"
-            class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500">
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "MAX_CONCURRENT_POSITIONS")}>
           <p class="text-xs text-gray-500 mt-1">Cap on simultaneously open positions</p>
         </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">Max Equity Positions</label>
+          <input type="number" name="config[MAX_EQUITY_POSITIONS]"
+            value={@form_params["MAX_EQUITY_POSITIONS"]}
+            step="1" min="0" max="20"
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "MAX_EQUITY_POSITIONS")}>
+          <p class="text-xs text-gray-500 mt-1">Max open equity positions</p>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">Max Crypto Positions</label>
+          <input type="number" name="config[MAX_CRYPTO_POSITIONS]"
+            value={@form_params["MAX_CRYPTO_POSITIONS"]}
+            step="1" min="0" max="20"
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "MAX_CRYPTO_POSITIONS")}>
+          <p class="text-xs text-gray-500 mt-1">Max open crypto positions</p>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">Equity Allocation</label>
+          <input type="number" name="config[EQUITY_ALLOCATION_PCT]"
+            value={@form_params["EQUITY_ALLOCATION_PCT"]}
+            step="0.01" min="0" max="1"
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "EQUITY_ALLOCATION_PCT")}>
+          <p class="text-xs text-gray-500 mt-1">Fraction of capital allocated to equities</p>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">Crypto Allocation</label>
+          <input type="number" name="config[CRYPTO_ALLOCATION_PCT]"
+            value={@form_params["CRYPTO_ALLOCATION_PCT"]}
+            step="0.01" min="0" max="1"
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "CRYPTO_ALLOCATION_PCT")}>
+          <p class="text-xs text-gray-500 mt-1">Fraction of capital allocated to crypto</p>
+        </div>
+      </div>
+    </div>
+
+    <%!-- Risk Management --%>
+    <div class="bg-gray-800 rounded-lg border border-gray-700 p-4 space-y-3">
+      <h2 class="text-sm font-semibold text-gray-200">Risk Management</h2>
+      <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">Daily Loss Limit</label>
+          <input type="number" name="config[DAILY_LOSS_LIMIT_PCT]"
+            value={@form_params["DAILY_LOSS_LIMIT_PCT"]}
+            step="0.005" min="0.005" max="0.5"
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "DAILY_LOSS_LIMIT_PCT")}>
+          <p class="text-xs text-gray-500 mt-1">Daily loss cap (fraction of equity)</p>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">ATR Stop Multiplier</label>
+          <input type="number" name="config[ATR_STOP_MULTIPLIER]"
+            value={@form_params["ATR_STOP_MULTIPLIER"]}
+            step="0.1" min="0.5" max="10"
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "ATR_STOP_MULTIPLIER")}>
+          <p class="text-xs text-gray-500 mt-1">ATR multiple for initial stop-loss</p>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">Manual Re-entry Drop</label>
+          <input type="number" name="config[MANUAL_EXIT_REENTRY_DROP_PCT]"
+            value={@form_params["MANUAL_EXIT_REENTRY_DROP_PCT"]}
+            step="0.005" min="0" max="0.5"
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "MANUAL_EXIT_REENTRY_DROP_PCT")}>
+          <p class="text-xs text-gray-500 mt-1">Drop below manual-exit price before re-entry</p>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">Attribution Lookback</label>
+          <input type="number" name="config[ATTRIBUTION_MAX_LOOKBACK_DAYS]"
+            value={@form_params["ATTRIBUTION_MAX_LOOKBACK_DAYS"]}
+            step="1" min="7" max="365"
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "ATTRIBUTION_MAX_LOOKBACK_DAYS")}>
+          <p class="text-xs text-gray-500 mt-1">Max lookback (days) for drawdown attribution</p>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">Stacked Confidence Boost</label>
+          <input type="number" name="config[STACKED_CONFIDENCE_BOOST]"
+            value={@form_params["STACKED_CONFIDENCE_BOOST"]}
+            step="0.05" min="1" max="3"
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "STACKED_CONFIDENCE_BOOST")}>
+          <p class="text-xs text-gray-500 mt-1">Multiplier when RSI-2 + IBS stack</p>
+        </div>
+      </div>
+    </div>
+
+    <%!-- Crypto --%>
+    <div class="bg-gray-800 rounded-lg border border-gray-700 p-4 space-y-3">
+      <h2 class="text-sm font-semibold text-gray-200">Crypto (BTC)</h2>
+      <div class="grid grid-cols-2 gap-3 sm:w-2/3">
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">Fee Rate</label>
+          <input type="number" name="config[BTC_FEE_RATE]"
+            value={@form_params["BTC_FEE_RATE"]}
+            step="0.0001" min="0" max="0.05"
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "BTC_FEE_RATE")}>
+          <p class="text-xs text-gray-500 mt-1">BTC round-trip fee rate</p>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">Min Expected Gain</label>
+          <input type="number" name="config[BTC_MIN_EXPECTED_GAIN]"
+            value={@form_params["BTC_MIN_EXPECTED_GAIN"]}
+            step="0.0005" min="0" max="0.1"
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "BTC_MIN_EXPECTED_GAIN")}>
+          <p class="text-xs text-gray-500 mt-1">Min expected BTC gain (filter micro-trades)</p>
+        </div>
+      </div>
+    </div>
+
+    <%!-- Earnings --%>
+    <div class="bg-gray-800 rounded-lg border border-gray-700 p-4 space-y-3">
+      <h2 class="text-sm font-semibold text-gray-200">Earnings Blackout</h2>
+      <div class="grid grid-cols-2 gap-3 sm:w-1/2">
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">Days Before</label>
+          <input type="number" name="config[EARNINGS_DAYS_BEFORE]"
+            value={@form_params["EARNINGS_DAYS_BEFORE"]}
+            step="1" min="0" max="30"
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "EARNINGS_DAYS_BEFORE")}>
+          <p class="text-xs text-gray-500 mt-1">Block entries N days before earnings</p>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">Days After</label>
+          <input type="number" name="config[EARNINGS_DAYS_AFTER]"
+            value={@form_params["EARNINGS_DAYS_AFTER"]}
+            step="1" min="0" max="30"
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "EARNINGS_DAYS_AFTER")}>
+          <p class="text-xs text-gray-500 mt-1">Block entries N days after earnings</p>
+        </div>
+      </div>
+    </div>
+
+    <%!-- Trailing Stops --%>
+    <div class="bg-gray-800 rounded-lg border border-gray-700 p-4 space-y-3">
+      <h2 class="text-sm font-semibold text-gray-200">Trailing Stops (per tier)</h2>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <h3 class="text-xs font-medium text-gray-300 mb-2">Trigger (%)</h3>
+          <p class="text-xs text-gray-500 mb-2">Trigger % (activate trail at this gain)</p>
+          <div class="grid grid-cols-3 gap-2">
+            <%= for tier <- DashboardWeb.SettingsLive.tiers() do %>
+              <div>
+                <label class="block text-xs text-gray-400 mb-1">Tier {tier}</label>
+                <input type="number" name={"config[TRAILING_TRIGGER_PCT][#{tier}]"}
+                  value={@dict_params["TRAILING_TRIGGER_PCT"][tier]}
+                  step="0.1" min="0.1" max="50"
+                  class={DashboardWeb.SettingsLive.input_class(@overridden, "TRAILING_TRIGGER_PCT")}>
+              </div>
+            <% end %>
+          </div>
+        </div>
+        <div>
+          <h3 class="text-xs font-medium text-gray-300 mb-2">Trail (%)</h3>
+          <p class="text-xs text-gray-500 mb-2">Trail % (Alpaca trail_percent)</p>
+          <div class="grid grid-cols-3 gap-2">
+            <%= for tier <- DashboardWeb.SettingsLive.tiers() do %>
+              <div>
+                <label class="block text-xs text-gray-400 mb-1">Tier {tier}</label>
+                <input type="number" name={"config[TRAILING_TRAIL_PCT][#{tier}]"}
+                  value={@dict_params["TRAILING_TRAIL_PCT"][tier]}
+                  step="0.1" min="0.1" max="50"
+                  class={DashboardWeb.SettingsLive.input_class(@overridden, "TRAILING_TRAIL_PCT")}>
+              </div>
+            <% end %>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <%!-- Daemon Stale Thresholds --%>
+    <div class="bg-gray-800 rounded-lg border border-gray-700 p-4 space-y-3">
+      <h2 class="text-sm font-semibold text-gray-200">Daemon Stale Thresholds</h2>
+      <p class="text-xs text-gray-500">Max heartbeat age (minutes)</p>
+      <div class="grid grid-cols-3 gap-3">
+        <%= for daemon <- DashboardWeb.SettingsLive.daemons() do %>
+          <div>
+            <label class="block text-xs text-gray-400 mb-1">{daemon}</label>
+            <input type="number" name={"config[DAEMON_STALE_THRESHOLDS][#{daemon}]"}
+              value={@dict_params["DAEMON_STALE_THRESHOLDS"][daemon]}
+              step="1" min="1" max="1440"
+              class={DashboardWeb.SettingsLive.input_class(@overridden, "DAEMON_STALE_THRESHOLDS")}>
+          </div>
+        <% end %>
       </div>
     </div>
 
@@ -100,7 +420,7 @@
           <input type="number" name="config[DRAWDOWN_CAUTION]"
             value={@form_params["DRAWDOWN_CAUTION"]}
             step="0.5" min="0.5" max="99"
-            class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500">
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "DRAWDOWN_CAUTION")}>
           <p class="text-xs text-gray-500 mt-1">Reduce position sizes</p>
         </div>
         <div>
@@ -108,7 +428,7 @@
           <input type="number" name="config[DRAWDOWN_DEFENSIVE]"
             value={@form_params["DRAWDOWN_DEFENSIVE"]}
             step="0.5" min="0.5" max="99"
-            class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500">
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "DRAWDOWN_DEFENSIVE")}>
           <p class="text-xs text-gray-500 mt-1">Disable Tier 2+ instruments</p>
         </div>
         <div>
@@ -116,7 +436,7 @@
           <input type="number" name="config[DRAWDOWN_CRITICAL]"
             value={@form_params["DRAWDOWN_CRITICAL"]}
             step="0.5" min="0.5" max="99"
-            class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500">
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "DRAWDOWN_CRITICAL")}>
           <p class="text-xs text-gray-500 mt-1">Disable Tier 3 instruments</p>
         </div>
         <div>
@@ -124,7 +444,7 @@
           <input type="number" name="config[DRAWDOWN_HALT]"
             value={@form_params["DRAWDOWN_HALT"]}
             step="0.5" min="0.5" max="99"
-            class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500">
+            class={DashboardWeb.SettingsLive.input_class(@overridden, "DRAWDOWN_HALT")}>
           <p class="text-xs text-gray-500 mt-1">Halt all trading</p>
         </div>
       </div>

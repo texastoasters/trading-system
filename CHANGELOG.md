@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.34.0] - 2026-04-17
+
+### Added
+- **Settings page: expand overrideable config + per-field override border** — LiveView grows from 10 inputs across 3 cards to 47 inputs across 11 cards, covering almost every hot-reloadable constant in `scripts/config.py`. Cards: RSI Strategy (9), IBS Strategy (3), Donchian Breakout (4), ADX Regime (3), Position Limits (6), Risk Management (5), Crypto BTC (2), Earnings Blackout (2), Trailing Stops per tier (6), Daemon Stale Thresholds (3), Drawdown Thresholds (4). `scripts/config.py` `_SPEC` gains 28 scalar validators + 3 dict validators (`TRAILING_TRIGGER_PCT`, `TRAILING_TRAIL_PCT`, `DAEMON_STALE_THRESHOLDS`) with per-field cast+range; out-of-range values skip silently via the existing log path. Four cross-check blocks run after the per-field loop: drawdown ascending (preserved), ADX `RANGING < TREND`, Donchian `EXIT_LEN < ENTRY_LEN`, and equity + crypto allocation sum to 1.0 (all-or-nothing — single-side override rejected so the invariant can't drift). Every input in the template now calls `DashboardWeb.SettingsLive.input_class(@overridden, "KEY")`: the `overridden` MapSet is computed in `load_config/0` from the stored Redis JSON, and overridden inputs paint `border-yellow-400` to match the existing top-right "Active overrides" indicator; non-overridden inputs carry `border-gray-600`. Dict inputs use nested bracket names (`config[TRAILING_TRIGGER_PCT][1]`) that Phoenix parses directly into nested maps, eliminating the need for a flattening helper. `DONCHIAN_SYMBOLS`, `INITIAL_CAPITAL`, `MAX_AUTO_RESTARTS`, and `PDT_MAX_DAY_TRADES` are explicitly excluded from the UI; `DONCHIAN_SYMBOLS` automated promotion remains as wishlist #56. Coverage held at 100% across all 9 Python modules (424 passing) and 100% on `settings_live.ex` (45 passing tests in `settings_live_test.exs`).
+
+---
+
 ## [0.33.1] - 2026-04-17
 
 ### Fixed

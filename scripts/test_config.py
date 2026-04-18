@@ -100,6 +100,9 @@ class TestKeys:
     def test_manual_exit(self):
         assert Keys.manual_exit("NVDA") == "trading:manual_exit:NVDA"
 
+    def test_exited_today(self):
+        assert Keys.exited_today("AAPL") == "trading:exited_today:AAPL"
+
     def test_peak_equity_date_key(self):
         assert Keys.PEAK_EQUITY_DATE == "trading:peak_equity_date"
 
@@ -676,6 +679,294 @@ class TestLoadOverrides:
         r.get = MagicMock(side_effect=Exception("connection refused"))
         load_overrides(r)
         assert config.RSI2_ENTRY_CONSERVATIVE == 10.0  # unchanged
+
+
+class TestLoadOverridesExpandedScalars:
+    """Expanded hot-reload surface: RSI sub-params, IBS, Donchian, ADX,
+    capital/risk, crypto, earnings, attribution."""
+
+    _DEFAULTS = {
+        "RSI2_SMA_PERIOD": 200,
+        "RSI2_ATR_PERIOD": 14,
+        "HEATMAP_DAYS": 14,
+        "DIVERGENCE_WINDOW": 10,
+        "MIN_VOLUME_RATIO": 0.5,
+        "ATR_STOP_MULTIPLIER": 2.0,
+        "DAILY_LOSS_LIMIT_PCT": 0.03,
+        "MANUAL_EXIT_REENTRY_DROP_PCT": 0.03,
+        "ATTRIBUTION_MAX_LOOKBACK_DAYS": 90,
+        "IBS_ENTRY_THRESHOLD": 0.15,
+        "IBS_MAX_HOLD_DAYS": 3,
+        "IBS_ATR_MULT": 2.0,
+        "STACKED_CONFIDENCE_BOOST": 1.25,
+        "DONCHIAN_ENTRY_LEN": 20,
+        "DONCHIAN_EXIT_LEN": 10,
+        "DONCHIAN_MAX_HOLD_DAYS": 30,
+        "DONCHIAN_ATR_MULT": 3.0,
+        "ADX_PERIOD": 14,
+        "ADX_RANGING_THRESHOLD": 20,
+        "ADX_TREND_THRESHOLD": 25,
+        "MAX_EQUITY_POSITIONS": 3,
+        "MAX_CRYPTO_POSITIONS": 2,
+        "EQUITY_ALLOCATION_PCT": 0.70,
+        "CRYPTO_ALLOCATION_PCT": 0.30,
+        "BTC_FEE_RATE": 0.004,
+        "BTC_MIN_EXPECTED_GAIN": 0.006,
+        "EARNINGS_DAYS_BEFORE": 2,
+        "EARNINGS_DAYS_AFTER": 1,
+    }
+
+    def setup_method(self):
+        import config as _c
+        for k, v in self._DEFAULTS.items():
+            setattr(_c, k, v)
+
+    # ── happy-path: each key applies when override is in range ──
+    @pytest.mark.parametrize("key,override,expected", [
+        ("RSI2_SMA_PERIOD", 150, 150),
+        ("RSI2_ATR_PERIOD", 10, 10),
+        ("HEATMAP_DAYS", 30, 30),
+        ("DIVERGENCE_WINDOW", 8, 8),
+        ("MIN_VOLUME_RATIO", 0.7, 0.7),
+        ("ATR_STOP_MULTIPLIER", 2.5, 2.5),
+        ("DAILY_LOSS_LIMIT_PCT", 0.05, 0.05),
+        ("MANUAL_EXIT_REENTRY_DROP_PCT", 0.04, 0.04),
+        ("ATTRIBUTION_MAX_LOOKBACK_DAYS", 60, 60),
+        ("IBS_ENTRY_THRESHOLD", 0.20, 0.20),
+        ("IBS_MAX_HOLD_DAYS", 5, 5),
+        ("IBS_ATR_MULT", 1.8, 1.8),
+        ("STACKED_CONFIDENCE_BOOST", 1.5, 1.5),
+        ("DONCHIAN_ENTRY_LEN", 30, 30),
+        ("DONCHIAN_EXIT_LEN", 15, 15),
+        ("DONCHIAN_MAX_HOLD_DAYS", 45, 45),
+        ("DONCHIAN_ATR_MULT", 2.5, 2.5),
+        ("ADX_PERIOD", 10, 10),
+        ("ADX_RANGING_THRESHOLD", 15, 15),
+        ("ADX_TREND_THRESHOLD", 30, 30),
+        ("MAX_EQUITY_POSITIONS", 4, 4),
+        ("MAX_CRYPTO_POSITIONS", 1, 1),
+        # Allocations tested jointly in test_allocations_apply_when_sum_one
+        ("BTC_FEE_RATE", 0.005, 0.005),
+        ("BTC_MIN_EXPECTED_GAIN", 0.008, 0.008),
+        ("EARNINGS_DAYS_BEFORE", 3, 3),
+        ("EARNINGS_DAYS_AFTER", 2, 2),
+    ])
+    def test_scalar_override_applies(self, key, override, expected):
+        r = make_r(store={Keys.CONFIG: json.dumps({key: override})})
+        load_overrides(r)
+        assert getattr(config, key) == expected
+
+    # ── range validation: out-of-range values are rejected ──
+    @pytest.mark.parametrize("key,bad_value,default", [
+        ("RSI2_SMA_PERIOD", 10, 200),
+        ("RSI2_SMA_PERIOD", 1000, 200),
+        ("RSI2_ATR_PERIOD", 1, 14),
+        ("RSI2_ATR_PERIOD", 100, 14),
+        ("HEATMAP_DAYS", 0, 14),
+        ("HEATMAP_DAYS", 500, 14),
+        ("DIVERGENCE_WINDOW", 1, 10),
+        ("MIN_VOLUME_RATIO", -0.1, 0.5),
+        ("MIN_VOLUME_RATIO", 10.0, 0.5),
+        ("ATR_STOP_MULTIPLIER", 0.1, 2.0),
+        ("ATR_STOP_MULTIPLIER", 20.0, 2.0),
+        ("DAILY_LOSS_LIMIT_PCT", 0.0, 0.03),
+        ("DAILY_LOSS_LIMIT_PCT", 0.5, 0.03),
+        ("MANUAL_EXIT_REENTRY_DROP_PCT", -0.01, 0.03),
+        ("MANUAL_EXIT_REENTRY_DROP_PCT", 0.60, 0.03),
+        ("ATTRIBUTION_MAX_LOOKBACK_DAYS", 3, 90),
+        ("ATTRIBUTION_MAX_LOOKBACK_DAYS", 500, 90),
+        ("IBS_ENTRY_THRESHOLD", 0.0, 0.15),
+        ("IBS_ENTRY_THRESHOLD", 1.5, 0.15),
+        ("IBS_MAX_HOLD_DAYS", 0, 3),
+        ("IBS_MAX_HOLD_DAYS", 50, 3),
+        ("IBS_ATR_MULT", 0.1, 2.0),
+        ("IBS_ATR_MULT", 20.0, 2.0),
+        ("STACKED_CONFIDENCE_BOOST", 0.5, 1.25),
+        ("STACKED_CONFIDENCE_BOOST", 10.0, 1.25),
+        ("DONCHIAN_ENTRY_LEN", 1, 20),
+        ("DONCHIAN_ENTRY_LEN", 500, 20),
+        ("DONCHIAN_EXIT_LEN", 1, 10),
+        ("DONCHIAN_MAX_HOLD_DAYS", 0, 30),
+        ("DONCHIAN_ATR_MULT", 0.1, 3.0),
+        ("ADX_PERIOD", 2, 14),
+        ("ADX_PERIOD", 100, 14),
+        ("ADX_RANGING_THRESHOLD", 0, 20),
+        ("ADX_RANGING_THRESHOLD", 60, 20),
+        ("ADX_TREND_THRESHOLD", 0, 25),
+        ("ADX_TREND_THRESHOLD", 100, 25),
+        ("MAX_EQUITY_POSITIONS", 0, 3),
+        ("MAX_EQUITY_POSITIONS", 50, 3),
+        ("MAX_CRYPTO_POSITIONS", -1, 2),
+        ("MAX_CRYPTO_POSITIONS", 50, 2),
+        ("EQUITY_ALLOCATION_PCT", 0.0, 0.70),
+        ("EQUITY_ALLOCATION_PCT", 1.5, 0.70),
+        ("CRYPTO_ALLOCATION_PCT", -0.1, 0.30),
+        ("CRYPTO_ALLOCATION_PCT", 1.5, 0.30),
+        ("BTC_FEE_RATE", -0.001, 0.004),
+        ("BTC_FEE_RATE", 0.10, 0.004),
+        ("BTC_MIN_EXPECTED_GAIN", 0.0, 0.006),
+        ("BTC_MIN_EXPECTED_GAIN", 0.50, 0.006),
+        ("EARNINGS_DAYS_BEFORE", -1, 2),
+        ("EARNINGS_DAYS_BEFORE", 30, 2),
+        ("EARNINGS_DAYS_AFTER", -1, 1),
+        ("EARNINGS_DAYS_AFTER", 30, 1),
+    ])
+    def test_scalar_out_of_range_skipped(self, key, bad_value, default):
+        r = make_r(store={Keys.CONFIG: json.dumps({key: bad_value})})
+        load_overrides(r)
+        assert getattr(config, key) == default
+
+    # ── cross-check: ADX ranging threshold must be < trend threshold ──
+    def test_adx_thresholds_skipped_when_not_ascending(self):
+        r = make_r(store={Keys.CONFIG: json.dumps({
+            "ADX_RANGING_THRESHOLD": 30,
+            "ADX_TREND_THRESHOLD": 25,
+        })})
+        load_overrides(r)
+        assert config.ADX_RANGING_THRESHOLD == 20  # unchanged
+        assert config.ADX_TREND_THRESHOLD == 25     # unchanged
+
+    def test_adx_thresholds_apply_when_ascending(self):
+        r = make_r(store={Keys.CONFIG: json.dumps({
+            "ADX_RANGING_THRESHOLD": 18,
+            "ADX_TREND_THRESHOLD": 28,
+        })})
+        load_overrides(r)
+        assert config.ADX_RANGING_THRESHOLD == 18
+        assert config.ADX_TREND_THRESHOLD == 28
+
+    # ── cross-check: Donchian exit_len must be < entry_len ──
+    def test_donchian_lens_skipped_when_exit_not_less_than_entry(self):
+        r = make_r(store={Keys.CONFIG: json.dumps({
+            "DONCHIAN_ENTRY_LEN": 20,
+            "DONCHIAN_EXIT_LEN": 25,
+        })})
+        load_overrides(r)
+        assert config.DONCHIAN_ENTRY_LEN == 20  # unchanged
+        assert config.DONCHIAN_EXIT_LEN == 10   # unchanged
+
+    # ── cross-check: equity + crypto allocation must sum to 1.0 ──
+    def test_allocations_skipped_when_sum_not_one(self):
+        r = make_r(store={Keys.CONFIG: json.dumps({
+            "EQUITY_ALLOCATION_PCT": 0.80,
+            "CRYPTO_ALLOCATION_PCT": 0.30,  # sum = 1.10 ≠ 1.0
+        })})
+        load_overrides(r)
+        assert config.EQUITY_ALLOCATION_PCT == 0.70
+        assert config.CRYPTO_ALLOCATION_PCT == 0.30
+
+    def test_allocations_apply_when_sum_one(self):
+        r = make_r(store={Keys.CONFIG: json.dumps({
+            "EQUITY_ALLOCATION_PCT": 0.80,
+            "CRYPTO_ALLOCATION_PCT": 0.20,
+        })})
+        load_overrides(r)
+        assert config.EQUITY_ALLOCATION_PCT == 0.80
+        assert config.CRYPTO_ALLOCATION_PCT == 0.20
+
+
+class TestLoadOverridesDicts:
+    """Dict-valued overrides: trailing stop tiers + daemon heartbeat thresholds."""
+
+    def setup_method(self):
+        import config as _c
+        _c.TRAILING_TRIGGER_PCT = {1: 5.0, 2: 5.0, 3: 4.0}
+        _c.TRAILING_TRAIL_PCT = {1: 2.0, 2: 2.5, 3: 3.0}
+        _c.DAEMON_STALE_THRESHOLDS = {
+            "executor": 5, "portfolio_manager": 5, "watcher": 35,
+        }
+
+    def test_trailing_trigger_override_applies(self):
+        r = make_r(store={Keys.CONFIG: json.dumps({
+            "TRAILING_TRIGGER_PCT": {"1": 6.0, "2": 6.0, "3": 5.0},
+        })})
+        load_overrides(r)
+        assert config.TRAILING_TRIGGER_PCT == {1: 6.0, 2: 6.0, 3: 5.0}
+
+    def test_trailing_trail_override_applies(self):
+        r = make_r(store={Keys.CONFIG: json.dumps({
+            "TRAILING_TRAIL_PCT": {"1": 1.5, "2": 2.0, "3": 2.5},
+        })})
+        load_overrides(r)
+        assert config.TRAILING_TRAIL_PCT == {1: 1.5, 2: 2.0, 3: 2.5}
+
+    def test_trailing_trigger_missing_tier_rejected(self):
+        r = make_r(store={Keys.CONFIG: json.dumps({
+            "TRAILING_TRIGGER_PCT": {"1": 6.0, "2": 6.0},  # missing tier 3
+        })})
+        load_overrides(r)
+        assert config.TRAILING_TRIGGER_PCT == {1: 5.0, 2: 5.0, 3: 4.0}
+
+    def test_trailing_trigger_negative_rejected(self):
+        r = make_r(store={Keys.CONFIG: json.dumps({
+            "TRAILING_TRIGGER_PCT": {"1": -1.0, "2": 6.0, "3": 5.0},
+        })})
+        load_overrides(r)
+        assert config.TRAILING_TRIGGER_PCT == {1: 5.0, 2: 5.0, 3: 4.0}
+
+    def test_trailing_trigger_non_dict_rejected(self):
+        r = make_r(store={Keys.CONFIG: json.dumps({
+            "TRAILING_TRIGGER_PCT": "not a dict",
+        })})
+        load_overrides(r)
+        assert config.TRAILING_TRIGGER_PCT == {1: 5.0, 2: 5.0, 3: 4.0}
+
+    def test_trail_skipped_when_gte_trigger_any_tier(self):
+        """Per-tier cross-check: trail must be < trigger (default trigger)."""
+        r = make_r(store={Keys.CONFIG: json.dumps({
+            "TRAILING_TRAIL_PCT": {"1": 2.0, "2": 2.5, "3": 4.5},  # T3: 4.5 >= 4.0
+        })})
+        load_overrides(r)
+        assert config.TRAILING_TRAIL_PCT == {1: 2.0, 2: 2.5, 3: 3.0}  # unchanged
+
+    def test_both_trigger_and_trail_apply_when_consistent(self):
+        r = make_r(store={Keys.CONFIG: json.dumps({
+            "TRAILING_TRIGGER_PCT": {"1": 6.0, "2": 6.0, "3": 5.0},
+            "TRAILING_TRAIL_PCT":   {"1": 2.5, "2": 3.0, "3": 3.5},
+        })})
+        load_overrides(r)
+        assert config.TRAILING_TRIGGER_PCT == {1: 6.0, 2: 6.0, 3: 5.0}
+        assert config.TRAILING_TRAIL_PCT == {1: 2.5, 2: 3.0, 3: 3.5}
+
+    def test_daemon_thresholds_override_applies(self):
+        r = make_r(store={Keys.CONFIG: json.dumps({
+            "DAEMON_STALE_THRESHOLDS": {
+                "executor": 10, "portfolio_manager": 10, "watcher": 60,
+            },
+        })})
+        load_overrides(r)
+        assert config.DAEMON_STALE_THRESHOLDS == {
+            "executor": 10, "portfolio_manager": 10, "watcher": 60,
+        }
+
+    def test_daemon_thresholds_missing_key_rejected(self):
+        r = make_r(store={Keys.CONFIG: json.dumps({
+            "DAEMON_STALE_THRESHOLDS": {"executor": 10, "portfolio_manager": 10},
+        })})
+        load_overrides(r)
+        assert config.DAEMON_STALE_THRESHOLDS == {
+            "executor": 5, "portfolio_manager": 5, "watcher": 35,
+        }
+
+    def test_daemon_thresholds_out_of_range_rejected(self):
+        r = make_r(store={Keys.CONFIG: json.dumps({
+            "DAEMON_STALE_THRESHOLDS": {
+                "executor": 0, "portfolio_manager": 10, "watcher": 60,
+            },
+        })})
+        load_overrides(r)
+        assert config.DAEMON_STALE_THRESHOLDS == {
+            "executor": 5, "portfolio_manager": 5, "watcher": 35,
+        }
+
+    def test_daemon_thresholds_non_dict_rejected(self):
+        r = make_r(store={Keys.CONFIG: json.dumps({
+            "DAEMON_STALE_THRESHOLDS": ["not", "a", "dict"],
+        })})
+        load_overrides(r)
+        assert config.DAEMON_STALE_THRESHOLDS == {
+            "executor": 5, "portfolio_manager": 5, "watcher": 35,
+        }
 
 
 # ── IBS strategy parameters ──────────────────────────────────
