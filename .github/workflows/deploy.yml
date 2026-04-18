@@ -44,17 +44,15 @@ jobs:
     runs-on: ubuntu-latest
     needs: [tag]
     steps:
+      - uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+
       - name: Deploy via SSH
         env:
-          DEPLOY_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
         run: |
-          echo "$DEPLOY_KEY" > /tmp/deploy_key
-          chmod 600 /tmp/deploy_key
-          ssh -i /tmp/deploy_key \
-              -o IdentitiesOnly=yes \
-              -o StrictHostKeyChecking=no \
+          ssh -o StrictHostKeyChecking=no \
               -o ConnectTimeout=30 \
               linuxuser@"$DEPLOY_HOST" \
               '/home/linuxuser/.local/bin/update-trading-system'
-          rm -f /tmp/deploy_key
