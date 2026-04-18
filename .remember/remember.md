@@ -1,12 +1,18 @@
 # Handoff
 
 ## State
-v0.34.2 deslop patch complete. Full codebase quality pass across all user-owned Python + Elixir files. 1,240 tests passing (333 Python core + 477 Python agents + 430 Elixir).
+v0.34.3. Deploy pipeline + README rewrite shipped together.
 
-## Changes shipped
-- Python: config.py (Redis init loop, _load_thresholds helper), indicators.py (dead adx seed, macd np.argmax), reconcile.py, refresh_economic_calendar.py, backup_redis.py
-- Agent files (all 5): unused imports removed, bare except fixed, trivial comments removed, dead branches removed
-- Elixir: parse_naive_dt/1 helper (dashboard_live), range_to_days_back/1 (performance_live), heex comment syntax, redis_poller case collapse
+## What's in flight
+- PR #140 (docs/readme-rewrite): README rewrite — docs only, ready to merge
+- PR #141 (ci/deploy-on-merge): GitHub Actions deploy workflow — ready to merge once DEPLOY_SSH_KEY + DEPLOY_HOST secrets are added to the repo
+
+## Deploy pipeline setup
+- `DEPLOY_SSH_KEY`: Ed25519 private key (~/.ssh/trading-deploy) — Actions runner → prod SSH
+- `DEPLOY_HOST`: Vultr public IP of openboog
+- Prod server deploy key (~/.ssh/trading-system-repo) added to GitHub repo deploy keys — handles git pull on server
+- SSH config on prod routes github.com through trading-system-repo key
+- Verified: `ssh -T git@github.com` works on prod; `git pull` works
 
 ## Context
 watcher.py: `os` import used by `_get_db()` (TSDB_PASSWORD env var) — keep it. Trailing `r.set(Keys.POSITIONS)` at end of `generate_exit_signals` is intentional — test verifies it as last call.

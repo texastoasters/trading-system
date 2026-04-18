@@ -8,6 +8,14 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.34.3] - 2026-04-17
+
+### Added
+- **GitHub Actions deploy pipeline** — `.github/workflows/deploy.yml` fires via `workflow_run` after `Tests` completes successfully on `main`. Tags the merge commit with the `VERSION` value (idempotent — skips if tag already exists), then SSHes into prod and runs `/home/linuxuser/.local/bin/update-trading-system`. Requires two repository secrets: `DEPLOY_SSH_KEY` (Ed25519 private key for the Actions runner → prod SSH hop) and `DEPLOY_HOST` (Vultr public IP). The prod server's own deploy key handles the `git pull` from GitHub independently.
+- **README rewrite** — Reflects current system state: three strategies (RSI-2, IBS, Donchian-BO), cron-managed screener/supervisor, Linuxbrew Python 3.14, all six dashboard pages, per-instrument threshold tuning, expanded Redis key table, and accurate file structure.
+
+---
+
 ## [0.34.2] - 2026-04-17
 
 ### Changed
