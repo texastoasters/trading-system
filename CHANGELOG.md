@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.34.5] - 2026-04-17
+
+### Fixed
+- **Deploy pipeline working end-to-end** — switched to `webfactory/ssh-agent@v0.9.0` for reliable key loading; removed debug `ssh-add -l` step now that authentication is confirmed working.
+
+---
+
 ## [0.34.4] - 2026-04-17
 
 ### Fixed
