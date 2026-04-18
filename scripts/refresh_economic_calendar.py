@@ -55,14 +55,11 @@ def build_entries(
     fomc: list[date],
 ) -> list[dict]:
     """Convert date lists into calendar entry dicts."""
-    entries = []
-    for d in nfp:
-        entries.append({"date": d.isoformat(), "event": "NFP"})
-    for d in cpi:
-        entries.append({"date": d.isoformat(), "event": "CPI"})
-    for d in fomc:
-        entries.append({"date": d.isoformat(), "event": "FOMC"})
-    return entries
+    return [
+        {"date": d.isoformat(), "event": event}
+        for dates, event in ((nfp, "NFP"), (cpi, "CPI"), (fomc, "FOMC"))
+        for d in dates
+    ]
 
 
 def merge_entries(

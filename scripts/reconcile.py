@@ -206,7 +206,7 @@ def main():  # pragma: no cover
     if args.fix and stop_issues:
         print("[Reconcile] Fixing missing stop-losses...")
         fix_missing_stops(trading_client, r, stop_issues)
-    elif stop_issues and not args.fix:
+    elif stop_issues:
         print("[Reconcile] Run with --fix to automatically resubmit missing stop-losses.")
 
     if pos_issues:

@@ -12,7 +12,7 @@ defmodule Dashboard.RedisPoller do
   @poll_interval_ms 2_000
   @cooldown_ttl_s 30
 
-  # Redis keys to fetch on each poll (mirrors Keys class in config.py)
+  # mirrors Keys class in config.py
   @redis_keys [
     "trading:simulated_equity",
     "trading:peak_equity",
@@ -137,7 +137,6 @@ defmodule Dashboard.RedisPoller do
     end)
   end
 
-  # JSON blobs
   defp parse_value(key, val)
        when key in ["trading:regime", "trading:positions", "trading:watchlist", "trading:universe", "trading:heatmap"] do
     case val do
@@ -146,7 +145,6 @@ defmodule Dashboard.RedisPoller do
     end
   end
 
-  # Plain numeric strings
   defp parse_value(key, val)
        when key in [
               "trading:simulated_equity",
@@ -161,14 +159,9 @@ defmodule Dashboard.RedisPoller do
     end
   end
 
-  # Integer count
-  defp parse_value("trading:pdt:count", val) do
-    case val do
-      nil -> 0
-      v -> String.to_integer(v)
-    end
-  end
+  defp parse_value("trading:pdt:count", nil), do: 0
+  defp parse_value("trading:pdt:count", v), do: String.to_integer(v)
 
-  # Everything else: return as-is (status, heartbeat timestamps)
+  # status strings and heartbeat timestamps returned as-is
   defp parse_value(_key, val), do: val
 end

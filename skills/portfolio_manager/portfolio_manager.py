@@ -11,8 +11,6 @@ Usage (from repo root):
 """
 
 import json
-import sys
-import time
 import argparse
 from datetime import datetime
 
@@ -239,7 +237,6 @@ def evaluate_entry_signal(r, signal):
         else:
             return None, f"Insufficient capital: need ${order_value:.0f}, have ${cash:.0f}"
 
-    # For equities, round to whole shares
     if not is_crypto(symbol):
         position_size = int(position_size)
         if position_size < 1:
@@ -254,9 +251,7 @@ def evaluate_entry_signal(r, signal):
     regime_info = json.loads(regime_raw) if regime_raw else {"regime": "RANGING"}
 
     if regime_info.get("regime") == "DOWNTREND" and not is_crypto(symbol):
-        position_size = position_size * 0.5 if not is_crypto(symbol) else position_size
-        if not is_crypto(symbol):
-            position_size = int(position_size)
+        position_size = int(position_size * 0.5)
         if position_size < 1:
             return None, "Position too small after DOWNTREND halving (< 1 share)"
         order_value = position_size * entry_price
@@ -264,10 +259,10 @@ def evaluate_entry_signal(r, signal):
         actual_risk_pct = actual_risk / equity * 100
 
     # ── Build approved order ──
-    strategies = list(signal.get("strategies") or [])
     primary_strategy = signal.get("primary_strategy") or signal.get("strategy")
+    strategies = list(signal.get("strategies") or [])
     if not strategies:
-        # Legacy signal: fall back to primary or RSI-2 as a single-strategy list
+        # Legacy signal: fall back to primary or RSI-2
         strategies = [primary_strategy] if primary_strategy else ["RSI2"]
     if not primary_strategy:
         primary_strategy = strategies[0]
@@ -317,7 +312,6 @@ def evaluate_exit_signal(r, signal):
     if pos_key is None:
         return None, f"No open position for {symbol}"
 
-    # Exit signals are generally approved (the Watcher already validated conditions)
     order = {
         "time": datetime.now().isoformat(),
         "symbol": symbol,
@@ -332,7 +326,6 @@ def evaluate_exit_signal(r, signal):
         "reason": signal.get("reason", ""),
     }
 
-    # PDT check for same-day exits
     if signal.get("is_day_trade", False):
         pdt_count = int(r.get(Keys.PDT_COUNT) or 0)
         if pdt_count >= 3:
@@ -356,7 +349,6 @@ def process_signal(r, signal):
             return order
         else:
             print(f"  ❌ [PM] REJECTED: {symbol} — {rejection}")
-            # Log rejection for Supervisor review
             r.rpush("trading:rejected_signals", json.dumps({
                 "time": datetime.now().isoformat(),
                 "symbol": symbol,
@@ -379,14 +371,9 @@ def process_signal(r, signal):
 
 def process_pending_signals(r):
     """Process any signals that arrived since last check."""
-    # Subscribe and get any pending messages
     pubsub = r.pubsub()
     pubsub.subscribe(Keys.SIGNALS)
-
-    # Drain subscription confirmation
-    pubsub.get_message(timeout=1)
-
-    # Process pending messages
+    pubsub.get_message(timeout=1)  # drain subscription confirmation
     count = 0
     while True:
         msg = pubsub.get_message(timeout=0.5)

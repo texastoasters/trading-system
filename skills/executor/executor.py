@@ -12,10 +12,14 @@ Usage (from repo root):
 """
 
 import json
+import os
+import signal
 import sys
 import time
 import argparse
 from datetime import datetime, date, timedelta
+
+import psycopg2
 
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import (
@@ -23,11 +27,6 @@ from alpaca.trading.requests import (
     TrailingStopOrderRequest, GetOrdersRequest,
 )
 from alpaca.trading.enums import OrderSide, TimeInForce, QueryOrderStatus
-
-import os
-import signal
-
-import psycopg2
 
 import config
 from config import Keys, get_redis, get_simulated_equity, is_crypto, init_redis_state
@@ -95,18 +94,15 @@ def update_simulated_equity(r, pnl_dollar):
     new_equity = equity + pnl_dollar
     r.set(Keys.SIMULATED_EQUITY, str(round(new_equity, 2)))
 
-    # Update peak
     peak = float(r.get(Keys.PEAK_EQUITY) or config.INITIAL_CAPITAL)
     if new_equity > peak:
         r.set(Keys.PEAK_EQUITY, str(round(new_equity, 2)))
         r.set(Keys.PEAK_EQUITY_DATE, date.today().isoformat())
 
-    # Update drawdown
     peak = float(r.get(Keys.PEAK_EQUITY))
     dd = max(0, (peak - new_equity) / peak * 100)
     r.set(Keys.DRAWDOWN, str(round(dd, 2)))
 
-    # Update daily P&L
     daily = float(r.get(Keys.DAILY_PNL) or 0)
     r.set(Keys.DAILY_PNL, str(round(daily + pnl_dollar, 2)))
 
@@ -578,20 +574,11 @@ def execute_buy(r, trading_client, order):
         if order.get("order_type") == "limit" and order.get("limit_price"):
             req = LimitOrderRequest(
                 symbol=symbol,
-                qty=quantity if is_crypto(symbol) else None,
-                notional=None,
+                qty=quantity if is_crypto(symbol) else int(quantity),
                 side=OrderSide.BUY,
                 time_in_force=TimeInForce.GTC if is_crypto(symbol) else TimeInForce.DAY,
                 limit_price=order["limit_price"],
             )
-            if not is_crypto(symbol):
-                req = LimitOrderRequest(
-                    symbol=symbol,
-                    qty=int(quantity),
-                    side=OrderSide.BUY,
-                    time_in_force=TimeInForce.DAY,
-                    limit_price=order["limit_price"],
-                )
         else:
             req = MarketOrderRequest(
                 symbol=symbol,
@@ -619,7 +606,7 @@ def execute_buy(r, trading_client, order):
                 print(f"  [Executor] ❌ Buy for {symbol} did not fill — cancelling")
                 try:
                     trading_client.cancel_order_by_id(alpaca_order.id)
-                except:
+                except Exception:
                     pass
                 return False
 
@@ -630,10 +617,8 @@ def execute_buy(r, trading_client, order):
             print(f"  [Executor] ❌ Buy for {symbol} filled with qty=0 — order did not execute")
             return False
 
-        # Submit server-side stop-loss
         stop_order_id = submit_stop_loss(trading_client, symbol, fill_qty, order["stop_price"])
 
-        # Record position in Redis
         order_strategies = list(order.get("strategies") or [order["strategy"]])
         order_primary = order.get("primary_strategy") or order["strategy"]
         position_data = {
@@ -655,8 +640,6 @@ def execute_buy(r, trading_client, order):
         positions = json.loads(r.get(Keys.POSITIONS) or "{}")
         positions[symbol] = position_data
         r.set(Keys.POSITIONS, json.dumps(positions))
-
-        # Log trade to TimescaleDB
         _log_trade(
             symbol=symbol,
             side="buy",
@@ -667,8 +650,6 @@ def execute_buy(r, trading_client, order):
             strategy=order.get("strategy", "rsi2"),
             asset_class=order.get("asset_class", "equity"),
         )
-
-        # Send Telegram notification
         trade_alert(
             side="buy",
             symbol=symbol,
@@ -830,18 +811,14 @@ def execute_sell(r, trading_client, order):
 
         fill_price = float(filled_order.filled_avg_price)
         entry_price = pos["entry_price"]
-
-        # Calculate P&L
         pnl_pct = (fill_price - entry_price) / entry_price * 100
         pnl_dollar = (fill_price - entry_price) * quantity
 
-        # Deduct fees for crypto
         if is_crypto(symbol):
             fee = (entry_price * quantity + fill_price * quantity) * (config.BTC_FEE_RATE / 2)
             pnl_dollar -= fee
             pnl_pct -= (config.BTC_FEE_RATE * 100)
 
-        # Log trade to TimescaleDB
         _log_trade(
             symbol=symbol,
             side="sell",
@@ -855,15 +832,10 @@ def execute_sell(r, trading_client, order):
             exit_reason=order.get("reason", order.get("signal_type", "unknown")),
         )
 
-        # Update simulated equity
         new_equity = update_simulated_equity(r, pnl_dollar)
-
-        # Remove from positions
         del positions[symbol]
         r.set(Keys.POSITIONS, json.dumps(positions))
-
-        # Clear the watcher's exit-signaled flag so a future re-entry on this
-        # symbol can exit normally rather than being silently suppressed.
+        # Clear exit-signaled so a future re-entry can exit normally.
         r.delete(Keys.exit_signaled(symbol))
 
         # Manual liquidation: gate re-entry until price drops sufficiently.
@@ -875,14 +847,12 @@ def execute_sell(r, trading_client, order):
             print(f"  [Executor] 🖐 Manual exit recorded for {symbol} @ ${fill_price:.2f} — "
                   f"re-entry blocked until price ≤ ${required:.2f} ({drop_pct:.0f}% below exit)")
 
-        # Calculate hold days
         try:
             entry_dt = datetime.strptime(pos["entry_date"], "%Y-%m-%d")
             hold_days = (datetime.now() - entry_dt).days
-        except:
+        except Exception:
             hold_days = 0
 
-        # Check if this is a day trade
         if hold_days == 0:
             pdt_count = int(r.get(Keys.PDT_COUNT) or 0)
             new_pdt = pdt_count + 1
@@ -892,15 +862,9 @@ def execute_sell(r, trading_client, order):
                 notify(f"⚠️ PDT warning: {new_pdt}/3 day trades used today. "
                        f"One more will trigger the PDT limit.")
 
-        # Mark symbol as exited today — Watcher will block re-entry until midnight ET
         r.set(Keys.exited_today(symbol), "1", ex=_seconds_until_midnight_et())
-
-        # Record close in trading:closed_today so the executor PDT gate can
-        # reject a same-session re-buy when pdt_count is at the 3/3 ceiling.
-        # Cleared by supervisor --reset-daily at EOD.
+        # Record close for PDT gate — cleared by supervisor --reset-daily.
         r.hset(Keys.CLOSED_TODAY, symbol, datetime.now().strftime("%H:%M:%S"))
-
-        # Send Telegram notification
         exit_alert(
             symbol=symbol,
             quantity=quantity,
@@ -947,7 +911,7 @@ def cancel_existing_orders(trading_client, symbol):
             try:
                 trading_client.cancel_order_by_id(o.id)
                 print(f"  [Executor] Cancelled stale order {o.id} ({o.side} {o.type}) for {symbol}")
-            except:
+            except Exception:
                 pass
         if open_orders:
             time.sleep(1)  # brief pause for cancellations to settle
@@ -1033,7 +997,6 @@ def verify_startup(trading_client, r):
             print(f"  ❌ {label}")
             all_ok = False
 
-    # Initialize simulated equity
     if not r.exists(Keys.SIMULATED_EQUITY):
         r.set(Keys.SIMULATED_EQUITY, str(config.INITIAL_CAPITAL))
         print(f"  ✅ Simulated equity initialized: ${config.INITIAL_CAPITAL:,.2f}")
@@ -1041,7 +1004,6 @@ def verify_startup(trading_client, r):
         sim_eq = get_simulated_equity(r)
         print(f"  ✅ Simulated equity: ${sim_eq:,.2f}")
 
-    # Verify stop-losses on open positions
     positions = json.loads(r.get(Keys.POSITIONS) or "{}")
     if positions:
         print(f"  Checking {len(positions)} open position(s)...")
@@ -1076,7 +1038,6 @@ def verify_startup(trading_client, r):
     else:
         print(f"  ✅ No open positions")
 
-    # Sync PDT count from Alpaca (source of truth)
     alpaca_pdt = int(account.daytrade_count or 0)
     redis_pdt = int(r.get(Keys.PDT_COUNT) or 0)
     if alpaca_pdt != redis_pdt:
@@ -1102,13 +1063,11 @@ def process_order(r, trading_client, order):
     config.load_overrides(r)   # apply any runtime config overrides
     account = trading_client.get_account()
 
-    # Validate
     ok, reason = validate_order(r, order, account)
     if not ok:
         print(f"  [Executor] BLOCKED: {reason}")
         return False
 
-    # Execute
     if order["side"] == "buy":
         return execute_buy(r, trading_client, order)
     elif order["side"] == "sell":

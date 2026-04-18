@@ -346,28 +346,22 @@ def get_redis() -> redis.Redis:
 
 def init_redis_state(r: redis.Redis):
     """Initialize Redis with default state if not already set."""
-    if not r.exists(Keys.UNIVERSE):
-        r.set(Keys.UNIVERSE, json.dumps(DEFAULT_UNIVERSE))
-    if not r.exists(Keys.TIERS):
-        r.set(Keys.TIERS, json.dumps(DEFAULT_TIERS))
-    if not r.exists(Keys.REGIME):
-        r.set(Keys.REGIME, json.dumps({"regime": "RANGING", "adx": 20, "initialized_default": True}))
-    if not r.exists(Keys.SIMULATED_EQUITY):
-        r.set(Keys.SIMULATED_EQUITY, str(INITIAL_CAPITAL))
-    if not r.exists(Keys.PEAK_EQUITY):
-        r.set(Keys.PEAK_EQUITY, str(INITIAL_CAPITAL))
-    if not r.exists(Keys.PEAK_EQUITY_DATE):
-        r.set(Keys.PEAK_EQUITY_DATE, date.today().isoformat())
-    if not r.exists(Keys.DAILY_PNL):
-        r.set(Keys.DAILY_PNL, "0.0")
-    if not r.exists(Keys.DRAWDOWN):
-        r.set(Keys.DRAWDOWN, "0.0")
-    if not r.exists(Keys.PDT_COUNT):
-        r.set(Keys.PDT_COUNT, "0")
-    if not r.exists(Keys.RISK_MULTIPLIER):
-        r.set(Keys.RISK_MULTIPLIER, "1.0")
-    if not r.exists(Keys.SYSTEM_STATUS):
-        r.set(Keys.SYSTEM_STATUS, "active")
+    defaults = {
+        Keys.UNIVERSE:       json.dumps(DEFAULT_UNIVERSE),
+        Keys.TIERS:          json.dumps(DEFAULT_TIERS),
+        Keys.REGIME:         json.dumps({"regime": "RANGING", "adx": 20, "initialized_default": True}),
+        Keys.SIMULATED_EQUITY: str(INITIAL_CAPITAL),
+        Keys.PEAK_EQUITY:    str(INITIAL_CAPITAL),
+        Keys.PEAK_EQUITY_DATE: date.today().isoformat(),
+        Keys.DAILY_PNL:      "0.0",
+        Keys.DRAWDOWN:       "0.0",
+        Keys.PDT_COUNT:      "0",
+        Keys.RISK_MULTIPLIER: "1.0",
+        Keys.SYSTEM_STATUS:  "active",
+    }
+    for key, val in defaults.items():
+        if not r.exists(key):
+            r.set(key, val)
 
 
 # ── Helpers ─────────────────────────────────────────────────
@@ -388,50 +382,40 @@ def get_tier(r: redis.Redis, symbol: str) -> int:
     return tiers.get(symbol, 99)
 
 
-def get_entry_threshold(r: redis.Redis, symbol: str, regime: str) -> float:
-    """Return the RSI-2 entry threshold for (symbol, regime). Reads the
-    per-symbol map written by the Wave 4 #2b refit job from
-    `trading:thresholds:{symbol}`; falls back to the global live rule when
-    the key is missing, the regime slot is absent/null, the payload is
-    malformed, or `regime` is outside {RANGING, UPTREND, DOWNTREND}.
-
-    Fallback matches the current live screener logic: UPTREND uses
-    `RSI2_ENTRY_AGGRESSIVE`; RANGING and DOWNTREND use
-    `RSI2_ENTRY_CONSERVATIVE`. A bad refit payload must never change
-    routing — the helper only narrows the threshold when it has a
-    validated per-symbol value."""
-    fallback = (RSI2_ENTRY_AGGRESSIVE if regime == "UPTREND"
-                else RSI2_ENTRY_CONSERVATIVE)
+def _load_thresholds(r: redis.Redis, symbol: str) -> dict | None:
+    """Parse trading:thresholds:{symbol}. Returns dict or None on missing/malformed."""
     raw = r.get(Keys.thresholds(symbol))
     if not raw:
-        return fallback
+        return None
     try:
-        payload = json.loads(raw)
+        return json.loads(raw)
     except (ValueError, TypeError):
+        return None
+
+
+def get_entry_threshold(r: redis.Redis, symbol: str, regime: str) -> float:
+    """Return the RSI-2 entry threshold for (symbol, regime).
+
+    Reads the per-symbol map written by the Wave 4 #2b refit job; falls back to
+    the global live rule (UPTREND → RSI2_ENTRY_AGGRESSIVE, else CONSERVATIVE)
+    when the key is missing, regime slot absent/null, or payload malformed."""
+    fallback = RSI2_ENTRY_AGGRESSIVE if regime == "UPTREND" else RSI2_ENTRY_CONSERVATIVE
+    payload = _load_thresholds(r, symbol)
+    if payload is None:
         return fallback
-    value = payload.get(regime)
-    if value is None:
-        return fallback
-    return value
+    return payload.get(regime) or fallback
 
 
 def get_max_hold_days(r: redis.Redis, symbol: str) -> int:
-    """Return the RSI-2 time-stop bar count for `symbol`. Reads the per-symbol
-    map written by the Wave 4 #3b refit job from `trading:thresholds:{symbol}`
-    (shared key with the entry-threshold helper); falls back to the global
-    `RSI2_MAX_HOLD_DAYS` const when the key is missing, the `max_hold` slot is
-    absent/null, or the payload is malformed."""
-    raw = r.get(Keys.thresholds(symbol))
-    if not raw:
-        return RSI2_MAX_HOLD_DAYS
-    try:
-        payload = json.loads(raw)
-    except (ValueError, TypeError):
+    """Return the RSI-2 time-stop bar count for `symbol`.
+
+    Reads max_hold from trading:thresholds:{symbol} (shared with entry-threshold
+    helper); falls back to RSI2_MAX_HOLD_DAYS when missing/null/malformed."""
+    payload = _load_thresholds(r, symbol)
+    if payload is None:
         return RSI2_MAX_HOLD_DAYS
     value = payload.get("max_hold")
-    if value is None:
-        return RSI2_MAX_HOLD_DAYS
-    return int(value)
+    return int(value) if value is not None else RSI2_MAX_HOLD_DAYS
 
 
 def get_simulated_equity(r: redis.Redis) -> float:
@@ -628,15 +612,13 @@ def load_overrides(r: redis.Redis) -> None:
     _dd_keys = ["DRAWDOWN_CAUTION", "DRAWDOWN_DEFENSIVE", "DRAWDOWN_CRITICAL", "DRAWDOWN_HALT"]
     _mod = sys.modules[__name__]
     _dd_vals = [validated.get(k, getattr(_mod, k)) for k in _dd_keys]
-    for i in range(len(_dd_vals) - 1):
-        if _dd_vals[i] >= _dd_vals[i + 1]:
-            print(
-                "[config] WARNING: drawdown thresholds out of order after overrides, "
-                "skipping all drawdown overrides"
-            )
-            for k in _dd_keys:
-                validated.pop(k, None)
-            break
+    if any(a >= b for a, b in zip(_dd_vals, _dd_vals[1:])):
+        print(
+            "[config] WARNING: drawdown thresholds out of order after overrides, "
+            "skipping all drawdown overrides"
+        )
+        for k in _dd_keys:
+            validated.pop(k, None)
 
     # Cross-check: ADX_RANGING_THRESHOLD must be < ADX_TREND_THRESHOLD
     if "ADX_RANGING_THRESHOLD" in validated or "ADX_TREND_THRESHOLD" in validated:

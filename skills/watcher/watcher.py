@@ -12,7 +12,6 @@ Usage (from repo root):
 
 import json
 import os
-import sys
 import time
 import argparse
 from datetime import datetime, timedelta
@@ -248,18 +247,13 @@ def generate_entry_signals(r, stock_client, crypto_client):
     for item in watchlist:
         symbol = item["symbol"]
 
-        # Don't generate an entry signal if we already hold this symbol.
         if symbol in open_positions:
             continue
 
-        # Skip blacklisted symbols
         if symbol in blacklisted_symbols:
             print(f"  [Watcher] {symbol}: skipped (blacklisted)")
             continue
 
-        # Equity orders can only be placed during market hours — skip to avoid
-        # flooding the pipeline with signals that the executor will reject anyway.
-        # Crypto trades 24/7 so it is always eligible.
         if not is_crypto(symbol) and not market_open:
             continue
 
@@ -273,21 +267,16 @@ def generate_entry_signals(r, stock_client, crypto_client):
         if not (rsi2_qualifies or ibs_qualifies or donchian_qualifies):
             continue
 
-        # Same-day exit cooldown: block re-entry if this symbol was sold today
         if check_exited_today(r, symbol):
             print(f"  [Watcher] {symbol}: skipped (exited today — no same-day rebuy)")
             continue
 
-        # Entry filter: skip if current price already above yesterday's high.
-        # The "close > prev_day_high" exit would fire immediately at a loss.
+        # "close > prev_day_high" exit fires immediately at a loss if already above — skip.
         if item["close"] > item["prev_high"]:
             print(f"  [Watcher] {symbol}: skipped (close ${item['close']:.2f} > "
                   f"prev-day-high ${item['prev_high']:.2f})")
             continue
 
-        # Gap-up guard (shared): intraday price above yesterday's high would
-        # fire the shared "close > prev_high" exit at fill — applies to both
-        # RSI-2 and IBS.
         intraday = fetch_intraday_bars(symbol, stock_client, crypto_client)
         if intraday is not None and len(intraday["close"]) > 0:
             current_price = float(intraday["close"][-1])
@@ -296,12 +285,10 @@ def generate_entry_signals(r, stock_client, crypto_client):
                       f">= prev-day-high ${item['prev_high']:.2f} * 1.001 — gap up)")
                 continue
 
-        # Earnings avoidance
         if is_near_earnings(symbol):
             print(f"  [Watcher] {symbol}: skipped (near earnings window)")
             continue
 
-        # Economic calendar avoidance
         if is_macro_event_day():
             print(f"  [Watcher] {symbol}: skipped (macro event day)")
             continue
@@ -320,7 +307,6 @@ def generate_entry_signals(r, stock_client, crypto_client):
                       f"${drop_needed:.2f} to go)")
                 continue
             else:
-                # Price has dropped far enough — lift the cooldown and allow re-entry
                 r.delete(Keys.manual_exit(symbol))
                 print(f"  [Watcher] {symbol}: manual exit cooldown cleared "
                       f"(price ${current_close:.2f} ≤ required ${required_price:.2f})")
@@ -332,10 +318,7 @@ def generate_entry_signals(r, stock_client, crypto_client):
 
         # RSI-2 candidate
         if rsi2_qualifies and not check_whipsaw(r, symbol, "RSI2"):
-            if regime_info["regime"] == "UPTREND":
-                rsi2_config = "aggressive"
-            else:
-                rsi2_config = "conservative"
+            rsi2_config = "aggressive" if regime_info["regime"] == "UPTREND" else "conservative"
             if adx_val < config.ADX_RANGING_THRESHOLD:
                 atr_mult = 1.5
             elif adx_val > 40:
@@ -449,7 +432,6 @@ def generate_exit_signals(r, stock_client, crypto_client):
         return []
 
     signals = []
-    positions_updated = False
     market_open = is_market_hours()
 
     for pos_key, pos in positions.items():
@@ -460,16 +442,13 @@ def generate_exit_signals(r, stock_client, crypto_client):
         stop_price = pos["stop_price"]
         quantity = pos.get("quantity", 0)
 
-        # Fetch intraday bars for current price and stop-loss monitoring
         intraday_data = fetch_intraday_bars(symbol, stock_client, crypto_client)
         if intraday_data is None:
             continue
 
-        # Get current price from most recent intraday bar
         latest_close = intraday_data['close'][-1]
-        intraday_low = np.min(intraday_data['low'][-4:])  # Lowest in last hour (4x15min bars)
+        intraday_low = np.min(intraday_data['low'][-4:])  # lowest in last hour (4x15min bars)
 
-        # Fetch daily bars for RSI-2 and "close > prev high" checks
         daily_data = fetch_recent_bars(symbol, stock_client, crypto_client)
         if daily_data is None:
             continue
@@ -478,30 +457,21 @@ def generate_exit_signals(r, stock_client, crypto_client):
         high = daily_data['high']
         prev_high = high[-2] if len(high) > 1 else high[-1]
 
-        # Compute RSI-2 on daily data (strategy uses daily RSI-2)
         rsi2_val = rsi(close, 2)[-1] if len(close) >= 3 else 50
 
-        # Always update position data so the dashboard stays current.
-        # Write back to Redis immediately — don't let anything in the exit
-        # signal section below prevent this from landing in Redis.
+        # Write position data immediately — don't let exit-signal logic below block this update.
         pos["current_price"] = round(float(latest_close), 2)
         pos["current_rsi2"] = round(float(rsi2_val), 2) if not np.isnan(rsi2_val) else None
         pos["current_value"] = round(float(latest_close) * float(quantity), 2)
         pos["unrealized_pnl_pct"] = round((float(latest_close) - float(entry_price)) / float(entry_price) * 100, 2)
-        r.set(Keys.POSITIONS, json.dumps(positions))
-        positions_updated = True
 
         # Calculate hold days
         try:
             entry_dt = datetime.strptime(entry_date, "%Y-%m-%d")
             hold_days = (datetime.now() - entry_dt).days
-        except:
+        except Exception:
             hold_days = 0
 
-        # Equity sells can only execute during market hours — don't generate
-        # exit signals when they can't be acted on. The server-side GTC
-        # stop-loss on Alpaca remains active and protects the position.
-        # Crypto trades 24/7 so it is always eligible for exit signals.
         if not is_crypto(symbol) and not market_open:
             continue
 
@@ -627,10 +597,7 @@ def generate_exit_signals(r, stock_client, crypto_client):
             }
             signals.append(signal)
 
-    # Save updated position data back to Redis
-    if positions_updated:
-        r.set(Keys.POSITIONS, json.dumps(positions))
-
+    r.set(Keys.POSITIONS, json.dumps(positions))
     return signals
 
 
@@ -660,10 +627,7 @@ def run_cycle():
     config.init_redis_state(r)
     config.load_overrides(r)   # apply any runtime config overrides
 
-    # Heartbeat
     r.set(Keys.heartbeat("watcher"), datetime.now().isoformat())
-
-    # Check system status
     status = r.get(Keys.SYSTEM_STATUS)
     if status == "halted":
         print("[Watcher] System halted. Checking exits only.")
@@ -673,13 +637,11 @@ def run_cycle():
 
     print(f"[Watcher] Running evaluation cycle at {datetime.now().strftime('%H:%M:%S')}...")
 
-    # Always check exits (even when halted)
     exit_signals = generate_exit_signals(r, stock_client, crypto_client)
     if exit_signals:
         print(f"[Watcher] Generated {len(exit_signals)} exit signal(s)")
         publish_signals(r, exit_signals)
 
-    # Only check entries if system is active
     entry_signals = []
     if status != "halted":
         entry_signals = generate_entry_signals(r, stock_client, crypto_client)
@@ -693,7 +655,6 @@ def run_cycle():
         print("[Watcher] No signals this cycle.")
         return total_signals
 
-    # Only notify when a signal was detected or an action was taken.
     positions = json.loads(r.get(Keys.POSITIONS) or "{}")
     watchlist = json.loads(r.get(Keys.WATCHLIST) or "[]")
 

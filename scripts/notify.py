@@ -346,7 +346,6 @@ def critical_alert(message: str):
         f"\n"
         f"<i>{_now_et().strftime('%Y-%m-%d %H:%M:%S ET')}</i>"
     )
-    # Send with notification sound (silent=False)
     notify(msg, silent=False)
 
 

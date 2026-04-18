@@ -15,10 +15,7 @@ defmodule DashboardWeb.DashboardLive do
   use DashboardWeb, :live_view
   alias Dashboard.Queries
 
-  # Keep only the last 30 signals in the live feed
   @max_signals 30
-
-  # Refresh DB-backed data every 60 seconds
   @db_refresh_ms 60_000
 
   @impl true
@@ -33,7 +30,6 @@ defmodule DashboardWeb.DashboardLive do
     socket =
       socket
       |> assign(:page_title, "Trading Dashboard")
-      # Redis state (updated by poller)
       |> assign(:equity, nil)
       |> assign(:peak_equity, nil)
       |> assign(:daily_pnl, nil)
@@ -47,20 +43,16 @@ defmodule DashboardWeb.DashboardLive do
       |> assign(:universe, nil)
       |> assign(:heartbeats, %{})
       |> assign(:cooldowns, [])
-      # Live signal feed (from pub/sub)
       |> assign(:live_signals, [])
-      # Market clock
       |> assign(:clock, nil)
-      # DB-backed (loaded async after connection)
       |> assign(:recent_trades, [])
       |> assign(:daily_summaries, [])
       |> assign(:drawdown_attribution, [])
       |> assign(:confirm_modal, nil)
-      # Intraday equity sparkline (accumulated from Redis poller; newest first)
+      # equity_history: intraday sparkline, accumulated newest-first; capped at 800 ticks
       |> assign(:equity_history, [])
       |> assign(:equity_tick, 0)
 
-    # Load DB data if connected (will be async after LV socket upgrade)
     socket =
       if connected?(socket) do
         load_db_data(socket)
@@ -228,39 +220,33 @@ defmodule DashboardWeb.DashboardLive do
     end
   end
 
-  defp heartbeat_age_minutes(ts) do
-    # Python agents write datetime.now().isoformat() — no timezone suffix.
-    # Try DateTime first (has tz), fall back to NaiveDateTime (treat as UTC).
+  # Python agents write datetime.now().isoformat() — no timezone suffix.
+  # Try DateTime first (has tz), fall back to NaiveDateTime (treat as UTC).
+  defp parse_naive_dt(ts) do
     case DateTime.from_iso8601(ts) do
-      {:ok, dt, _} ->
-        DateTime.diff(DateTime.utc_now(), dt, :second) / 60
-
+      {:ok, dt, _} -> DateTime.to_naive(dt)
       _ ->
         case NaiveDateTime.from_iso8601(ts) do
-          {:ok, ndt} ->
-            NaiveDateTime.diff(NaiveDateTime.utc_now(), ndt, :second) / 60
-
-          _ ->
-            nil
+          {:ok, ndt} -> ndt
+          _ -> nil
         end
+    end
+  end
+
+  defp heartbeat_age_minutes(ts) do
+    case parse_naive_dt(ts) do
+      nil -> nil
+      ndt -> NaiveDateTime.diff(NaiveDateTime.utc_now(), ndt, :second) / 60
     end
   end
 
   defp heartbeat_age(nil), do: "never"
 
   defp heartbeat_age(ts) when is_binary(ts) do
-    # Python agents write datetime.now().isoformat() — no timezone suffix.
-    # Try DateTime first (has tz), fall back to NaiveDateTime (treat as UTC).
     age =
-      case DateTime.from_iso8601(ts) do
-        {:ok, dt, _} ->
-          DateTime.diff(DateTime.utc_now(), dt, :second)
-
-        _ ->
-          case NaiveDateTime.from_iso8601(ts) do
-            {:ok, ndt} -> NaiveDateTime.diff(NaiveDateTime.utc_now(), ndt, :second)
-            _ -> nil
-          end
+      case parse_naive_dt(ts) do
+        nil -> nil
+        ndt -> NaiveDateTime.diff(NaiveDateTime.utc_now(), ndt, :second)
       end
 
     cond do
@@ -410,23 +396,11 @@ defmodule DashboardWeb.DashboardLive do
   defp manual_exit_threshold(exit_price), do: format_price(exit_price * 0.97)
 
   defp whipsaw_lifts_at(started_at) when is_binary(started_at) do
-    # Python writes datetime.now().isoformat() — no tz suffix — but mirror heartbeat
-    # parsing to handle any tz-aware variant safely.
-    ndt =
-      case DateTime.from_iso8601(started_at) do
-        {:ok, dt, _} -> DateTime.to_naive(dt)
-        _ ->
-          case NaiveDateTime.from_iso8601(started_at) do
-            {:ok, ndt} -> ndt
-            _ -> nil
-          end
-      end
-
-    case ndt do
+    case parse_naive_dt(started_at) do
       nil ->
         "—"
 
-      _ ->
+      ndt ->
         lifts = NaiveDateTime.add(ndt, 86_400, :second)
         remaining = NaiveDateTime.diff(lifts, NaiveDateTime.utc_now(), :second)
 
