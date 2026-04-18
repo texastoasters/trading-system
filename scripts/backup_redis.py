@@ -11,7 +11,6 @@ Usage (from repo root, after source ~/.trading_env):
 Scheduled via cron/trading-system-cron at 4:35 PM ET Mon–Fri (after EOD review).
 """
 
-import glob
 import json
 import os
 from datetime import datetime
@@ -68,10 +67,10 @@ def backup(r, backup_dir=None):
 
 def _prune(backup_dir):
     """Delete all but the RETAIN_DAYS most recent backup files."""
-    files = sorted(glob.glob(str(backup_dir / "*.json")))
+    files = sorted(Path(backup_dir).glob("*.json"))
     excess = max(0, len(files) - RETAIN_DAYS)
     for path in files[:excess]:
-        os.remove(path)
+        path.unlink()
         print(f"[Backup] Pruned: {path}")
 
 

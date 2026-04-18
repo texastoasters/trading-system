@@ -24,7 +24,6 @@ defmodule Dashboard.MarketClock do
 
   @impl true
   def init(state) do
-    # Fetch immediately, then poll every 30s
     send(self(), :fetch)
     {:ok, state}
   end
@@ -51,7 +50,7 @@ defmodule Dashboard.MarketClock do
     secret_key = Application.get_env(:dashboard, :alpaca_secret_key, "")
 
     if api_key == "" do
-      # No credentials — return a placeholder so the UI still renders
+      # No credentials configured — return a placeholder so the UI renders
       {:ok,
        %{
          "is_open" => false,

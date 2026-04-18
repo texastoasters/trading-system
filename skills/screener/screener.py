@@ -128,10 +128,8 @@ def scan_instrument(symbol, data, regime_info, threshold):
     if avg_volume_20d > 0 and latest_volume < config.MIN_VOLUME_RATIO * avg_volume_20d:
         return None  # thin-volume day — skip entry
 
-    # Check trend filter
     above_sma = bool(latest_close > latest_sma200)
 
-    # Classify RSI-2 priority
     rsi2_priority = None
     if above_sma and latest_rsi2 < 5:
         rsi2_priority = "strong_signal"
@@ -140,7 +138,6 @@ def scan_instrument(symbol, data, regime_info, threshold):
     elif above_sma and latest_rsi2 < threshold + 5:
         rsi2_priority = "watch"
 
-    # Classify IBS priority
     ibs_priority = None
     if above_sma and not np.isnan(latest_ibs):
         if latest_ibs < config.IBS_ENTRY_THRESHOLD:
@@ -148,7 +145,6 @@ def scan_instrument(symbol, data, regime_info, threshold):
         elif latest_ibs < config.IBS_ENTRY_THRESHOLD + 0.05:
             ibs_priority = "watch"
 
-    # Classify Donchian-BO priority (curated DONCHIAN_SYMBOLS only)
     donchian_priority = None
     latest_upper = float('nan')
     latest_lower = float('nan')
@@ -168,7 +164,6 @@ def scan_instrument(symbol, data, regime_info, threshold):
     if rsi2_priority is None and ibs_priority is None and donchian_priority is None:
         return None
 
-    # Top-level priority = best of the three (strong_signal > signal > watch)
     _rank = {"strong_signal": 0, "signal": 1, "watch": 2}
     priority = min(
         [p for p in (rsi2_priority, ibs_priority, donchian_priority) if p is not None],
@@ -215,10 +210,8 @@ def run_scan():
     config.init_redis_state(r)
     config.load_overrides(r)   # apply any runtime config overrides
 
-    # Send heartbeat
     r.set(Keys.heartbeat("screener"), datetime.now().isoformat())
 
-    # Check system status
     status = r.get(Keys.SYSTEM_STATUS)
     if status == "halted":
         print("[Screener] System is halted. Skipping scan.")
@@ -230,7 +223,6 @@ def run_scan():
     stock_client = StockHistoricalDataClient(config.ALPACA_API_KEY, config.ALPACA_SECRET_KEY)
     crypto_client = CryptoHistoricalDataClient(config.ALPACA_API_KEY, config.ALPACA_SECRET_KEY)
 
-    # Step 1: Compute regime from SPY
     spy_data = fetch_daily_bars("SPY", stock_client, crypto_client)
     if spy_data is None:
         print("[Screener] ERROR: Could not fetch SPY data for regime detection")
@@ -241,7 +233,6 @@ def run_scan():
     print(f"[Screener] Regime: {regime_info['regime']} (ADX={regime_info['adx']}, "
           f"+DI={regime_info['plus_di']}, -DI={regime_info['minus_di']})")
 
-    # Step 2: Scan each instrument
     watchlist = []
     heatmap_instruments = {}
     heatmap_dates = None
@@ -256,7 +247,6 @@ def run_scan():
         if data is None:
             continue
 
-        # Build heatmap entry from full RSI-2 series (all instruments, not just watchlist)
         rsi2_series = rsi(data['close'], 2)
         rsi2_last_n = [
             None if np.isnan(v) else round(float(v), 2)
@@ -272,15 +262,12 @@ def run_scan():
             result["tier"] = get_tier(r, symbol)
             watchlist.append(result)
 
-    # Step 3: Sort by priority then tier
     priority_order = {"strong_signal": 0, "signal": 1, "watch": 2}
     watchlist.sort(key=lambda x: (priority_order.get(x["priority"], 99), x["tier"]))
 
-    # Step 4: Publish to Redis
     r.set(Keys.WATCHLIST, json.dumps(watchlist))
     r.set(Keys.HEATMAP, json.dumps({"dates": heatmap_dates or [], "instruments": heatmap_instruments}))
 
-    # Log results
     signals = [w for w in watchlist if w["priority"] in ("signal", "strong_signal")]
     watches = [w for w in watchlist if w["priority"] == "watch"]
 
@@ -291,7 +278,6 @@ def run_scan():
               f"Close={w['close']:>10.2f}  SMA200={w['sma200']:>10.2f}  "
               f"Tier {w['tier']}  [{w['priority']}]")
 
-    # Notify on every run so silence is meaningful
     regime = regime_info["regime"]
     adx_val = regime_info["adx"]
     regime_emoji = {"RANGING": "➡️", "UPTREND": "📈", "DOWNTREND": "📉"}.get(regime, "❓")

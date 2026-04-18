@@ -8,6 +8,23 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.34.2] - 2026-04-17
+
+### Changed
+- **Codebase deslop (patch)** — no behavioral changes; pure code quality pass across all user-owned Python and Elixir files.
+  - `scripts/config.py`: Redis init loop replaces 11 separate exists/set calls; extracted `_load_thresholds` helper DRY's `get_entry_threshold` + `get_max_hold_days`; drawdown ascending check simplified.
+  - `scripts/indicators.py`: removed dead triple-seed in `adx`; `macd` first-non-NaN scan replaced with `np.argmax`.
+  - `scripts/reconcile.py`: redundant condition removed from `elif` branch.
+  - `scripts/refresh_economic_calendar.py`: 3-loop append pattern → single list comprehension.
+  - `scripts/backup_redis.py`: removed unused `glob` import; pathlib used throughout.
+  - `skills/executor/executor.py`, `skills/watcher/watcher.py`, `skills/portfolio_manager/portfolio_manager.py`, `skills/supervisor/supervisor.py`, `skills/screener/screener.py`: removed unused `sys`/`time` imports, bare `except:` → `except Exception:`, ~30 trivial WHAT comments removed, dead/redundant branches removed (`executor` duplicate `LimitOrderRequest` build, `supervisor` redundant drawdown re-check, `portfolio_manager` dead `not is_crypto` guards, `supervisor` dead `if issues` re-wrap).
+  - `dashboard/lib/dashboard_web/live/dashboard_live.ex`: extracted `parse_naive_dt/1` helper (3 callers DRY'd).
+  - `dashboard/lib/dashboard_web/live/performance_live.ex`: extracted `range_to_days_back/1` helper (3 duplicate case blocks DRY'd).
+  - `dashboard/lib/dashboard_web/live/performance_live.html.heex`: `<%# %>` → `<%!-- --%>`.
+  - `dashboard/lib/dashboard/redis_poller.ex`: 4-line case collapsed to 2 pattern-match heads.
+
+---
+
 ## [0.34.1] - 2026-04-18
 
 ### Fixed

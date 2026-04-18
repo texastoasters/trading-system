@@ -50,16 +50,8 @@ defmodule DashboardWeb.PerformanceLive do
   @impl true
   def handle_event("set_range", %{"range" => range}, socket)
       when range in ["30d", "90d", "all"] do
-    days_back =
-      case range do
-        "30d" -> 30
-        "90d" -> 90
-        "all" -> :all
-      end
-
-    rows =
-      Queries.instrument_performance(days_back)
-      |> sort_rows(:total_pnl, :desc)
+    days_back = range_to_days_back(range)
+    rows = Queries.instrument_performance(days_back) |> sort_rows(:total_pnl, :desc)
 
     {:noreply,
      assign(socket,
@@ -112,12 +104,7 @@ defmodule DashboardWeb.PerformanceLive do
   def handle_info(:refresh_db, socket) do
     Process.send_after(self(), :refresh_db, @db_refresh_ms)
 
-    days_back =
-      case socket.assigns.range do
-        "30d" -> 30
-        "90d" -> 90
-        "all" -> :all
-      end
+    days_back = range_to_days_back(socket.assigns.range)
 
     rows =
       Queries.instrument_performance(days_back)
@@ -131,7 +118,6 @@ defmodule DashboardWeb.PerformanceLive do
      |> assign(:attribution, Queries.exit_type_attribution(days_back))}
   end
 
-  # Test injection handler
   def handle_info({:set_rows, rows}, socket) do
     {:noreply, socket |> assign(:rows, rows) |> assign(:summary, compute_summary(rows))}
   end
@@ -145,6 +131,10 @@ defmodule DashboardWeb.PerformanceLive do
   end
 
   def handle_info(_, socket), do: {:noreply, socket}
+
+  defp range_to_days_back("30d"), do: 30
+  defp range_to_days_back("90d"), do: 90
+  defp range_to_days_back("all"), do: :all
 
   # ── Sort ─────────────────────────────────────────────────────────────────────
 
@@ -267,7 +257,6 @@ defmodule DashboardWeb.PerformanceLive do
   defp range_label("90d"), do: "90D"
   defp range_label("all"), do: "All"
 
-  # RSI-2 heatmap helpers
   # Dates arrive as "YYYY-MM-DD"; render as "Mon DD" (e.g. "Apr 10").
   defp format_heatmap_date(date_str) do
     case Date.from_iso8601(date_str) do
@@ -276,7 +265,7 @@ defmodule DashboardWeb.PerformanceLive do
     end
   end
 
-  # Color cells by RSI-2 value: low = oversold = buy signal.
+  # low RSI-2 = oversold = buy signal; color gradient reflects urgency
   defp heatmap_cell_class(nil), do: "text-gray-600"
   defp heatmap_cell_class(v) when v < 5, do: "bg-red-700/80 text-white"
   defp heatmap_cell_class(v) when v < 15, do: "bg-orange-600/70 text-white"

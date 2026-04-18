@@ -15,7 +15,6 @@ Usage (from repo root):
 """
 
 import json
-import sys
 import time
 import argparse
 import subprocess
@@ -57,7 +56,6 @@ def run_circuit_breakers(r):
     peak = float(r.get(Keys.PEAK_EQUITY) or config.INITIAL_CAPITAL)
     dd = get_drawdown(r)
 
-    # Update peak
     if equity > peak:
         r.set(Keys.PEAK_EQUITY, str(round(equity, 2)))
         r.set(Keys.PEAK_EQUITY_DATE, date.today().isoformat())
@@ -71,7 +69,6 @@ def run_circuit_breakers(r):
     except Exception:
         pass  # DB unavailable — alert fires without attribution
 
-    # Drawdown circuit breakers
     prev_status = r.get(Keys.SYSTEM_STATUS)
 
     if dd >= config.DRAWDOWN_HALT:
@@ -88,7 +85,7 @@ def run_circuit_breakers(r):
     elif dd >= config.DRAWDOWN_CRITICAL:
         r.set(Keys.RISK_MULTIPLIER, "0.25")
         disable_tiers(r, [2, 3])
-        if dd >= config.DRAWDOWN_CRITICAL and prev_status != "critical":
+        if prev_status != "critical":
             r.set(Keys.SYSTEM_STATUS, "critical")
             drawdown_alert(dd, "25% position size. Only Tier 1 active. BTC disabled.", attribution=attribution)
 
@@ -112,7 +109,6 @@ def run_circuit_breakers(r):
             enable_all_tiers(r)
             notify("✅ System back to normal — all tiers active, full position size.")
 
-    # Daily loss limit
     daily_pnl = float(r.get(Keys.DAILY_PNL) or 0)
     if daily_pnl <= -(equity * config.DAILY_LOSS_LIMIT_PCT):
         if prev_status != "daily_halt":
@@ -242,20 +238,13 @@ def run_health_check(r):
         else:
             print(f"  ℹ️  {agent}: awaiting first run")
 
-    # Equity check
     equity = get_simulated_equity(r)
     dd = get_drawdown(r)
     print(f"  💰 Equity: ${equity:,.2f} | Drawdown: {dd:.1f}%")
-
-    # Position check
     positions = json.loads(r.get(Keys.POSITIONS) or "{}")
     print(f"  📊 Open positions: {len(positions)}")
-
-    # PDT check
     pdt = int(r.get(Keys.PDT_COUNT) or 0)
     print(f"  🔒 PDT count: {pdt}/3")
-
-    # System status
     status = r.get(Keys.SYSTEM_STATUS)
     print(f"  ⚙️  System status: {status}")
 
@@ -281,8 +270,6 @@ def run_health_check(r):
         print(f"\n  ⚠️  {len(issues)} issue(s) found")
     else:
         print(f"\n  ✅ All checks passed")
-
-    if not issues:
         return issues
 
     agent_lines = []
@@ -297,9 +284,7 @@ def run_health_check(r):
         else:
             agent_lines.append(f"ℹ️ {agent} (no heartbeat yet)")
 
-    issue_block = ""
-    if issues:
-        issue_block = "\n\n⚠️ <b>Issues:</b>\n" + "\n".join(f"  • {i}" for i in issues)
+    issue_block = "\n\n⚠️ <b>Issues:</b>\n" + "\n".join(f"  • {i}" for i in issues)
 
     msg = (
         f"🔍 <b>HEALTH — {fmt_et()}</b>\n"
@@ -333,11 +318,9 @@ def run_eod_review(r):
         regime = "UNKNOWN"
     positions = json.loads(r.get(Keys.POSITIONS) or "{}")
 
-    # Calculate start-of-day equity
     start_equity = equity - daily_pnl
     daily_pnl_pct = (daily_pnl / start_equity * 100) if start_equity > 0 else 0
 
-    # Count today's trades from Redis rejected signals
     rejected = r.lrange("trading:rejected_signals", 0, -1)
     rejected_today = []
     for rej_raw in rejected:
@@ -345,7 +328,6 @@ def run_eod_review(r):
         if rej.get("time", "").startswith(datetime.now().strftime("%Y-%m-%d")):
             rejected_today.append(rej)
 
-    # Try to get trade counts from DB
     trades_today = 0
     winners = 0
     losers = 0
@@ -369,7 +351,7 @@ def run_eod_review(r):
             total_fees = float(row[3] or 0)
         cur.close()
         conn.close()
-    except:
+    except Exception:
         pass  # DB may not have data yet during paper trading setup
 
     metrics = {
@@ -388,10 +370,8 @@ def run_eod_review(r):
         'llm_cost': 0.0,  # TODO: track LLM costs
     }
 
-    # Send daily summary via Telegram
     daily_summary(metrics)
 
-    # Log to DB
     try:
         conn = get_db()
         cur = conn.cursor()
@@ -421,7 +401,6 @@ def run_eod_review(r):
     except Exception as e:
         print(f"  [Supervisor] DB log failed: {e}")
 
-    # Report capital constraints
     tier1_rejections = sum(
         1 for rej in rejected_today
         if "insufficient_capital" in rej.get("reason", "").lower()
@@ -457,14 +436,12 @@ def reset_daily(r):
 
     print(f"[Supervisor] Daily counters reset. Peak equity set to ${equity:,.2f}.")
 
-    # Re-enable if was in daily_halt
     status = r.get(Keys.SYSTEM_STATUS)
     if status == "daily_halt":
         r.set(Keys.SYSTEM_STATUS, "active")
         status = "active"
         print("[Supervisor] System re-enabled after daily halt.")
 
-    # Clear old rejected signals (keep last 7 days)
     rejected = r.lrange("trading:rejected_signals", 0, -1)
     cutoff = (datetime.now() - timedelta(days=7)).isoformat()
     kept = [rej for rej in rejected if json.loads(rej).get("time", "") > cutoff]
@@ -477,7 +454,6 @@ def reset_daily(r):
     dd = get_drawdown(r)
     pdt = int(r.get(Keys.PDT_COUNT) or 0)
 
-    # Check agent heartbeats
     stale_agents = []
     for agent, max_minutes in [("executor", 5), ("portfolio_manager", 5),
                                 ("screener", 25 * 60), ("watcher", 5 * 60)]:
@@ -627,7 +603,6 @@ def run_revalidation(r):  # pragma: no cover
         universe.get("disabled", []) +
         universe.get("archived", [])
     )
-    # Deduplicate while preserving order
     seen = set()
     instruments = []
     for sym in all_instruments:
@@ -657,7 +632,6 @@ def run_revalidation(r):  # pragma: no cover
         critical_alert("Revalidation produced no results — check Alpaca API keys and connectivity")
         return
 
-    # Classify recommended tiers by backtest metrics
     passed = [res for res in results if res.passed]
     rec_tier1 = [res for res in passed if res.profit_factor >= 2.0 and res.win_rate >= 70]
     rec_tier2 = [res for res in passed
@@ -684,7 +658,6 @@ def run_revalidation(r):  # pragma: no cover
     # Apply approved changes to Redis (universe tiers + disabled list).
     # This block will be implemented when LLM integration is added.
 
-    # Send Telegram summary
     changes = [
         f"Re-validation complete: {len(passed)}/{len(results)} instruments passed",
         f"Tier 1 ({len(rec_tier1)}): {', '.join(res.symbol for res in rec_tier1)}",
@@ -791,7 +764,6 @@ def run_weekly_summary(r):
     equity = get_simulated_equity(r)
     dd = float(r.get(Keys.DRAWDOWN) or 0)
 
-    # Universe counts from Redis
     universe = json.loads(r.get(Keys.UNIVERSE) or json.dumps(config.DEFAULT_UNIVERSE))
     all_instruments = (
         universe.get("tier1", []) +
@@ -803,11 +775,9 @@ def run_weekly_summary(r):
     active_instruments = universe_size - len(disabled)
     disabled_instruments = len(disabled)
 
-    # Week label (ISO)
     today = datetime.now()
     week_label = f"W{today.isocalendar()[1]} {today.year}"
 
-    # Defaults if DB unavailable
     total_trades = winners = losers = 0
     weekly_pnl = 0.0
     best_trade = worst_trade = "N/A"
@@ -867,11 +837,9 @@ def run_weekly_summary(r):
     except Exception as e:
         print(f"  [Supervisor] Weekly summary DB query failed: {e}")
 
-    # Compute weekly P&L %
     start_equity = equity - weekly_pnl
     weekly_pnl_pct = (weekly_pnl / start_equity * 100) if start_equity > 0 else 0
 
-    # Paper vs simulated comparison (best-effort — degrade if Alpaca unavailable)
     paper_kwargs = {}
     try:
         trading_client = TradingClient(

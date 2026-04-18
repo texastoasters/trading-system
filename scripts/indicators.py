@@ -130,7 +130,6 @@ def adx(high: np.ndarray, low: np.ndarray, close: np.ndarray,
         plus_dm[i] = up_move if (up_move > down_move and up_move > 0) else 0.0
         minus_dm[i] = down_move if (down_move > up_move and down_move > 0) else 0.0
 
-    # Wilder smoothing for TR, +DM, -DM
     atr_smooth = np.mean(tr[1:period + 1])
     pdm_smooth = np.mean(plus_dm[1:period + 1])
     mdm_smooth = np.mean(minus_dm[1:period + 1])
@@ -138,11 +137,7 @@ def adx(high: np.ndarray, low: np.ndarray, close: np.ndarray,
     dx_values = []
 
     for i in range(period, n):
-        if i == period:
-            atr_smooth = np.mean(tr[1:period + 1])
-            pdm_smooth = np.mean(plus_dm[1:period + 1])
-            mdm_smooth = np.mean(minus_dm[1:period + 1])
-        else:
+        if i > period:
             atr_smooth = (atr_smooth * (period - 1) + tr[i]) / period
             pdm_smooth = (pdm_smooth * (period - 1) + plus_dm[i]) / period
             mdm_smooth = (mdm_smooth * (period - 1) + minus_dm[i]) / period
@@ -183,14 +178,9 @@ def macd(close: np.ndarray, fast: int = 12, slow: int = 26,
 
     macd_line = ema_fast - ema_slow
 
-    # Signal line = EMA of MACD line (ignoring NaNs)
     signal_line = np.full_like(close, np.nan)
-    # Find first valid MACD value
-    first_valid = None
-    for i in range(len(macd_line)):
-        if not np.isnan(macd_line[i]):
-            first_valid = i
-            break
+    valid_mask = ~np.isnan(macd_line)
+    first_valid = int(np.argmax(valid_mask)) if valid_mask.any() else None
 
     if first_valid is not None and len(close) - first_valid >= signal:
         valid_macd = macd_line[first_valid:]
