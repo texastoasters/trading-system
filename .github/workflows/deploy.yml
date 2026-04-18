@@ -52,6 +52,7 @@ jobs:
           echo "$DEPLOY_KEY" > /tmp/deploy_key
           chmod 600 /tmp/deploy_key
           ssh -i /tmp/deploy_key \
+              -o IdentitiesOnly=yes \
               -o StrictHostKeyChecking=no \
               -o ConnectTimeout=30 \
               linuxuser@"$DEPLOY_HOST" \
