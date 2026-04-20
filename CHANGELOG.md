@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.34.8] - 2026-04-20
+
+### Changed
+- **Dashboard watchlist: per-indicator columns** — replaced single "RSI-2 X.X" value with three columns (RSI-2, IBS, DCH) showing all indicator values; the triggering indicator is highlighted green (strong signal) or blue (signal), others dimmed.
+
+---
+
 ## [0.34.7] - 2026-04-20
 
 ### Fixed
