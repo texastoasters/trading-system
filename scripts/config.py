@@ -319,6 +319,12 @@ class Keys:
         return f"trading:exit_signaled:{symbol}"
 
     @staticmethod
+    def entry_alerted(symbol: str, strategy: str) -> str:
+        """Set when a Telegram entry alert is sent; expires at midnight ET.
+        Prevents repeated alerts for the same signal within the trading day."""
+        return f"trading:entry_alerted:{symbol}:{strategy}"
+
+    @staticmethod
     def manual_exit(symbol: str) -> str:
         """Stores the fill price of a manual dashboard liquidation.
         Watcher blocks re-entry until price drops MANUAL_EXIT_REENTRY_DROP_PCT

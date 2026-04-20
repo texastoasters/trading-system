@@ -1669,12 +1669,13 @@ class TestRunCycle:
             patch('watcher.generate_entry_signals', return_value=entry_sigs or []),
             patch('watcher.publish_signals'),
             patch('watcher.notify'),
+            patch('watcher._midnight_et_ttl', return_value=3600),
         )
 
     def test_halted_system_skips_entry_signals(self):
         patches = self._patch_run(status="halted")
         with patches[0], patches[1], patches[2] as mock_exit, \
-             patches[3] as mock_entry, patches[4], patches[5]:
+             patches[3] as mock_entry, patches[4], patches[5], patches[6]:
             from watcher import run_cycle
             run_cycle()
         mock_exit.assert_called_once()
@@ -1683,7 +1684,7 @@ class TestRunCycle:
     def test_active_system_checks_both_entry_and_exit(self):
         patches = self._patch_run(status="active")
         with patches[0], patches[1], patches[2] as mock_exit, \
-             patches[3] as mock_entry, patches[4], patches[5]:
+             patches[3] as mock_entry, patches[4], patches[5], patches[6]:
             from watcher import run_cycle
             run_cycle()
         mock_exit.assert_called_once()
@@ -1692,7 +1693,7 @@ class TestRunCycle:
     def test_no_notify_when_no_signals(self):
         patches = self._patch_run()
         with patches[0], patches[1], patches[2], patches[3], \
-             patches[4], patches[5] as mock_notify:
+             patches[4], patches[5] as mock_notify, patches[6]:
             from watcher import run_cycle
             run_cycle()
         mock_notify.assert_not_called()
@@ -1704,7 +1705,7 @@ class TestRunCycle:
         }
         patches = self._patch_run(exit_sigs=[exit_sig])
         with patches[0], patches[1], patches[2], patches[3], \
-             patches[4], patches[5] as mock_notify:
+             patches[4], patches[5] as mock_notify, patches[6]:
             from watcher import run_cycle
             run_cycle()
         mock_notify.assert_called_once()
@@ -1718,7 +1719,7 @@ class TestRunCycle:
         }
         patches = self._patch_run(entry_sigs=[entry_sig])
         with patches[0], patches[1], patches[2], patches[3], \
-             patches[4], patches[5] as mock_notify:
+             patches[4], patches[5] as mock_notify, patches[6]:
             from watcher import run_cycle
             run_cycle()
         mock_notify.assert_called_once()
@@ -1733,7 +1734,8 @@ class TestRunCycle:
              patch('watcher.generate_exit_signals', return_value=[]), \
              patch('watcher.generate_entry_signals', return_value=[]), \
              patch('watcher.publish_signals'), \
-             patch('watcher.notify'):
+             patch('watcher.notify'), \
+             patch('watcher._midnight_et_ttl', return_value=3600):
             from watcher import run_cycle
             run_cycle()
         mock_load.assert_called_once_with(r)
@@ -1874,3 +1876,154 @@ class TestGenerateEntrySignalsNewGuards:
             from watcher import generate_entry_signals
             signals = generate_entry_signals(r, MagicMock(), MagicMock())
         assert len(signals) == 1
+
+
+# ── run_cycle: entry alert formatting + dedup ─────────────────
+
+class TestRunCycleEntryAlertFormatting:
+    """Entry alert shows qualifying indicators only (not hardcoded RSI-2)."""
+
+    def _run(self, entry_signals, redis_store=None):
+        r = make_redis(redis_store or {})
+        notify_mock = MagicMock()
+        with patch('watcher.get_redis', return_value=r), \
+             patch('watcher.config.init_redis_state'), \
+             patch('watcher.config.load_overrides'), \
+             patch('watcher.generate_exit_signals', return_value=[]), \
+             patch('watcher.generate_entry_signals', return_value=entry_signals), \
+             patch('watcher.publish_signals'), \
+             patch('watcher.notify', notify_mock), \
+             patch('watcher._midnight_et_ttl', return_value=3600):
+            from watcher import run_cycle
+            run_cycle()
+        return notify_mock
+
+    def test_rsi2_signal_shows_rsi2_value(self):
+        sig = {
+            "symbol": "SPY", "signal_type": "entry",
+            "strategies": ["RSI2"], "primary_strategy": "RSI2",
+            "indicators": {"rsi2": 7.3}, "suggested_stop": 490.0, "tier": 1,
+        }
+        mock_notify = self._run([sig])
+        mock_notify.assert_called_once()
+        msg = mock_notify.call_args[0][0]
+        assert "RSI-2=7.3" in msg
+        assert "IBS" not in msg
+        assert "DCH" not in msg
+
+    def test_ibs_only_signal_shows_ibs_value(self):
+        sig = {
+            "symbol": "EWZ", "signal_type": "entry",
+            "strategies": ["IBS"], "primary_strategy": "IBS",
+            "indicators": {"ibs": 0.15}, "suggested_stop": 39.0, "tier": 3,
+        }
+        mock_notify = self._run([sig])
+        msg = mock_notify.call_args[0][0]
+        assert "IBS=0.15" in msg
+        assert "RSI-2" not in msg
+        assert "N/A" not in msg
+
+    def test_donchian_only_signal_shows_dch_value(self):
+        sig = {
+            "symbol": "MUU", "signal_type": "entry",
+            "strategies": ["DONCHIAN"], "primary_strategy": "DONCHIAN",
+            "indicators": {"donchian_upper": 170.50}, "suggested_stop": 169.0, "tier": 3,
+        }
+        mock_notify = self._run([sig])
+        msg = mock_notify.call_args[0][0]
+        assert "DCH=170.50" in msg
+        assert "RSI-2" not in msg
+        assert "N/A" not in msg
+
+    def test_multi_strategy_signal_shows_all_qualifying_indicators(self):
+        sig = {
+            "symbol": "QQQ", "signal_type": "entry",
+            "strategies": ["RSI2", "IBS"], "primary_strategy": "RSI2",
+            "indicators": {"rsi2": 5.2, "ibs": 0.12}, "suggested_stop": 400.0, "tier": 1,
+        }
+        mock_notify = self._run([sig])
+        msg = mock_notify.call_args[0][0]
+        assert "RSI-2=5.2" in msg
+        assert "IBS=0.12" in msg
+
+
+class TestRunCycleEntryAlertDedup:
+    """Telegram entry alerts fire once per symbol+strategy per day."""
+
+    def _run(self, entry_signals, redis_exists_fn=None):
+        r = make_redis()
+        if redis_exists_fn:
+            r.exists = MagicMock(side_effect=redis_exists_fn)
+        notify_mock = MagicMock()
+        with patch('watcher.get_redis', return_value=r), \
+             patch('watcher.config.init_redis_state'), \
+             patch('watcher.config.load_overrides'), \
+             patch('watcher.generate_exit_signals', return_value=[]), \
+             patch('watcher.generate_entry_signals', return_value=entry_signals), \
+             patch('watcher.publish_signals'), \
+             patch('watcher.notify', notify_mock), \
+             patch('watcher._midnight_et_ttl', return_value=3600):
+            from watcher import run_cycle
+            run_cycle()
+        return notify_mock, r
+
+    def _make_sig(self, symbol="SPY", strategy="RSI2", rsi2=7.0):
+        return {
+            "symbol": symbol, "signal_type": "entry",
+            "strategies": [strategy], "primary_strategy": strategy,
+            "indicators": {"rsi2": rsi2} if strategy == "RSI2" else {"ibs": 0.1},
+            "suggested_stop": 490.0, "tier": 1,
+        }
+
+    def test_new_signal_triggers_alert_and_sets_redis_key(self):
+        mock_notify, r = self._run([self._make_sig()])
+        mock_notify.assert_called_once()
+        matching = [c for c in r.set.call_args_list
+                    if c.args and c.args[0] == Keys.entry_alerted("SPY", "RSI2")]
+        assert matching
+
+    def test_already_alerted_signal_suppressed(self):
+        alerted = {Keys.entry_alerted("SPY", "RSI2")}
+        mock_notify, _ = self._run(
+            [self._make_sig()],
+            redis_exists_fn=lambda k: k in alerted,
+        )
+        mock_notify.assert_not_called()
+
+    def test_second_symbol_not_suppressed_when_first_alerted(self):
+        alerted = {Keys.entry_alerted("SPY", "RSI2")}
+        sigs = [self._make_sig("SPY"), self._make_sig("QQQ")]
+        mock_notify, _ = self._run(
+            sigs,
+            redis_exists_fn=lambda k: k in alerted,
+        )
+        mock_notify.assert_called_once()
+        msg = mock_notify.call_args[0][0]
+        assert "QQQ" in msg
+        assert "SPY" not in msg
+
+    def test_publish_not_suppressed_for_duplicate_alert(self):
+        """PM still gets all signals; only Telegram is suppressed."""
+        alerted = {Keys.entry_alerted("SPY", "RSI2")}
+        r = make_redis()
+        r.exists = MagicMock(side_effect=lambda k: k in alerted)
+        with patch('watcher.get_redis', return_value=r), \
+             patch('watcher.config.init_redis_state'), \
+             patch('watcher.config.load_overrides'), \
+             patch('watcher.generate_exit_signals', return_value=[]), \
+             patch('watcher.generate_entry_signals', return_value=[self._make_sig()]), \
+             patch('watcher.publish_signals') as mock_pub, \
+             patch('watcher.notify'), \
+             patch('watcher._midnight_et_ttl', return_value=3600):
+            from watcher import run_cycle
+            run_cycle()
+        mock_pub.assert_called()
+
+    def test_ttl_set_on_new_alert(self):
+        mock_notify, r = self._run([self._make_sig()])
+        key = Keys.entry_alerted("SPY", "RSI2")
+        matching = [c for c in r.set.call_args_list
+                    if c.args and c.args[0] == key]
+        assert matching
+        call = matching[0]
+        assert call.kwargs.get('ex') == 3600

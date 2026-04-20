@@ -8,6 +8,14 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.34.7] - 2026-04-20
+
+### Fixed
+- **Watcher entry alerts show N/A for RSI-2 on IBS/DONCHIAN signals** — Telegram alert hardcoded `RSI-2=` regardless of strategy. Now shows only qualifying indicators (`RSI-2=`, `IBS=`, `DCH=`) based on which strategies fired; N/A is impossible.
+- **Duplicate Telegram entry alerts every watcher cycle** — entry signals had no alert dedup, so the same signal re-fired every 5 minutes until filled. Now tracks `trading:entry_alerted:{symbol}:{strategy}` in Redis (TTL to midnight ET); Telegram suppressed for already-alerted signals, PM pub/sub channel unaffected.
+
+---
+
 ## [0.34.6] - 2026-04-20
 
 ### Fixed
