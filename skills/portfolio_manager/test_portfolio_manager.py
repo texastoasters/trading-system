@@ -540,6 +540,17 @@ class TestApprovedOrderStrategies:
         assert order["strategies"] == ["IBS"]
         assert order["primary_strategy"] == "IBS"
 
+    def test_ibs_only_signal_without_rsi2_in_indicators_does_not_raise(self):
+        r = make_redis()
+        sig = make_signal()
+        sig["strategies"] = ["IBS"]
+        sig["primary_strategy"] = "IBS"
+        del sig["indicators"]["rsi2"]
+        from portfolio_manager import evaluate_entry_signal
+        order, reason = evaluate_entry_signal(r, sig)
+        assert order is not None
+        assert "RSI-2=N/A" in order["reasoning"]
+
     def test_order_defaults_to_rsi2_when_signal_lacks_strategies(self):
         # Back-compat: legacy signals without strategies[] assume RSI-2
         r = make_redis()

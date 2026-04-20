@@ -1546,6 +1546,21 @@ class TestPublishSignals:
         assert mock_log.call_args_list[0][0][0]["symbol"] == "SPY"
         assert mock_log.call_args_list[1][0][0]["symbol"] == "QQQ"
 
+    def test_publish_ibs_only_entry_signal_without_rsi2_does_not_raise(self):
+        r = make_redis()
+        signals = [
+            {"symbol": "SPY", "signal_type": "entry",
+             "indicators": {"ibs": 0.08, "sma200": 480.0, "atr14": 2.0,
+                            "close": 500.0, "prev_high": 498.0, "adx": 20.0},
+             "suggested_stop": 490.0, "tier": 1,
+             "strategies": ["IBS"], "primary_strategy": "IBS",
+             "strategy": "IBS", "direction": "long"},
+        ]
+        with patch("watcher._log_signal"):
+            from watcher import publish_signals
+            publish_signals(r, signals)
+        assert r.publish.call_count == 1
+
 
 class TestLogSignal:
     """_log_signal persists one signal to the TimescaleDB signals table."""

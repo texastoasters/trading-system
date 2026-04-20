@@ -287,7 +287,9 @@ def evaluate_entry_signal(r, signal):
         "fee_adjusted": fee_adjusted,
         "regime": regime_info.get("regime", "UNKNOWN"),
         "reasoning": (
-            f"RSI-2={signal['indicators']['rsi2']:.1f}, "
+            f"RSI-2={signal['indicators']['rsi2']:.1f}, " if signal["indicators"].get("rsi2") is not None
+            else "RSI-2=N/A, "
+        ) + (
             f"Close={entry_price} > SMA200={signal['indicators']['sma200']}. "
             f"{regime_info.get('regime', 'UNKNOWN')} regime. "
             f"Tier {signal_tier}. Risk ${actual_risk:.2f} ({actual_risk_pct:.1f}%)."
