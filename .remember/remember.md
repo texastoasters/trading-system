@@ -1,13 +1,10 @@
 # Handoff
 
 ## State
-v0.34.5. Deploy pipeline fully working end-to-end.
+v0.34.6. PR #147 open (fix/rsi2-keyerror-ibs-only-signals) — KeyError 'rsi2' fix for IBS-only/DONCHIAN-only signals. VERSION + CHANGELOG bumped, all pushed. Ready to merge.
 
-## Deploy pipeline (complete)
-- Tests pass → tag commit with VERSION → SSH deploy to prod via webfactory/ssh-agent
-- DEPLOY_SSH_KEY: private key from ~/.ssh/trading-deploy (comment: github-actions-deploy)
-- DEPLOY_HOST: Vultr public IP of openboog
-- Prod server deploy key (~/.ssh/trading-system-repo, comment: openboog-deploy) in GitHub Deploy Keys for git pull
+## Next
+- Merge PR #147, then tag v0.34.6 on main
 
 ## Context
-watcher.py: `os` import used by `_get_db()` (TSDB_PASSWORD env var) — keep it. Trailing `r.set(Keys.POSITIONS)` at end of `generate_exit_signals` is intentional — test verifies it as last call.
+Fix: 3 sites in watcher.py (print + Telegram) and portfolio_manager.py (reasoning) assumed rsi2 always in indicators. IBS/DONCHIAN-only signals omit it. Fixed with .get() + "N/A" fallback.
