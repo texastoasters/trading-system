@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.34.10] - 2026-04-20
+
+### Fixed
+- **Python coverage restored to 100%** — added tests for `_midnight_et_ttl` (watcher) and the stale-screener branch in `reset_daily` (supervisor); both paths were reachable but untested.
+
+---
+
 ## [0.34.9] - 2026-04-20
 
 ### Changed

@@ -885,6 +885,16 @@ class TestResetDaily:
         msg = mock_notify.call_args[0][0]
         assert "executor" in msg or "Stale" in msg
 
+    def test_stale_screener_included_in_notify(self):
+        stale_ts = (datetime.now() - timedelta(days=7)).isoformat()
+        r = self._make(**{Keys.heartbeat("screener"): stale_ts})
+        with patch("supervisor.notify") as mock_notify, \
+             patch("supervisor._screener_is_stale", return_value=True):
+            from supervisor import reset_daily
+            reset_daily(r)
+        msg = mock_notify.call_args[0][0]
+        assert "screener" in msg
+
 
 # ── run_eod_review ────────────────────────────────────────────
 

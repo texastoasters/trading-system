@@ -1,6 +1,6 @@
-Session 2026-04-20: dashboard watchlist indicator columns + remove sparkline (v0.34.8, v0.34.9)
-- Replaced single RSI-2 value in watchlist with 3 columns: RSI-2, IBS, DCH (v0.34.8)
-- Triggering indicator highlighted green (strong_signal) or blue (signal)
-- Removed intraday equity sparkline from dashboard (v0.34.9)
-- Removed equity_sparkline component, equity_history/equity_tick assigns and accumulation logic
-- 435 tests, 0 failures
+Session 2026-04-20: coverage fixes + dashboard changes (v0.34.8–v0.34.10)
+- v0.34.8: watchlist indicator columns (RSI-2/IBS/DCH with signal highlighting)
+- v0.34.9: removed intraday equity sparkline from dashboard
+- v0.34.10: restored Python coverage to 100% (2586 stmts, 925 tests)
+  - watcher: _midnight_et_ttl — pytz stubbed in sys.modules; patch watcher.datetime to bypass
+  - supervisor: reset_daily stale-screener branch (lines 491-492) — patch _screener_is_stale=True
