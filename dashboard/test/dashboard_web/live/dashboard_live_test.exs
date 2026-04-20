@@ -502,6 +502,94 @@ defmodule DashboardWeb.DashboardLiveTest do
     end
   end
 
+  describe "watchlist indicator columns" do
+    test "shows RSI-2, IBS, and DCH columns", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      watchlist = [%{
+        "symbol" => "SPY", "tier" => 1,
+        "rsi2" => 4.5, "ibs" => 0.12, "donchian_upper" => 485.0,
+        "rsi2_priority" => "signal", "ibs_priority" => nil, "donchian_priority" => nil
+      }]
+      send(view.pid, {:state_update, %{"trading:watchlist" => watchlist}})
+      html = render(view)
+      assert html =~ "RSI-2"
+      assert html =~ "IBS"
+      assert html =~ "DCH"
+    end
+
+    test "rsi2 strong_signal highlighted green", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      watchlist = [%{
+        "symbol" => "SPY", "tier" => 1,
+        "rsi2" => 2.1, "ibs" => 0.3, "donchian_upper" => 490.0,
+        "rsi2_priority" => "strong_signal", "ibs_priority" => nil, "donchian_priority" => nil
+      }]
+      send(view.pid, {:state_update, %{"trading:watchlist" => watchlist}})
+      html = render(view)
+      assert html =~ "text-green-400"
+    end
+
+    test "rsi2 signal highlighted blue", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      watchlist = [%{
+        "symbol" => "QQQ", "tier" => 1,
+        "rsi2" => 5.0, "ibs" => 0.4, "donchian_upper" => 420.0,
+        "rsi2_priority" => "signal", "ibs_priority" => nil, "donchian_priority" => nil
+      }]
+      send(view.pid, {:state_update, %{"trading:watchlist" => watchlist}})
+      html = render(view)
+      assert html =~ "text-blue-400"
+    end
+
+    test "ibs signal highlighted", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      watchlist = [%{
+        "symbol" => "XLK", "tier" => 1,
+        "rsi2" => 25.0, "ibs" => 0.08, "donchian_upper" => 210.0,
+        "rsi2_priority" => nil, "ibs_priority" => "signal", "donchian_priority" => nil
+      }]
+      send(view.pid, {:state_update, %{"trading:watchlist" => watchlist}})
+      html = render(view)
+      assert html =~ "text-blue-400"
+    end
+
+    test "donchian strong_signal highlighted green", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      watchlist = [%{
+        "symbol" => "NVDA", "tier" => 1,
+        "rsi2" => 30.0, "ibs" => 0.5, "donchian_upper" => 900.0,
+        "rsi2_priority" => nil, "ibs_priority" => nil, "donchian_priority" => "strong_signal"
+      }]
+      send(view.pid, {:state_update, %{"trading:watchlist" => watchlist}})
+      html = render(view)
+      assert html =~ "text-green-400"
+    end
+
+    test "non-triggering indicators are dimmed", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      watchlist = [%{
+        "symbol" => "V", "tier" => 3,
+        "rsi2" => 18.0, "ibs" => 0.6, "donchian_upper" => 280.0,
+        "rsi2_priority" => "signal", "ibs_priority" => nil, "donchian_priority" => nil
+      }]
+      send(view.pid, {:state_update, %{"trading:watchlist" => watchlist}})
+      html = render(view)
+      assert html =~ "text-gray-500"
+    end
+
+    test "rsi2_priority fallback to legacy priority field", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      watchlist = [%{
+        "symbol" => "SPY", "tier" => 1,
+        "rsi2" => 3.0, "ibs" => nil, "donchian_upper" => nil,
+        "priority" => "strong_signal"
+      }]
+      send(view.pid, {:state_update, %{"trading:watchlist" => watchlist}})
+      html = render(view)
+      assert html =~ "text-green-400"
+    end
+  end
+
   describe "signal_icon/1 helpers" do
     test "entry signal shows book emoji", %{conn: conn} do
       {:ok, view, _} = live(conn, "/")

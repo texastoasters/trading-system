@@ -418,6 +418,10 @@ defmodule DashboardWeb.DashboardLive do
 
   defp whipsaw_lifts_at(_), do: "—"
 
+  defp indicator_highlight_class("strong_signal"), do: "text-green-400 font-semibold"
+  defp indicator_highlight_class("signal"), do: "text-blue-400 font-semibold"
+  defp indicator_highlight_class(_), do: "text-gray-500"
+
   defp universe_count(nil), do: "—"
 
   defp universe_count(u) do
