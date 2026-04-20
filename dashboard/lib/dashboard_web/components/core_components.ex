@@ -113,51 +113,6 @@ defmodule DashboardWeb.CoreComponents do
     """
   end
 
-  attr :points, :list, required: true
-
-  def equity_sparkline(assigns) do
-    svg = if length(assigns.points) >= 2, do: build_sparkline_svg(assigns.points), else: nil
-    assigns = assign(assigns, :svg, svg)
-
-    ~H"""
-    <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
-      <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Intraday Equity Trend</h2>
-      <%= if @svg do %>
-        <div class="h-16 w-full">
-          {@svg}
-        </div>
-      <% else %>
-        <p class="text-gray-600 text-sm text-center py-4">Collecting data…</p>
-      <% end %>
-    </div>
-    """
-  end
-
-  defp build_sparkline_svg(points) do
-    ordered = Enum.reverse(points)
-    min_val = Enum.min(ordered)
-    max_val = Enum.max(ordered)
-    range = max(max_val - min_val, 1.0)
-    width = 600
-    height = 60
-    n = length(ordered)
-
-    coords =
-      ordered
-      |> Enum.with_index()
-      |> Enum.map(fn {v, i} ->
-        x = i / (n - 1) * width
-        y = height - (v - min_val) / range * (height - 4) - 2
-        "#{:erlang.float_to_binary(x + 0.0, decimals: 1)},#{:erlang.float_to_binary(y + 0.0, decimals: 1)}"
-      end)
-      |> Enum.join(" ")
-
-    color = if List.last(ordered) >= List.first(ordered), do: "#3b82f6", else: "#ef4444"
-
-    {:safe,
-     ~s(<svg viewBox="0 0 #{width} #{height}" class="w-full h-full" preserveAspectRatio="none"><polyline points="#{coords}" fill="none" stroke="#{color}" stroke-width="2"/></svg>)}
-  end
-
   @doc """
   Equity curve SVG panel. Renders a server-side ContEx SVG line chart,
   or a no-data fallback if fewer than 2 data points.

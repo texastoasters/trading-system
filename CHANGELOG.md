@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.34.9] - 2026-04-20
+
+### Changed
+- **Dashboard: removed intraday equity sparkline** — the live equity trend graph has been removed from the main dashboard.
+
+---
+
 ## [0.34.8] - 2026-04-20
 
 ### Changed
