@@ -20,6 +20,8 @@ config :logger, :console,
   format: "$time $metadata[$level] $message\n",
   metadata: [:request_id]
 
+config :elixir, :time_zone_database, Tzdata.TimeZoneDatabase
+
 config :phoenix, :json_library, Jason
 
 config :esbuild,
