@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.34.6] - 2026-04-20
+
+### Fixed
+- **KeyError 'rsi2' on IBS-only / DONCHIAN-only entry signals** — `publish_signals` print, Telegram message builder, and PM reasoning string all assumed `rsi2` is always present in `signal['indicators']`. IBS-only or DONCHIAN-only signals omit it, crashing both watcher and portfolio manager each cycle those strategies fired. Fixed with `.get()` + `"N/A"` fallback at all three sites.
+
+---
+
 ## [0.34.5] - 2026-04-17
 
 ### Fixed

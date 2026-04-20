@@ -611,9 +611,11 @@ def publish_signals(r, signals):
         symbol = signal["symbol"]
 
         if sig_type == "entry":
-            print(f"  📊 ENTRY SIGNAL: {symbol} RSI-2={signal['indicators']['rsi2']:.2f} "
+            rsi2 = signal["indicators"].get("rsi2")
+            rsi2_str = f"{rsi2:.2f}" if rsi2 is not None else "N/A"
+            print(f"  📊 ENTRY SIGNAL: {symbol} RSI-2={rsi2_str} "
                   f"Stop={signal['suggested_stop']} Tier={signal['tier']} "
-                  f"[{signal['rsi2_config']}]")
+                  f"[{signal.get('rsi2_config', 'N/A')}]")
         else:
             pnl = signal.get("pnl_pct", 0)
             emoji = "✅" if pnl > 0 else "❌"
@@ -660,8 +662,10 @@ def run_cycle():
 
     signal_lines = []
     for s in entry_signals:
+        rsi2 = s["indicators"].get("rsi2")
+        rsi2_str = f"{rsi2:.1f}" if rsi2 is not None else "N/A"
         signal_lines.append(
-            f"📊 ENTRY: <b>{s['symbol']}</b> RSI-2={s['indicators']['rsi2']:.1f} "
+            f"📊 ENTRY: <b>{s['symbol']}</b> RSI-2={rsi2_str} "
             f"Stop={s['suggested_stop']} T{s['tier']}"
         )
     for s in exit_signals:
