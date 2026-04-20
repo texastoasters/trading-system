@@ -49,9 +49,6 @@ defmodule DashboardWeb.DashboardLive do
       |> assign(:daily_summaries, [])
       |> assign(:drawdown_attribution, [])
       |> assign(:confirm_modal, nil)
-      # equity_history: intraday sparkline, accumulated newest-first; capped at 800 ticks
-      |> assign(:equity_history, [])
-      |> assign(:equity_tick, 0)
 
     socket =
       if connected?(socket) do
@@ -99,22 +96,6 @@ defmodule DashboardWeb.DashboardLive do
       |> assign(:heartbeats, heartbeats)
       |> assign(:cooldowns, state["trading:cooldowns"] || [])
       |> assign(:drawdown_attribution, attribution)
-
-    tick = socket.assigns.equity_tick + 1
-    equity_val = state["trading:simulated_equity"]
-
-    history =
-      if rem(tick, 15) == 0 and is_number(equity_val) do
-        h = [equity_val | socket.assigns.equity_history]
-        if length(h) > 800, do: Enum.take(h, 800), else: h
-      else
-        socket.assigns.equity_history
-      end
-
-    socket =
-      socket
-      |> assign(:equity_tick, tick)
-      |> assign(:equity_history, history)
 
     {:noreply, socket}
   end

@@ -152,42 +152,6 @@ defmodule DashboardWeb.CoreComponentsTest do
     end
   end
 
-  describe "equity_sparkline/1" do
-    test "renders placeholder when points is empty" do
-      html = render_component(&CoreComponents.equity_sparkline/1, points: [])
-      assert html =~ "Collecting data"
-      refute html =~ "<svg"
-    end
-
-    test "renders placeholder with only 1 point" do
-      html = render_component(&CoreComponents.equity_sparkline/1, points: [5000.0])
-      assert html =~ "Collecting data"
-      refute html =~ "<svg"
-    end
-
-    test "renders SVG polyline with 2+ points" do
-      html = render_component(&CoreComponents.equity_sparkline/1, points: [5000.0, 4900.0])
-      assert html =~ "<svg"
-      assert html =~ "<polyline"
-    end
-
-    test "stroke is blue when current equity >= starting equity (upward trend)" do
-      # newest-first: [5000, 4900] → chronological: [4900, 5000] → last >= first
-      html = render_component(&CoreComponents.equity_sparkline/1, points: [5000.0, 4900.0])
-      assert html =~ "#3b82f6"
-    end
-
-    test "stroke is red when current equity < starting equity (downward trend)" do
-      # newest-first: [4900, 5000] → chronological: [5000, 4900] → last < first
-      html = render_component(&CoreComponents.equity_sparkline/1, points: [4900.0, 5000.0])
-      assert html =~ "#ef4444"
-    end
-
-    test "renders section header" do
-      html = render_component(&CoreComponents.equity_sparkline/1, points: [])
-      assert html =~ "Intraday Equity"
-    end
-  end
 
   describe "equity_chart/1" do
     @base_attrs [range: "30d", chart_id: "test-chart", show_range_toggle: false]
