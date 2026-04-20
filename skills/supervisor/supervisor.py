@@ -18,7 +18,8 @@ import json
 import time
 import argparse
 import subprocess
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
+from zoneinfo import ZoneInfo
 
 import psycopg2
 import os
@@ -183,6 +184,27 @@ def attempt_service_restart(r):
         critical_alert(f"🚨 Auto-restart #{new_count} error: {e}")
 
 
+def _most_recent_screener_run_utc(now_utc=None):
+    """Most recent weekday 4:15 PM America/New_York as a naive UTC datetime."""
+    ny = ZoneInfo("America/New_York")
+    utc = ZoneInfo("UTC")
+    if now_utc is None:
+        now_utc = datetime.now()
+    now_ny = now_utc.replace(tzinfo=utc).astimezone(ny)
+    candidate = now_ny.replace(hour=16, minute=15, second=0, microsecond=0)
+    if candidate > now_ny:
+        candidate -= timedelta(days=1)
+    while candidate.weekday() >= 5:  # 5=Sat, 6=Sun
+        candidate -= timedelta(days=1)
+    return candidate.astimezone(utc).replace(tzinfo=None)
+
+
+def _screener_is_stale(hb_str, now_utc=None):
+    last = datetime.fromisoformat(hb_str)
+    expected = _most_recent_screener_run_utc(now_utc)
+    return last < expected - timedelta(minutes=30)
+
+
 # ── Health Check ────────────────────────────────────────────
 
 def run_health_check(r):
@@ -222,21 +244,18 @@ def run_health_check(r):
         # All daemons healthy — reset restart counter
         r.set(Keys.RESTART_COUNT, "0")
 
-    # Cron-triggered agent heartbeats — gaps between runs are expected
-    # screener: runs once daily at 4:15 PM ET, flag if stale > 25 hours
-    cron_thresholds = {"screener": 25 * 60}  # in minutes
-    for agent, threshold_min in cron_thresholds.items():
-        hb = r.get(Keys.heartbeat(agent))
-        if hb:
-            last = datetime.fromisoformat(hb)
-            age_min = (datetime.now() - last).total_seconds() / 60
-            if age_min > threshold_min:
-                issues.append(f"{agent}: last run {age_min:.0f}min ago (cron may have missed)")
-                print(f"  ⚠️  {agent}: last run {age_min:.0f} min ago — cron may have missed")
-            else:
-                print(f"  ✅ {agent}: last run {age_min:.0f}min ago")
+    # Cron-triggered agent heartbeats — stale if missed the most recent expected run.
+    hb = r.get(Keys.heartbeat("screener"))
+    if hb:
+        age_min = (datetime.now() - datetime.fromisoformat(hb)).total_seconds() / 60
+        if _screener_is_stale(hb):
+            issues.append(f"screener: last run {age_min:.0f}min ago (cron may have missed)")
+            print(f"  ⚠️  screener: last run {age_min:.0f} min ago — cron may have missed")
+            critical_alert(f"🚨 screener last run {age_min:.0f}min ago — cron may have missed")
         else:
-            print(f"  ℹ️  {agent}: awaiting first run")
+            print(f"  ✅ screener: last run {age_min:.0f}min ago")
+    else:
+        print(f"  ℹ️  screener: awaiting first run")
 
     equity = get_simulated_equity(r)
     dd = get_drawdown(r)
@@ -272,17 +291,23 @@ def run_health_check(r):
         print(f"\n  ✅ All checks passed")
         return issues
 
+    daemon_thresholds = [("executor", 5), ("portfolio_manager", 5), ("watcher", 5)]
     agent_lines = []
-    for agent, threshold_min in [("executor", 5), ("portfolio_manager", 5),
-                                  ("watcher", 5), ("screener", 25 * 60)]:
+    for agent, threshold_min in daemon_thresholds:
         hb = r.get(Keys.heartbeat(agent))
         if hb:
             age_min = (datetime.now() - datetime.fromisoformat(hb)).total_seconds() / 60
-            overdue = age_min > threshold_min
-            icon = "⚠️" if overdue else "✅"
+            icon = "⚠️" if age_min > threshold_min else "✅"
             agent_lines.append(f"{icon} {agent} ({age_min:.0f}m ago)")
         else:
             agent_lines.append(f"ℹ️ {agent} (no heartbeat yet)")
+    hb = r.get(Keys.heartbeat("screener"))
+    if hb:
+        age_min = (datetime.now() - datetime.fromisoformat(hb)).total_seconds() / 60
+        icon = "⚠️" if _screener_is_stale(hb) else "✅"
+        agent_lines.append(f"{icon} screener ({age_min:.0f}m ago)")
+    else:
+        agent_lines.append("ℹ️ screener (no heartbeat yet)")
 
     issue_block = "\n\n⚠️ <b>Issues:</b>\n" + "\n".join(f"  • {i}" for i in issues)
 
@@ -455,13 +480,16 @@ def reset_daily(r):
     pdt = int(r.get(Keys.PDT_COUNT) or 0)
 
     stale_agents = []
-    for agent, max_minutes in [("executor", 5), ("portfolio_manager", 5),
-                                ("screener", 25 * 60), ("watcher", 5 * 60)]:
+    for agent, max_minutes in [("executor", 5), ("portfolio_manager", 5), ("watcher", 5 * 60)]:
         hb = r.get(Keys.heartbeat(agent))
         if hb:
             age_min = (datetime.now() - datetime.fromisoformat(hb)).total_seconds() / 60
             if age_min > max_minutes:
                 stale_agents.append(f"{agent} ({age_min:.0f}m ago)")
+    hb = r.get(Keys.heartbeat("screener"))
+    if hb and _screener_is_stale(hb):
+        age_min = (datetime.now() - datetime.fromisoformat(hb)).total_seconds() / 60
+        stale_agents.append(f"screener ({age_min:.0f}m ago)")
 
     status_emoji = "✅" if not stale_agents else "⚠️"
     agent_line = "All agents alive" if not stale_agents else f"Stale: {', '.join(stale_agents)}"

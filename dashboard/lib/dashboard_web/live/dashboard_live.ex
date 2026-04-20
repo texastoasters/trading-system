@@ -206,6 +206,10 @@ defmodule DashboardWeb.DashboardLive do
     "screener"          => {1500, 2880}
   }
 
+  defp heartbeat_status(ts, "screener") do
+    if Dashboard.ScreenerStatus.stale?(ts, DateTime.utc_now()), do: :stale, else: :ok
+  end
+
   defp heartbeat_status(nil, _agent), do: :stale
 
   defp heartbeat_status(ts, agent) when is_binary(ts) do

@@ -593,9 +593,9 @@ class TestRunHealthCheck:
         assert any("executor" in i for i in issues)
 
     def test_stale_cron_agent_returns_issue(self):
-        now = datetime.now()
-        # screener threshold is 25*60 min; set it 26h stale
-        stale_ts = (now - timedelta(hours=26)).isoformat()
+        # heartbeat 1h before the most recent expected run → missed it
+        from supervisor import _most_recent_screener_run_utc
+        stale_ts = (_most_recent_screener_run_utc() - timedelta(hours=1)).isoformat()
         r = self._make_hb_redis()
         base_get = r.get
         def get_with_screener(k):
@@ -609,8 +609,9 @@ class TestRunHealthCheck:
         assert any("screener" in i for i in issues)
 
     def test_fresh_cron_agent_no_issue(self):
-        now = datetime.now()
-        fresh_ts = (now - timedelta(minutes=10)).isoformat()  # 10min < 25h threshold
+        # heartbeat 10min after the most recent expected run → on time
+        from supervisor import _most_recent_screener_run_utc
+        fresh_ts = (_most_recent_screener_run_utc() + timedelta(minutes=10)).isoformat()
         r = self._make_hb_redis()
         base_get = r.get
         def get_with_screener(k):
@@ -1260,3 +1261,81 @@ class TestRefitThresholdsMaxHold:
                              sweeper=sweeper)
         payload = json.loads(r.set.call_args_list[0].args[1])
         assert "max_hold" not in payload
+
+
+# ── _most_recent_screener_run_utc / _screener_is_stale ───────────────────────
+
+# All test datetimes use 2026-04-20 (Monday) as base. EDT = UTC-4.
+
+def _utc(year, month, day, hour, minute=0):
+    return datetime(year, month, day, hour, minute)
+
+
+class TestMostRecentScreenerRunUtc:
+    def test_monday_morning_returns_friday(self):
+        # Mon 9:00 AM ET = Mon 13:00 UTC — screener hasn't fired yet today
+        from supervisor import _most_recent_screener_run_utc
+        result = _most_recent_screener_run_utc(_utc(2026, 4, 20, 13, 0))
+        assert result == _utc(2026, 4, 17, 20, 15)  # Fri 4:15 PM ET = 20:15 UTC
+
+    def test_monday_evening_returns_monday(self):
+        # Mon 5:00 PM ET = Mon 21:00 UTC — screener fired at 4:15 PM today
+        from supervisor import _most_recent_screener_run_utc
+        result = _most_recent_screener_run_utc(_utc(2026, 4, 20, 21, 0))
+        assert result == _utc(2026, 4, 20, 20, 15)  # Mon 4:15 PM ET = 20:15 UTC
+
+    def test_monday_before_415pm_returns_friday(self):
+        # Mon 4:10 PM ET = Mon 20:10 UTC — cron hasn't fired yet
+        from supervisor import _most_recent_screener_run_utc
+        result = _most_recent_screener_run_utc(_utc(2026, 4, 20, 20, 10))
+        assert result == _utc(2026, 4, 17, 20, 15)
+
+    def test_saturday_returns_friday(self):
+        # Sat 9:00 AM ET = Sat 13:00 UTC
+        from supervisor import _most_recent_screener_run_utc
+        result = _most_recent_screener_run_utc(_utc(2026, 4, 18, 13, 0))
+        assert result == _utc(2026, 4, 17, 20, 15)
+
+    def test_sunday_returns_friday(self):
+        # Sun 5:00 PM ET = Sun 21:00 UTC
+        from supervisor import _most_recent_screener_run_utc
+        result = _most_recent_screener_run_utc(_utc(2026, 4, 19, 21, 0))
+        assert result == _utc(2026, 4, 17, 20, 15)
+
+
+class TestScreenerIsStale:
+    def test_not_stale_when_ran_after_most_recent_expected(self):
+        # now=Mon 9am ET, hb=Fri 4:30pm ET (20:30 UTC) — ran on time
+        from supervisor import _screener_is_stale
+        hb = "2026-04-17T20:30:00"
+        assert not _screener_is_stale(hb, _utc(2026, 4, 20, 13, 0))
+
+    def test_stale_when_missed_most_recent_run(self):
+        # now=Mon 9am ET, hb=Thu 4:30pm ET — missed Friday's run
+        from supervisor import _screener_is_stale
+        hb = "2026-04-16T20:30:00"
+        assert _screener_is_stale(hb, _utc(2026, 4, 20, 13, 0))
+
+    def test_not_stale_monday_evening_after_today_run(self):
+        # now=Mon 5pm ET, hb=Mon 4:30pm ET
+        from supervisor import _screener_is_stale
+        hb = "2026-04-20T20:30:00"
+        assert not _screener_is_stale(hb, _utc(2026, 4, 20, 21, 0))
+
+    def test_not_stale_saturday_after_friday_run(self):
+        # now=Sat 9am ET, hb=Fri 4:30pm ET
+        from supervisor import _screener_is_stale
+        hb = "2026-04-17T20:30:00"
+        assert not _screener_is_stale(hb, _utc(2026, 4, 18, 13, 0))
+
+    def test_not_stale_within_grace_period(self):
+        # now=Mon 4:30pm ET (15min after cron), hb=Mon 4:20pm ET
+        from supervisor import _screener_is_stale
+        hb = "2026-04-20T20:20:00"
+        assert not _screener_is_stale(hb, _utc(2026, 4, 20, 20, 30))
+
+    def test_stale_just_outside_grace_period(self):
+        # hb=Mon 3:44pm ET = 19:44 UTC, expected=Mon 20:15, grace threshold=19:45
+        from supervisor import _screener_is_stale
+        hb = "2026-04-20T19:44:00"
+        assert _screener_is_stale(hb, _utc(2026, 4, 20, 21, 0))
