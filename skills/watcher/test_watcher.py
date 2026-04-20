@@ -2027,3 +2027,17 @@ class TestRunCycleEntryAlertDedup:
         assert matching
         call = matching[0]
         assert call.kwargs.get('ex') == 3600
+
+
+class TestMidnightEtTtl:
+    def test_returns_seconds_until_2359_et(self):
+        from datetime import datetime, timezone as stdlib_tz, timedelta
+        # 10 PM ET → 7199 seconds until 23:59:59
+        et_offset = stdlib_tz(timedelta(hours=-4))
+        fake_now = datetime(2026, 4, 20, 22, 0, 0, tzinfo=et_offset)
+        # pytz is stubbed in sys.modules; patch watcher.datetime so now_et is real
+        with patch("watcher.datetime") as mock_dt:
+            mock_dt.now.return_value = fake_now
+            from watcher import _midnight_et_ttl
+            result = _midnight_et_ttl()
+        assert result == 7199
