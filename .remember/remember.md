@@ -1,10 +1,13 @@
 # Handoff
 
 ## State
-v0.34.6. PR #147 open (fix/rsi2-keyerror-ibs-only-signals) — KeyError 'rsi2' fix for IBS-only/DONCHIAN-only signals. VERSION + CHANGELOG bumped, all pushed. Ready to merge.
+v0.34.7. PR open for fix/watcher-alert-rsi2-na-and-dedup — two watcher alert fixes:
+1. Entry alerts now show qualifying indicators only (RSI-2/IBS/DCH); no more N/A
+2. Entry alert dedup via Redis `trading:entry_alerted:{symbol}:{strategy}` (TTL midnight ET)
 
 ## Next
-- Merge PR #147, then tag v0.34.6 on main
+- Merge PR, tag v0.34.7 on main
 
 ## Context
-Fix: 3 sites in watcher.py (print + Telegram) and portfolio_manager.py (reasoning) assumed rsi2 always in indicators. IBS/DONCHIAN-only signals omit it. Fixed with .get() + "N/A" fallback.
+Both fixes in watcher.py run_cycle() + Keys.entry_alerted() added to config.py.
+PM pub/sub channel still receives all signals; only Telegram is deduped.

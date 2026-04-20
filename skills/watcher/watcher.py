@@ -601,6 +601,15 @@ def generate_exit_signals(r, stock_client, crypto_client):
     return signals
 
 
+def _midnight_et_ttl() -> int:
+    """Seconds until midnight ET. Used as TTL for daily entry-alert dedup keys."""
+    from pytz import timezone
+    et = timezone('America/New_York')
+    now_et = datetime.now(et)
+    midnight = now_et.replace(hour=23, minute=59, second=59, microsecond=0)
+    return max(1, int((midnight - now_et).total_seconds()))
+
+
 def publish_signals(r, signals):
     """Publish signals to Redis channel and persist to TimescaleDB."""
     for signal in signals:
@@ -660,12 +669,31 @@ def run_cycle():
     positions = json.loads(r.get(Keys.POSITIONS) or "{}")
     watchlist = json.loads(r.get(Keys.WATCHLIST) or "[]")
 
+    ttl = _midnight_et_ttl()
     signal_lines = []
     for s in entry_signals:
-        rsi2 = s["indicators"].get("rsi2")
-        rsi2_str = f"{rsi2:.1f}" if rsi2 is not None else "N/A"
+        strategy = s.get("primary_strategy", s.get("strategy", "RSI2"))
+        alert_key = Keys.entry_alerted(s["symbol"], strategy)
+        if r.exists(alert_key):
+            continue
+        r.set(alert_key, "1", ex=ttl)
+        strategies = s.get("strategies", [strategy])
+        parts = []
+        if "RSI2" in strategies:
+            v = s["indicators"].get("rsi2")
+            if v is not None:
+                parts.append(f"RSI-2={v:.1f}")
+        if "IBS" in strategies:
+            v = s["indicators"].get("ibs")
+            if v is not None:
+                parts.append(f"IBS={v:.2f}")
+        if "DONCHIAN" in strategies:
+            v = s["indicators"].get("donchian_upper")
+            if v is not None:
+                parts.append(f"DCH={v:.2f}")
+        indicator_str = " ".join(parts) if parts else "—"
         signal_lines.append(
-            f"📊 ENTRY: <b>{s['symbol']}</b> RSI-2={rsi2_str} "
+            f"📊 ENTRY: <b>{s['symbol']}</b> {indicator_str} "
             f"Stop={s['suggested_stop']} T{s['tier']}"
         )
     for s in exit_signals:
@@ -674,6 +702,9 @@ def run_cycle():
             f"{icon} EXIT: <b>{s['symbol']}</b> {s['signal_type'].replace('_', ' ')} "
             f"P&L={s.get('pnl_pct', 0):+.2f}%"
         )
+
+    if not signal_lines:
+        return total_signals
 
     signal_block = "\n".join(signal_lines)
 
