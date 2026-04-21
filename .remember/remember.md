@@ -1,14 +1,14 @@
 # Handoff
 
 ## State
-Branch `fix/us-eastern-timezone-sell-failure` — PR pending (vcr done, cpr next).
-Fix: `_seconds_until_midnight_et` in `skills/executor/executor.py:679` switched from `pytz.timezone("US/Eastern")` to `zoneinfo.ZoneInfo("America/New_York")`. VERSION bumped to 0.34.12, CHANGELOG updated. 100% coverage, 928 tests passing.
+Two PRs in flight on branch `fix/us-eastern-timezone-sell-failure`:
+- v0.34.12: executor timezone fix (`ZoneInfo("America/New_York")` replacing bad `pytz.timezone("US/Eastern")`)
+- v0.34.13: PM displacement queue fix — incoming signals now queued in `trading:displacement_pending:{target}` and re-evaluated after exit completes
 
 ## Next
-- Create PR via cpr (in progress)
-- Merge once CI passes — CI/CD auto-deploys to server (executor is down until deploy)
-- Investigate Redis WRONGTYPE error seen in `verify_alpaca.py` (separate issue, not blocking)
+- Merge PR #155 once CI passes — CI/CD will restart executor (currently down)
+- Monitor that UNM/WMB re-entry works correctly after next displacement event
 
 ## Context
-Never deploy to server directly — always through PR + CI/CD. Dan was explicit about this.
-Today's incident: PAGP re-entered same-day because `exited_today` key was never set (bug). PDT count is at 1/3 (correct). Executor was accidentally killed; CI/CD deploy will restart it.
+Never deploy to server directly — always through PR + CI/CD.
+Today: PAGP whipsawed same-day (exited_today never set), executor killed by mistake, PDT at 1/3 going into close. Redis WRONGTYPE error in verify_alpaca.py is a separate unresolved issue.

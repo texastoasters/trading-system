@@ -194,6 +194,9 @@ def evaluate_entry_signal(r, signal):
         pnl_pct = target_pos.get("unrealized_pnl_pct", 0)
         print(f"  [PM] Displacing {target_pos['symbol']} "
               f"(pnl {pnl_pct:+.2f}%) for {symbol}")
+        pending_key = Keys.displacement_pending(target_pos["symbol"])
+        r.rpush(pending_key, json.dumps(signal))
+        r.expire(pending_key, 3600)
         return None, f"Displacement queued — {target_pos['symbol']} closing for {symbol}"
 
     # Asset class limits
@@ -365,6 +368,11 @@ def process_signal(r, signal):
             r.publish(Keys.APPROVED_ORDERS, json.dumps(order))
             pnl = signal.get("pnl_pct", 0)
             print(f"  ✅ [PM] EXIT APPROVED: {symbol} ({sig_type}, P&L {pnl:+.2f}%)")
+            pending_key = Keys.displacement_pending(symbol)
+            while r.llen(pending_key):
+                raw = r.lpop(pending_key)
+                if raw:
+                    process_signal(r, json.loads(raw))
             return order
         else:
             print(f"  ⚠️  [PM] EXIT BLOCKED: {symbol} — {rejection}")

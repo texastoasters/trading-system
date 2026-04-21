@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.34.13] - 2026-04-21
+
+### Fixed
+- **Displacement never re-submits incoming order** — when the Portfolio Manager displaces a position to make room for a new entry (e.g. UNM), it published the sell signal but rejected the incoming order and never re-submitted it after the exit completed. Incoming signals are now queued in `trading:displacement_pending:{target}` (1h TTL) and drained via `process_signal` after the displaced exit is approved.
+
+---
+
 ## [0.34.12] - 2026-04-21
 
 ### Fixed

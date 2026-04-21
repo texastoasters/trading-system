@@ -343,6 +343,12 @@ class Keys:
         24h TTL prevents repeat alerts within the same calendar day."""
         return f"trading:age_alert:{symbol}"
 
+    @staticmethod
+    def displacement_pending(symbol: str) -> str:
+        """List of entry signals queued while waiting for `symbol` to be displaced.
+        PM drains this list and re-evaluates each signal after the exit is approved."""
+        return f"trading:displacement_pending:{symbol}"
+
 
 # ── Redis Connection ────────────────────────────────────────
 
