@@ -1,8 +1,14 @@
-Session 2026-04-20: PDT fix + dashboard changes (v0.34.8–v0.34.11)
-- v0.34.8: watchlist indicator columns (RSI-2/IBS/DCH with signal highlighting)
-- v0.34.9: removed intraday equity sparkline
-- v0.34.10: restored Python coverage to 100%
-- v0.34.11: fixed PDT counter showing 11/3
-  - reset_daily now resets PDT_COUNT to 0 at market open
-  - verify_startup no longer syncs Alpaca 5-day rolling daytrade_count into Redis
-  - PDT_COUNT is now a clean daily counter, incremented only on same-day sells
+# Handoff
+
+## State
+Branch `fix/us-eastern-timezone-sell-failure` — PR pending (vcr done, cpr next).
+Fix: `_seconds_until_midnight_et` in `skills/executor/executor.py:679` switched from `pytz.timezone("US/Eastern")` to `zoneinfo.ZoneInfo("America/New_York")`. VERSION bumped to 0.34.12, CHANGELOG updated. 100% coverage, 928 tests passing.
+
+## Next
+- Create PR via cpr (in progress)
+- Merge once CI passes — CI/CD auto-deploys to server (executor is down until deploy)
+- Investigate Redis WRONGTYPE error seen in `verify_alpaca.py` (separate issue, not blocking)
+
+## Context
+Never deploy to server directly — always through PR + CI/CD. Dan was explicit about this.
+Today's incident: PAGP re-entered same-day because `exited_today` key was never set (bug). PDT count is at 1/3 (correct). Executor was accidentally killed; CI/CD deploy will restart it.

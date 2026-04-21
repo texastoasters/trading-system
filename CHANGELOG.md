@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.34.12] - 2026-04-21
+
+### Fixed
+- **Sell failures with `'US/Eastern'` error** — `_seconds_until_midnight_et` used `pytz.timezone("US/Eastern")` which is absent from the server's tzdata. Exception fired after sell filled but before Redis update, making executor think the sell failed, then attempt to restore a stop-loss on an already-closed position. Switched to `zoneinfo.ZoneInfo("America/New_York")` (stdlib, consistent with `notify.py`). Side effect: `exited_today` TTL key was never set, allowing same-day re-entry of PAGP and LBRT on 2026-04-21.
+
+---
+
 ## [0.34.11] - 2026-04-20
 
 ### Fixed
