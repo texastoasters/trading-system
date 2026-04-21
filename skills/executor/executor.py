@@ -676,10 +676,10 @@ def execute_buy(r, trading_client, order):
         return False
 
 
-def _seconds_until_midnight_et():  # pragma: no cover
-    """Seconds from now until midnight US/Eastern."""
-    import pytz
-    et = pytz.timezone("US/Eastern")
+def _seconds_until_midnight_et():
+    """Seconds from now until midnight ET."""
+    from zoneinfo import ZoneInfo
+    et = ZoneInfo("America/New_York")
     now_et = datetime.now(et)
     midnight_et = (now_et + timedelta(days=1)).replace(
         hour=0, minute=0, second=0, microsecond=0

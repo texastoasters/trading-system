@@ -2664,3 +2664,18 @@ class TestExecuteSellNewBehavior:
         assert mock_notify.called
         msg = mock_notify.call_args[0][0]
         assert "PDT" in msg or "day trade" in msg.lower()
+
+
+class TestSecondsUntilMidnightEt:
+    def test_uses_america_new_york_timezone(self):
+        from zoneinfo import ZoneInfo
+        real_tz = ZoneInfo("America/New_York")
+        with patch("zoneinfo.ZoneInfo", return_value=real_tz) as mock_zi:
+            from executor import _seconds_until_midnight_et
+            _seconds_until_midnight_et()
+        mock_zi.assert_called_once_with("America/New_York")
+
+    def test_returns_positive_seconds_at_most_one_day(self):
+        from executor import _seconds_until_midnight_et
+        result = _seconds_until_midnight_et()
+        assert 1 <= result <= 86400
