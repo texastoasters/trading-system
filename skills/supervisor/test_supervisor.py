@@ -809,6 +809,13 @@ class TestResetDaily:
         r.rpush = MagicMock()
         return r
 
+    def test_resets_pdt_count_to_zero(self):
+        r = self._make(**{Keys.PDT_COUNT: "5"})
+        with patch("supervisor.notify"):
+            from supervisor import reset_daily
+            reset_daily(r)
+        r.set.assert_any_call(Keys.PDT_COUNT, "0")
+
     def test_resets_daily_pnl_to_zero(self):
         r = self._make()
         with patch("supervisor.notify"):

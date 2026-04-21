@@ -1240,12 +1240,14 @@ class TestVerifyStartup:
         from executor import verify_startup
         verify_startup(tc, r)
 
-    def test_pdt_count_synced(self):
+    def test_pdt_count_not_overwritten_by_alpaca_daytrade_count(self):
+        # verify_startup must not sync Alpaca's rolling 5-day daytrade_count into
+        # Redis — that count is not comparable to our daily PDT gate counter.
         r, store = make_redis({}, extra={"trading:pdt:count": "1"})
-        tc = self._make_tc(account=make_account(day_trades=2))
+        tc = self._make_tc(account=make_account(day_trades=11))
         from executor import verify_startup
         verify_startup(tc, r)
-        assert store.get("trading:pdt:count") == "2"
+        assert store.get("trading:pdt:count") == "1"
 
     def test_position_with_active_stop(self):
         pos = make_position()
