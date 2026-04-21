@@ -43,6 +43,7 @@ def make_redis(store: dict = None):
     r.get = lambda k: base.get(k)
     r.set = MagicMock()
     r.publish = MagicMock()
+    r.llen = MagicMock(return_value=0)
     return r
 
 
@@ -188,13 +189,15 @@ class TestCountCryptoPositions:
 
 # ── pick_displacement_target ──────────────────────────────────
 
-def _pos(symbol, pnl_pct=0.0, held_days=1, primary="RSI2", quantity=5, value=1000.0):
+def _pos(symbol, pnl_pct=0.0, held_days=1, primary="RSI2", quantity=5, value=1000.0,
+         entry_price=100.0):
     """Build a position dict with entry_date derived from held_days."""
     entry = (datetime.now() - timedelta(days=held_days)).strftime("%Y-%m-%d")
     return {
         "symbol": symbol,
         "quantity": quantity,
         "value": value,
+        "entry_price": entry_price,
         "unrealized_pnl_pct": pnl_pct,
         "entry_date": entry,
         "primary_strategy": primary,
@@ -692,3 +695,107 @@ class TestProcessPendingSignals:
         from portfolio_manager import process_pending_signals
         count = process_pending_signals(r)
         assert count == 0
+
+
+# ── Displacement pending queue ────────────────────────────────
+
+class TestDisplacementPendingQueue:
+    def _five_positions(self, **extras):
+        positions = {s: _pos(s, pnl_pct=1.0, held_days=2) for s in ["SPY", "QQQ", "NVDA", "XLK"]}
+        positions["XLY"] = _pos("XLY", pnl_pct=8.0, held_days=2)
+        return positions
+
+    def test_incoming_signal_queued_in_redis_when_displacement_triggered(self):
+        positions = self._five_positions()
+        r = make_redis({Keys.POSITIONS: json.dumps(positions)})
+        r.llen = MagicMock(return_value=0)
+
+        unm_signal = make_signal(symbol="UNM", tier=2, signal_type="entry")
+        from portfolio_manager import evaluate_entry_signal
+        order, reason = evaluate_entry_signal(r, unm_signal)
+
+        assert order is None
+        assert "displace" in reason.lower()
+        r.rpush.assert_called_once()
+        queued_signal = json.loads(r.rpush.call_args[0][1])
+        assert queued_signal["symbol"] == "UNM"
+
+    def test_displacement_pending_key_contains_target_symbol(self):
+        positions = self._five_positions()
+        r = make_redis({Keys.POSITIONS: json.dumps(positions)})
+        r.llen = MagicMock(return_value=0)
+
+        from portfolio_manager import evaluate_entry_signal
+        evaluate_entry_signal(r, make_signal(symbol="UNM", tier=2, signal_type="entry"))
+
+        key = r.rpush.call_args[0][0]
+        assert key == Keys.displacement_pending("XLY")
+
+    def test_pending_key_gets_one_hour_ttl(self):
+        positions = self._five_positions()
+        r = make_redis({Keys.POSITIONS: json.dumps(positions)})
+        r.llen = MagicMock(return_value=0)
+
+        from portfolio_manager import evaluate_entry_signal
+        evaluate_entry_signal(r, make_signal(symbol="UNM", tier=2, signal_type="entry"))
+
+        r.expire.assert_called_once_with(Keys.displacement_pending("XLY"), 3600)
+
+    def test_approved_displaced_exit_drains_pending_queue(self):
+        positions = {"FIBK": _pos("FIBK", held_days=2)}
+        unm_signal = make_signal(symbol="UNM", tier=1, signal_type="entry")
+        r = make_redis({Keys.POSITIONS: json.dumps(positions)})
+        r.llen = MagicMock(side_effect=[1, 0])
+        r.lpop = MagicMock(return_value=json.dumps(unm_signal))
+
+        displaced_signal = {
+            "symbol": "FIBK",
+            "signal_type": "displaced",
+            "reason": "Displaced to make room for UNM",
+            "direction": "close",
+            "exit_price": 35.0,
+        }
+        from portfolio_manager import process_signal
+        process_signal(r, displaced_signal)
+
+        r.llen.assert_called_with(Keys.displacement_pending("FIBK"))
+        r.lpop.assert_called_once_with(Keys.displacement_pending("FIBK"))
+
+    def test_approved_displaced_exit_reprocesses_pending_entry(self):
+        positions = {"FIBK": _pos("FIBK", held_days=2)}
+        unm_signal = make_signal(symbol="UNM", tier=1, signal_type="entry")
+        r = make_redis({Keys.POSITIONS: json.dumps(positions)})
+        r.llen = MagicMock(side_effect=[1, 0])
+        r.lpop = MagicMock(return_value=json.dumps(unm_signal))
+
+        displaced_signal = {
+            "symbol": "FIBK",
+            "signal_type": "displaced",
+            "reason": "Displaced to make room for UNM",
+            "direction": "close",
+            "exit_price": 35.0,
+        }
+        from portfolio_manager import process_signal
+        process_signal(r, displaced_signal)
+
+        # Two publishes: FIBK exit + UNM entry (only 1 position = FIBK, UNM fits)
+        assert r.publish.call_count == 2
+        symbols_published = {json.loads(c[0][1])["symbol"] for c in r.publish.call_args_list}
+        assert "FIBK" in symbols_published
+        assert "UNM" in symbols_published
+
+    def test_blocked_exit_does_not_drain_pending_queue(self):
+        r = make_redis()  # no FIBK position → exit blocked
+        r.llen = MagicMock(return_value=1)
+
+        displaced_signal = {
+            "symbol": "FIBK",
+            "signal_type": "displaced",
+            "reason": "Displaced to make room for UNM",
+            "direction": "close",
+            "exit_price": 35.0,
+        }
+        from portfolio_manager import process_signal
+        process_signal(r, displaced_signal)
+
+        r.llen.assert_not_called()
