@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.34.11] - 2026-04-20
+
+### Fixed
+- **PDT counter showing incorrect value (e.g. 11/3)** — two bugs: `reset_daily` never cleared `trading:pdt:count` so it accumulated across days; `verify_startup` synced Alpaca's rolling 5-day `daytrade_count` into Redis, overwriting the daily counter with a much larger value. Fixed by resetting PDT count to 0 at market open and removing the Alpaca sync.
+
+---
+
 ## [0.34.10] - 2026-04-20
 
 ### Fixed

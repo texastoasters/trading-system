@@ -448,6 +448,7 @@ def run_eod_review(r):
 def reset_daily(r):
     """Reset daily counters — run at market open."""
     r.set(Keys.DAILY_PNL, "0.0")
+    r.set(Keys.PDT_COUNT, "0")
 
     # Wipe yesterday's same-day close records so today's buys are not
     # falsely classified as round-trips by the executor PDT gate.
