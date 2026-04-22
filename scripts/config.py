@@ -262,6 +262,14 @@ SECTOR_MAP = {
     "BTC/USD": "crypto",
 }
 
+# ── Signal Scoring ──────────────────────────────────────────────────────────
+MIN_DISPLACEMENT_SCORE     = 50
+SCORE_TIER_WEIGHTS         = {1: 40, 2: 25, 3: 10}
+SCORE_RSI2_MAX             = 20
+SCORE_REGIME_WEIGHTS       = {"RANGING": 15, "UPTREND": 10, "DOWNTREND": 0}
+SCORE_SMA200_MAX           = 10
+SCORE_MULTI_STRATEGY_BONUS = 5
+
 # ── Redis Keys ──────────────────────────────────────────────
 
 class Keys:
@@ -291,6 +299,7 @@ class Keys:
     RESTART_COUNT = "trading:restart_count"
     CONFIG = "trading:config"  # Hot-reload overrides (JSON). See load_overrides().
     HEATMAP = "trading:heatmap"  # RSI-2 heatmap snapshot. Set by screener on each scan.
+    SAME_DAY_PROTECTION = "trading:same_day_protection"
 
     @staticmethod
     def heartbeat(agent: str) -> str:

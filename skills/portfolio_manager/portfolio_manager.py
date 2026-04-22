@@ -93,21 +93,31 @@ def _position_max_hold(pos):
 def pick_displacement_target(r):
     """Select a position to close to make room for a new entry.
 
-    Ranking: (b) highest unrealized pnl% → (a) closest-to-exit (held / max_hold)
-    → (c) longest held. Fallback when no position is at breakeven-or-better:
-    smallest loser (least-negative pnl%). Returns (key, position) or None.
+    Ranking: highest unrealized pnl% → closest-to-exit (held / max_hold)
+    → longest held. Fallback when no profitable position: smallest loser.
+
+    Positions entered today are skipped unless trading:same_day_protection == "0".
+    Returns (key, position) or None if no eligible target exists.
     """
     positions = get_open_positions(r)
     if not positions:
         return None
 
+    protection_on = (r.get(Keys.SAME_DAY_PROTECTION) or "1") != "0"
+    today = datetime.now().strftime("%Y-%m-%d")
+
     enriched = []
     for key, pos in positions.items():
+        if protection_on and pos.get("entry_date") == today:
+            continue
         pnl = pos.get("unrealized_pnl_pct", 0)
         held = _position_hold_days(pos)
         max_hold = _position_max_hold(pos) or 1
         proximity = held / max_hold
         enriched.append((key, pos, pnl, proximity, held))
+
+    if not enriched:
+        return None
 
     profitable = [e for e in enriched if e[2] >= 0]
     if profitable:
@@ -164,11 +174,22 @@ def evaluate_entry_signal(r, signal):
     # ── Position limits (sell-to-make-room) ──
     num_positions = count_open_positions(r)
     if num_positions >= config.MAX_CONCURRENT_POSITIONS:
-        # num_positions >= 1 → pick_displacement_target always returns a tuple.
-        _, target_pos = pick_displacement_target(r)
+        # Score gate: only displace for sufficiently strong incoming signals
+        incoming_score = signal.get("signal_score", 0)
+        # Inclusive: score == MIN_DISPLACEMENT_SCORE is allowed through.
+        if incoming_score < config.MIN_DISPLACEMENT_SCORE:
+            return None, (
+                f"Signal score {incoming_score:.1f} below MIN_DISPLACEMENT_SCORE "
+                f"({config.MIN_DISPLACEMENT_SCORE}) — displacement refused"
+            )
 
-        # PDT guard: if the chosen target was entered today, closing it counts
-        # as a day trade. Block when the PDT cap is already hit.
+        result = pick_displacement_target(r)
+        if result is None:
+            return None, "No eligible displacement target (all positions entered today)"
+        _, target_pos = result
+
+        # PDT guard: if the chosen target was entered today (protection disabled),
+        # closing it counts as a day trade. Block when the PDT cap is already hit.
         today = datetime.now().strftime("%Y-%m-%d")
         pdt_count = int(r.get(Keys.PDT_COUNT) or 0)
         if (target_pos.get("entry_date") == today

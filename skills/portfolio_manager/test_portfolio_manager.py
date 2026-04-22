@@ -56,6 +56,7 @@ def make_signal(symbol="SPY", close=500.0, stop=490.0, tier=1, **kwargs):
         "tier": tier,
         "suggested_stop": stop,
         "fee_adjusted": False,
+        "signal_score": float(config.MIN_DISPLACEMENT_SCORE),
         "indicators": {
             "close": close,
             "rsi2": 5.0,
@@ -408,6 +409,7 @@ class TestPositionLimits:
         r = make_redis({
             Keys.POSITIONS: json.dumps(positions),
             Keys.PDT_COUNT: str(config.PDT_MAX_DAY_TRADES),
+            Keys.SAME_DAY_PROTECTION: "0",  # disable so XLY (today) remains eligible; test is about PDT, not same-day guard
         })
         from portfolio_manager import evaluate_entry_signal
         order, reason = evaluate_entry_signal(r, make_signal(symbol="XLI", tier=1))
