@@ -1877,6 +1877,42 @@ class TestGenerateEntrySignalsNewGuards:
             signals = generate_entry_signals(r, MagicMock(), MagicMock())
         assert len(signals) == 1
 
+    def test_annotates_all_watchlist_items_with_signal_score_and_republishes(self):
+        """generate_entry_signals annotates every watchlist item with signal_score
+        (including non-qualifying items) and re-publishes trading:watchlist."""
+        qualifying = make_watchlist_item("SPY", priority="signal", tier=1, rsi2=5.0)
+        non_qualifying = make_watchlist_item("QQQ", priority="watch", tier=2, rsi2=8.0)
+        r = make_redis({
+            Keys.WATCHLIST: json.dumps([qualifying, non_qualifying]),
+            Keys.REGIME: json.dumps({"regime": "RANGING", "adx": 15.0}),
+        })
+        with patch('watcher.is_market_hours', return_value=True), \
+             patch('watcher.check_whipsaw', return_value=False):
+            from watcher import generate_entry_signals
+            generate_entry_signals(r, MagicMock(), MagicMock())
+
+        watchlist_calls = [c for c in r.set.call_args_list if c.args[0] == Keys.WATCHLIST]
+        assert len(watchlist_calls) == 1
+        republished = json.loads(watchlist_calls[0].args[1])
+        assert all("signal_score" in item for item in republished)
+        assert all(isinstance(item["signal_score"], (int, float)) for item in republished)
+        spy_score = next(i["signal_score"] for i in republished if i["symbol"] == "SPY")
+        qqq_score = next(i["signal_score"] for i in republished if i["symbol"] == "QQQ")
+        assert spy_score > qqq_score
+
+    def test_watchlist_republished_even_when_no_signals_generated(self):
+        """Watchlist annotation runs even when all items are skipped (e.g. market closed)."""
+        item = make_watchlist_item("SPY", priority="signal", tier=1)
+        r = make_redis({Keys.WATCHLIST: json.dumps([item])})
+        with patch('watcher.is_market_hours', return_value=False):
+            from watcher import generate_entry_signals
+            generate_entry_signals(r, MagicMock(), MagicMock())
+
+        watchlist_calls = [c for c in r.set.call_args_list if c.args[0] == Keys.WATCHLIST]
+        assert len(watchlist_calls) == 1
+        republished = json.loads(watchlist_calls[0].args[1])
+        assert all("signal_score" in item for item in republished)
+
 
 # ── run_cycle: entry alert formatting + dedup ─────────────────
 
