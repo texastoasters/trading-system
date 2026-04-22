@@ -936,6 +936,16 @@ defmodule DashboardWeb.DashboardLiveTest do
       assigns = :sys.get_state(view.pid).socket.assigns
       assert assigns.cooldowns == [real]
     end
+
+    test "cooldown panel renders when cooldowns present (regression: must still appear after layout move)", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      started = NaiveDateTime.utc_now() |> NaiveDateTime.add(-3600, :second) |> NaiveDateTime.to_iso8601()
+      cooldowns = [%{"symbol" => "DTE", "type" => "whipsaw", "started_at" => started}]
+      send(view.pid, {:state_update, cooldown_state(cooldowns)})
+      html = render(view)
+      assert html =~ "Cooldowns"
+      assert html =~ "DTE"
+    end
   end
 
   describe "signal_detail/1 helpers" do
