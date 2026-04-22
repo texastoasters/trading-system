@@ -80,6 +80,10 @@ defmodule DashboardWeb.DashboardLive do
 
     attribution = Queries.drawdown_attribution(positions, peak_date)
 
+    watchlist =
+      (state["trading:watchlist"] || [])
+      |> Enum.sort_by(fn item -> item["signal_score"] || -1 end, :desc)
+
     socket =
       socket
       |> assign(:equity, state["trading:simulated_equity"])
@@ -91,7 +95,7 @@ defmodule DashboardWeb.DashboardLive do
       |> assign(:system_status, state["trading:system_status"] || "unknown")
       |> assign(:regime, state["trading:regime"])
       |> assign(:redis_positions, positions)
-      |> assign(:watchlist, state["trading:watchlist"] || [])
+      |> assign(:watchlist, watchlist)
       |> assign(:universe, state["trading:universe"])
       |> assign(:heartbeats, heartbeats)
       |> assign(:cooldowns, state["trading:cooldowns"] |> List.wrap() |> Enum.filter(&is_map/1))
@@ -402,6 +406,13 @@ defmodule DashboardWeb.DashboardLive do
   defp indicator_highlight_class("strong_signal"), do: "text-green-400 font-semibold"
   defp indicator_highlight_class("signal"), do: "text-blue-400 font-semibold"
   defp indicator_highlight_class(_), do: "text-gray-500"
+
+  defp score_class(score) when is_number(score) and score >= 70, do: "text-green-400"
+  defp score_class(score) when is_number(score) and score >= 50, do: "text-yellow-400"
+  defp score_class(_), do: "text-gray-500"
+
+  defp format_score(score) when is_number(score), do: "#{round(score)}"
+  defp format_score(_), do: "—"
 
   defp universe_count(nil), do: "—"
 
