@@ -590,6 +590,35 @@ defmodule DashboardWeb.DashboardLiveTest do
     end
   end
 
+  describe "watchlist signal scores" do
+    defp scored_watchlist_state(watchlist) do
+      %{"trading:watchlist" => watchlist}
+    end
+
+    test "watchlist is sorted descending by signal_score", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      items = [
+        %{"symbol" => "LOW", "signal_score" => 30.0, "rsi2" => 8.0},
+        %{"symbol" => "HIGH", "signal_score" => 82.0, "rsi2" => 2.0},
+        %{"symbol" => "MID", "signal_score" => 55.0, "rsi2" => 5.0}
+      ]
+      send(view.pid, {:state_update, scored_watchlist_state(items)})
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert Enum.map(assigns.watchlist, & &1["symbol"]) == ["HIGH", "MID", "LOW"]
+    end
+
+    test "items with no signal_score sort last", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      items = [
+        %{"symbol" => "NOSCORE", "rsi2" => 3.0},
+        %{"symbol" => "SCORED", "signal_score" => 60.0, "rsi2" => 5.0}
+      ]
+      send(view.pid, {:state_update, scored_watchlist_state(items)})
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert Enum.map(assigns.watchlist, & &1["symbol"]) == ["SCORED", "NOSCORE"]
+    end
+  end
+
   describe "signal_icon/1 helpers" do
     test "entry signal shows book emoji", %{conn: conn} do
       {:ok, view, _} = live(conn, "/")
