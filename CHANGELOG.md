@@ -8,6 +8,14 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.35.2] - 2026-04-22
+
+### Fixed
+- **Watchlist scores showing "—"** — watcher now annotates every watchlist item with `signal_score` after each evaluation cycle (not just items that qualify for entry signals) and re-publishes `trading:watchlist`. Items that are skipped (market closed, wrong priority, etc.) get scores computed from their priority flags.
+- **Watchlist two-column layout** — on desktop (lg+), watchlist items flow into two columns so a long watchlist doesn't make the left panel towering tall.
+
+---
+
 ## [0.35.1] - 2026-04-22
 
 ### Added

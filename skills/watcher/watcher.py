@@ -447,6 +447,23 @@ def generate_entry_signals(r, stock_client, crypto_client):
         )
         signals.append(merged)
 
+    # Annotate every watchlist item with a signal_score and re-publish so the
+    # dashboard can display scores for items that didn't qualify for entry signals.
+    regime = regime_info["regime"]
+    for item in watchlist:
+        rsi2_prio = item.get("rsi2_priority", item.get("priority"))
+        ibs_prio = item.get("ibs_priority")
+        donchian_prio = item.get("donchian_priority")
+        strategies = []
+        if rsi2_prio in ("signal", "strong_signal"):
+            strategies.append("RSI2")
+        if ibs_prio in ("signal", "strong_signal"):
+            strategies.append("IBS")
+        if donchian_prio in ("signal", "strong_signal"):
+            strategies.append("Donchian")
+        item["signal_score"] = compute_signal_score(item, strategies, regime)
+    r.set(Keys.WATCHLIST, json.dumps(watchlist))
+
     return signals
 
 
