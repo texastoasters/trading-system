@@ -26,11 +26,11 @@ jobs:
 
       - name: Run tests with coverage
         run: |
+          set -o pipefail
           pytest --cov=skills --cov=scripts \
             --cov-report=term-missing \
             --cov-report=lcov:coverage.lcov \
-            > /tmp/python-coverage.txt 2>&1
-          cat /tmp/python-coverage.txt
+            2>&1 | tee /tmp/python-coverage.txt
         env:
           PYTHONPATH: scripts
 
@@ -112,8 +112,8 @@ jobs:
       - name: Run tests with coverage
         working-directory: dashboard
         run: |
-          mix coveralls > /tmp/elixir-coverage.txt 2>&1
-          cat /tmp/elixir-coverage.txt
+          set -o pipefail
+          mix coveralls 2>&1 | tee /tmp/elixir-coverage.txt
 
       - name: Generate lcov for Coveralls upload
         working-directory: dashboard

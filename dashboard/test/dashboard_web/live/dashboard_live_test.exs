@@ -853,6 +853,15 @@ defmodule DashboardWeb.DashboardLiveTest do
       assigns = :sys.get_state(view.pid).socket.assigns
       assert assigns.cooldowns == []
     end
+
+    test "non-map elements in cooldowns list are filtered out", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      started = NaiveDateTime.utc_now() |> NaiveDateTime.add(-3600, :second) |> NaiveDateTime.to_iso8601()
+      real = %{"symbol" => "SPY", "type" => "whipsaw", "started_at" => started}
+      send(view.pid, {:state_update, cooldown_state(["cached_sentinel", real, "another_string"])})
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.cooldowns == [real]
+    end
   end
 
   describe "signal_detail/1 helpers" do
