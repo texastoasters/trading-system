@@ -221,6 +221,32 @@ def check_exited_today(r, symbol):
     return r.get(Keys.exited_today(symbol)) is not None
 
 
+def compute_signal_score(item, strategies_list, regime):
+    """Numeric signal quality score (0–90). Higher = stronger setup."""
+    score = 0.0
+
+    score += config.SCORE_TIER_WEIGHTS.get(item.get("tier", 3), 10)
+
+    if "RSI2" in strategies_list:
+        threshold = item.get("entry_threshold") or 10.0
+        rsi2 = item.get("rsi2", threshold)
+        depth = max(0.0, threshold - rsi2)
+        score += min(config.SCORE_RSI2_MAX, depth / threshold * config.SCORE_RSI2_MAX)
+
+    score += config.SCORE_REGIME_WEIGHTS.get(regime, 0)
+
+    close = item.get("close", 0)
+    sma200 = item.get("sma200", 0)
+    if sma200 > 0:
+        buffer_pct = (close - sma200) / sma200 * 100
+        score += min(config.SCORE_SMA200_MAX, max(0.0, buffer_pct))
+
+    if len(strategies_list) >= 2:
+        score += config.SCORE_MULTI_STRATEGY_BONUS
+
+    return round(score, 2)
+
+
 def generate_entry_signals(r, stock_client, crypto_client):
     """Check watchlist for entry conditions."""
     watchlist_raw = r.get(Keys.WATCHLIST)
@@ -416,6 +442,9 @@ def generate_entry_signals(r, stock_client, crypto_client):
         if rsi2_cand:
             merged["rsi2_config"] = rsi2_cand["rsi2_config"]
 
+        merged["signal_score"] = compute_signal_score(
+            item, strategies_list, regime_info["regime"]
+        )
         signals.append(merged)
 
     return signals

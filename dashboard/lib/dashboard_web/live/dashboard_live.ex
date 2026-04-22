@@ -94,7 +94,7 @@ defmodule DashboardWeb.DashboardLive do
       |> assign(:watchlist, state["trading:watchlist"] || [])
       |> assign(:universe, state["trading:universe"])
       |> assign(:heartbeats, heartbeats)
-      |> assign(:cooldowns, state["trading:cooldowns"] || [])
+      |> assign(:cooldowns, state["trading:cooldowns"] |> List.wrap() |> Enum.filter(&is_map/1))
       |> assign(:drawdown_attribution, attribution)
 
     {:noreply, socket}

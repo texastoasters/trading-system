@@ -8,6 +8,15 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.35.0] - 2026-04-22
+
+### Added
+- **Signal scoring system** — every entry signal now carries a `signal_score` (0–90) computed by the Watcher from: tier weight (40/25/10), RSI-2 depth below threshold (0–20), regime alignment (RANGING=15/UPTREND=10/DOWNTREND=0), SMA200 buffer (0–10 pts), and multi-strategy bonus (+5 when 2+ strategies qualify simultaneously).
+- **Displacement score gate** — the Portfolio Manager now requires `signal_score >= MIN_DISPLACEMENT_SCORE` (default 50) before triggering any position displacement. Low-quality signals (e.g. weak Tier-3 in DOWNTREND) can no longer force out existing positions.
+- **Same-day entry protection** — `pick_displacement_target` skips positions entered today, preventing the buy→displace-5-min-later churn seen on high-signal days. Controlled by Redis key `trading:same_day_protection` (absent or `"1"` = protected; `"0"` = disabled). Alpaca-side stop-losses are unaffected.
+
+---
+
 ## [0.34.13] - 2026-04-21
 
 ### Fixed
