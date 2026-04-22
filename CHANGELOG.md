@@ -8,6 +8,20 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.35.1] - 2026-04-22
+
+### Added
+- **Signal scores on watchlist panel** — each watchlist row now shows a color-coded signal quality score (0–90): green ≥70, yellow 50–69, gray <50. Rows are sorted descending by score so the strongest setups appear first.
+
+### Changed
+- **Dashboard layout rebalanced** — Cooldowns and Drawdown Attribution panels moved from the left column to the right column, so both sides grow together instead of the left towering over an empty right side.
+
+### Fixed
+- **CI test output now streams live** — replaced redirect+cat pattern with `tee` in GitHub Actions so test failures are visible directly in the workflow log without downloading artifacts.
+- **Parallel CI race condition** — `@cooldowns` assign now filters non-map elements (`Enum.filter(&is_map/1)`) preventing a `FunctionClauseError` when a Redis poller test's sentinel value broadcast reached a concurrent live view test.
+
+---
+
 ## [0.35.0] - 2026-04-22
 
 ### Added
