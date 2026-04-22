@@ -268,6 +268,10 @@
                   <span class={["text-xs px-1.5 py-0.5 rounded border font-medium", tier_class]}>
                     {tier_label}
                   </span>
+                  <span
+                    class={["font-mono font-bold text-xs w-6 text-right", score_class(item["signal_score"])]}
+                    title="Signal quality score (0–90). Higher = stronger setup. Factors: tier, RSI-2 depth, regime, SMA-200 buffer."
+                  >{format_score(item["signal_score"])}</span>
                 </div>
                 <div class="flex items-center gap-3 text-xs font-mono">
                   <span class={indicator_highlight_class(item["rsi2_priority"] || item["priority"])}>

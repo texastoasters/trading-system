@@ -617,6 +617,51 @@ defmodule DashboardWeb.DashboardLiveTest do
       assigns = :sys.get_state(view.pid).socket.assigns
       assert Enum.map(assigns.watchlist, & &1["symbol"]) == ["SCORED", "NOSCORE"]
     end
+
+    test "score >= 70 renders in green", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      item = %{"symbol" => "SPY", "tier" => 1, "rsi2" => 2.0, "signal_score" => 82.0}
+      send(view.pid, {:state_update, scored_watchlist_state([item])})
+      html = render(view)
+      assert html =~ "text-green-400"
+      assert html =~ "82"
+    end
+
+    test "score 50-69 renders in yellow", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      item = %{"symbol" => "QQQ", "tier" => 2, "rsi2" => 5.0, "signal_score" => 55.0}
+      send(view.pid, {:state_update, scored_watchlist_state([item])})
+      html = render(view)
+      assert html =~ "text-yellow-400"
+      assert html =~ "55"
+    end
+
+    test "score < 50 renders in gray", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      item = %{"symbol" => "XLE", "tier" => 3, "rsi2" => 7.0, "signal_score" => 30.0}
+      send(view.pid, {:state_update, scored_watchlist_state([item])})
+      html = render(view)
+      assert html =~ "text-gray-500"
+      assert html =~ "30"
+    end
+
+    test "absent signal_score renders dash", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      item = %{"symbol" => "V", "tier" => 3, "rsi2" => 4.0}
+      send(view.pid, {:state_update, scored_watchlist_state([item])})
+      html = render(view)
+      assert html =~ "text-gray-500"
+      assert html =~ "—"
+    end
+
+    test "integer signal_score renders without decimal", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/")
+      item = %{"symbol" => "NVDA", "tier" => 1, "rsi2" => 1.5, "signal_score" => 75}
+      send(view.pid, {:state_update, scored_watchlist_state([item])})
+      html = render(view)
+      assert html =~ "75"
+      refute html =~ "75.0"
+    end
   end
 
   describe "signal_icon/1 helpers" do
