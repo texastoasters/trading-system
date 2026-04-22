@@ -247,48 +247,6 @@
         <% end %>
       </div>
 
-      <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
-        <% held_symbols = Map.keys(@redis_positions)
-           visible_watchlist = Enum.reject(@watchlist, fn item -> item["symbol"] in held_symbols end) %>
-        <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-1">
-          Watchlist ({length(visible_watchlist)})
-          <.tooltip text="Stocks close to a buy signal that the robot is watching closely, ready to trade." />
-        </h2>
-        <%= if visible_watchlist == [] do %>
-          <p class="text-sm text-gray-600 italic">
-            No watchlist items — screener may not have run yet
-          </p>
-        <% else %>
-          <div class="grid grid-cols-1 lg:grid-cols-2 gap-x-4 gap-y-1">
-            <%= for item <- visible_watchlist do %>
-              <% {tier_label, tier_class} = tier_badge(item["tier"]) %>
-              <div class="flex items-center justify-between text-sm">
-                <div class="flex items-center gap-2">
-                  <span class="font-mono font-semibold text-white w-16">{item["symbol"]}</span>
-                  <span class={["text-xs px-1.5 py-0.5 rounded border font-medium", tier_class]}>
-                    {tier_label}
-                  </span>
-                  <span
-                    class={["font-mono font-bold text-xs w-8 text-right", score_class(item["signal_score"])]}
-                    title="Signal quality score (0–90). Higher = stronger setup. Factors: tier, RSI-2 depth, regime, SMA-200 buffer."
-                  >{format_score(item["signal_score"])}</span>
-                </div>
-                <div class="flex items-center gap-3 text-xs font-mono">
-                  <span class={indicator_highlight_class(item["rsi2_priority"] || item["priority"])}>
-                    RSI-2 {format_float(item["rsi2"])}
-                  </span>
-                  <span class={indicator_highlight_class(item["ibs_priority"])}>
-                    IBS {format_float(item["ibs"])}
-                  </span>
-                  <span class={indicator_highlight_class(item["donchian_priority"])}>
-                    DCH {format_float(item["donchian_upper"])}
-                  </span>
-                </div>
-              </div>
-            <% end %>
-          </div>
-        <% end %>
-      </div>
     </div>
 
     <div class="space-y-4">
@@ -422,6 +380,49 @@
         </div>
       <% end %>
     </div>
+  </div>
+
+  <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+    <% held_symbols = Map.keys(@redis_positions)
+       visible_watchlist = Enum.reject(@watchlist, fn item -> item["symbol"] in held_symbols end) %>
+    <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-1">
+      Watchlist ({length(visible_watchlist)})
+      <.tooltip text="Stocks close to a buy signal that the robot is watching closely, ready to trade." />
+    </h2>
+    <%= if visible_watchlist == [] do %>
+      <p class="text-sm text-gray-600 italic">
+        No watchlist items — screener may not have run yet
+      </p>
+    <% else %>
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-x-4 gap-y-1">
+        <%= for item <- visible_watchlist do %>
+          <% {tier_label, tier_class} = tier_badge(item["tier"]) %>
+          <div class="flex items-center justify-between text-sm">
+            <div class="flex items-center gap-2">
+              <span class="font-mono font-semibold text-white w-16">{item["symbol"]}</span>
+              <span class={["text-xs px-1.5 py-0.5 rounded border font-medium", tier_class]}>
+                {tier_label}
+              </span>
+              <span
+                class={["font-mono font-bold text-xs w-8 text-right", score_class(item["signal_score"])]}
+                title="Signal quality score (0–90). Higher = stronger setup. Factors: tier, RSI-2 depth, regime, SMA-200 buffer."
+              >{format_score(item["signal_score"])}</span>
+            </div>
+            <div class="flex items-center gap-3 text-xs font-mono">
+              <span class={indicator_highlight_class(item["rsi2_priority"] || item["priority"])}>
+                RSI-2 {format_float(item["rsi2"])}
+              </span>
+              <span class={indicator_highlight_class(item["ibs_priority"])}>
+                IBS {format_float(item["ibs"])}
+              </span>
+              <span class={indicator_highlight_class(item["donchian_priority"])}>
+                DCH {format_float(item["donchian_upper"])}
+              </span>
+            </div>
+          </div>
+        <% end %>
+      </div>
+    <% end %>
   </div>
 
   <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">

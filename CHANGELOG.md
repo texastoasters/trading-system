@@ -8,6 +8,13 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.35.3] - 2026-04-22
+
+### Changed
+- **Watchlist panel is now full-width** — moved from the left half of the two-column grid to a full-width panel below (same position as Recent Trades). Internal two-column item layout is preserved at lg+ breakpoint.
+
+---
+
 ## [0.35.2] - 2026-04-22
 
 ### Fixed
