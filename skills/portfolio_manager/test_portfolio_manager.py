@@ -801,3 +801,48 @@ class TestDisplacementPendingQueue:
         process_signal(r, displaced_signal)
 
         r.llen.assert_not_called()
+
+    def test_pending_entry_not_re_displaced_when_vacating_symbol_still_in_positions(self):
+        """
+        Bug: when the drain re-processes XLI after AG's exit is approved, AG is
+        still in trading:positions (executor hasn't filled yet).  evaluate_entry_signal
+        sees MAX positions → triggers another displacement → XLI never bought.
+        Fix: _displaced_symbol on the re-processed signal causes evaluate_entry_signal
+        to subtract 1 for the slot being vacated (both concurrent and asset-class checks),
+        so XLI is approved directly.
+
+        Realistic setup: 3 equity (SPY, QQQ, AG) + 2 crypto = 5 = MAX_CONCURRENT.
+        AG (equity) is displaced for XLI (equity).
+        """
+        positions = {
+            "SPY": _pos("SPY", pnl_pct=1.0, held_days=2),
+            "QQQ": _pos("QQQ", pnl_pct=1.0, held_days=2),
+            "AG": _pos("AG", pnl_pct=-1.61, held_days=2),
+            "BTC/USD": _pos("BTC/USD", pnl_pct=0.5, held_days=2),
+            "ETH/USD": _pos("ETH/USD", pnl_pct=0.3, held_days=2),
+        }
+        xli_signal = make_signal(symbol="XLI", tier=1, signal_type="entry")
+        r = make_redis({
+            Keys.POSITIONS: json.dumps(positions),
+            Keys.SIMULATED_EQUITY: "10000.0",
+            Keys.PEAK_EQUITY: "10000.0",
+        })
+        r.llen = MagicMock(side_effect=[1, 0])
+        r.lpop = MagicMock(return_value=json.dumps(xli_signal))
+
+        displaced_signal = {
+            "symbol": "AG",
+            "signal_type": "displaced",
+            "reason": "Displaced to make room for XLI",
+            "direction": "close",
+            "exit_price": 20.80,
+        }
+        from portfolio_manager import process_signal
+        process_signal(r, displaced_signal)
+
+        approved = {
+            json.loads(c[0][1])["symbol"]
+            for c in r.publish.call_args_list
+            if c[0][0] == Keys.APPROVED_ORDERS
+        }
+        assert "XLI" in approved, f"XLI was not approved — published to APPROVED_ORDERS: {approved}"

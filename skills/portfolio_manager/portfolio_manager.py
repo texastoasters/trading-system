@@ -171,8 +171,18 @@ def evaluate_entry_signal(r, signal):
     if symbol in disabled:
         return None, f"{symbol} is currently disabled"
 
+    # When re-evaluating a pending entry after a displacement exit was approved,
+    # the displaced symbol is still in Redis (executor hasn't filled yet) but its
+    # slot is already spoken for — subtract 1 from the relevant limit checks.
+    _vacating = signal.get("_displaced_symbol")
+    _vacating_in_redis = _vacating is not None and _vacating in existing_positions
+    _vacating_is_crypto = _vacating_in_redis and is_crypto(_vacating)
+
     # ── Position limits (sell-to-make-room) ──
-    num_positions = count_open_positions(r)
+    # Derive counts from already-loaded existing_positions to avoid extra Redis reads.
+    _crypto_count = sum(1 for p in existing_positions.values() if is_crypto(p["symbol"]))
+    _equity_count = len(existing_positions) - _crypto_count
+    num_positions = len(existing_positions) - int(_vacating_in_redis)
     if num_positions >= config.MAX_CONCURRENT_POSITIONS:
         # Score gate: only displace for sufficiently strong incoming signals
         incoming_score = signal.get("signal_score", 0)
@@ -221,9 +231,9 @@ def evaluate_entry_signal(r, signal):
         return None, f"Displacement queued — {target_pos['symbol']} closing for {symbol}"
 
     # Asset class limits
-    if is_crypto(symbol) and count_crypto_positions(r) >= config.MAX_CRYPTO_POSITIONS:
+    if is_crypto(symbol) and _crypto_count - int(_vacating_is_crypto) >= config.MAX_CRYPTO_POSITIONS:
         return None, "Max crypto positions reached"
-    if not is_crypto(symbol) and count_equity_positions(r) >= config.MAX_EQUITY_POSITIONS:
+    if not is_crypto(symbol) and _equity_count - int(_vacating_in_redis and not _vacating_is_crypto) >= config.MAX_EQUITY_POSITIONS:
         return None, "Max equity positions reached"
 
     # ── Sector correlation ──
@@ -393,7 +403,9 @@ def process_signal(r, signal):
             while r.llen(pending_key):
                 raw = r.lpop(pending_key)
                 if raw:
-                    process_signal(r, json.loads(raw))
+                    pending_signal = json.loads(raw)
+                    pending_signal["_displaced_symbol"] = symbol
+                    process_signal(r, pending_signal)
             return order
         else:
             print(f"  ⚠️  [PM] EXIT BLOCKED: {symbol} — {rejection}")
