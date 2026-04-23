@@ -1,12 +1,14 @@
 # Handoff
 
 ## State
-Two merged PRs (#158, #159). One open PR:
-- PR #160 (pending) on `fix/watchlist-panel-full-width` (v0.35.3): watchlist panel moved to full-width below two-column grid; internal two-column item layout preserved at lg+.
+PR #160 merged (v0.35.3). New fix on `fix/watchlist-panel-full-width` branch (stale name):
+- Bug: AG displaced for XLI, XLI never bought — PM drains displacement_pending synchronously before executor removes AG from Redis, re-eval sees MAX positions and re-displaces to a second victim
+- Fix: drain tags pending signal with `_displaced_symbol`; evaluate_entry_signal subtracts 1 from concurrent + asset class counts for the vacating slot; counts derived from already-loaded existing_positions (no extra Redis reads)
+- 960 tests passing
 
 ## Next
-- Merge PR #160 once CI passes
-- After merge: tag v0.35.3
+- cpr this fix (create new branch first — current branch is stale name)
+- Tag v0.35.4 after merge
 - Redis WRONGTYPE error in verify_alpaca.py is a separate unresolved issue
 
 ## Context
