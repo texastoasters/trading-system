@@ -8,6 +8,25 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.36.0] - 2026-05-09
+
+### Added
+- **TSMOM (Time-Series Momentum) backtest harness (#167)** — `scripts/backtest_tsmom.py`. Long-only adaptation of Moskowitz/Ooi/Pedersen (2012). At each month boundary, computes trailing 12-month return excluding the most recent month (12-1 momentum). Long if positive, cash if non-positive. ATR-based stop placed at entry, checked intra-month. Live-aligned fills (next-bar open) per #162. 1% fixed-fractional position sizing.
+  - Public API: `run_tsmom_backtest(data, symbol, account_size, risk_pct, atr_stop_multiplier, strategy_name)` → `TsmomResult` with per-trade records + headline metrics (PF, WR, MaxDD, total return, Sharpe-friendly avg hold, % time invested).
+  - CLI: `--symbols ... --years N --csv --summary` (defaults: Tier 1 × 2y → `data/tsmom_results.csv` + `data/tsmom_summary.md`).
+- **MC bootstrap TSMOM adapter (extends #164)** — `scripts/backtest_mc_bootstrap.py` `run_strategy_for_symbol` now accepts `--strategy TSMOM`. `--all` mode runs Tier 1 × {RSI-2, IBS, Donchian-BO, TSMOM} so the new strategy lands in the same tail-risk view.
+
+### Tests
+- 12 new cases in `scripts/test_backtest_tsmom.py` covering: insufficient history, persistent downtrend (no entries), first-entry month-boundary detection, fill at `open[i]` not signal close, exit on signal flip at next month boundary, intra-month stop-loss, trade record schema, metrics population, no dangling open positions at backtest end, account-size scaling.
+- Full suite: 1045 pass; full project at 99% baseline coverage.
+
+### Notes
+- Real Tier 1 numbers populate when the script runs on the VPS with Alpaca creds.
+- Per-symbol metrics in this PR. Portfolio aggregation (#168), watcher integration (#169), PM integration (#170), dashboard surfacing (#170 follow-up) ship in subsequent PRs.
+- VERSION 0.35.8 → 0.36.0 (minor bump — first new strategy).
+
+---
+
 ## [0.35.8] - 2026-05-08
 
 ### Added

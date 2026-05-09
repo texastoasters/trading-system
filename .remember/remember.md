@@ -11,18 +11,20 @@ Trading System Roadmap project: https://github.com/orgs/texastoasters/projects/1
 
 ## In flight
 
-- **#166 — Deflated Sharpe Ratio (Bailey/LdP 2014)** → branch `feat/deflated-sharpe-ratio` → status In Progress
-  - `scripts/deflated_sharpe.py` (no scipy, Acklam's PPF, 100% cov)
-  - Integrated into `backtest_alt_strategies.py` summary table
-  - Targeting v0.35.8 — closes P0 Foundation block
-  - 31 new tests; full suite 1028 pass
+- **#167 — TSMOM backtest harness** → branch `feat/tsmom-backtest` → status In Progress
+  - `scripts/backtest_tsmom.py` — 12-1 momentum, monthly rebalance, ATR stop, next-bar-open fills
+  - MC bootstrap adapter extended to support TSMOM (`--strategy TSMOM`, `--all` includes it)
+  - Targeting v0.36.0 (minor bump — first new strategy in 2026)
+  - 12 new tests; full suite 1045 pass
 
 ## Done this session
 
-- **#162 — Backtest exec alignment (v0.35.4)** → PR #213 merged → `entry_timing` param + delta-report script.
-- **#163 — Same-day gap-up exit churn (v0.35.5)** → PR #214 merged → `hold_days >= 1` guard on RSI/prev_high exits in watcher + 4 backtest scripts + 2 sweeps.
-- **#164 — MC bootstrap (v0.35.6)** → PR #215 merged → `scripts/backtest_mc_bootstrap.py` + p5/p50/p95 distributions across PF/WR/MaxDD/terminal.
-- **#165 — Purged k-fold CV (v0.35.7)** → PR #216 merged → `purge_bars` parameter on both sweeps; training slice purges entries whose labels would extend into OOS. AFML ch.7 methodology section appended to phase2 doc.
+- **#162 — Backtest exec alignment (v0.35.4)** → PR #213 merged.
+- **#163 — Same-day gap-up exit churn (v0.35.5)** → PR #214 merged.
+- **#164 — MC bootstrap (v0.35.6)** → PR #215 merged.
+- **#165 — Purged k-fold CV (v0.35.7)** → PR #216 merged.
+- **#166 — Deflated Sharpe Ratio (v0.35.8)** → PR #217 merged → closed P0 Foundation block.
+- **VPS data artifacts** → PR #218 → exec_alignment_delta + mc_bootstrap_summary + rsi2_thresholds (all null under purged CV) + alt_strategies regenerated with DSR. **Empirical finding: only RSI-2 passes DSR > 0.95** out of 12 candidates; IBS borderline (0.923).
 
 ## Strategy direction (agreed 2026-05-08)
 
