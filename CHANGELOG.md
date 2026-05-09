@@ -8,6 +8,34 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.36.3] - 2026-05-09
+
+### Added
+- **`/strategies` LiveView page (#170)** — `dashboard/lib/dashboard_web/live/strategies_live.ex` shows per-strategy state at a glance: open position count, capital allocated (with % of equity), average hold age, and MTD realized P&L. Strategies appear dynamically — any `primary_strategy` value seen in live `trading:positions` or in this month's trades shows up. Sorted alphabetically; empty state when nothing's active.
+  - Live data: subscribes to `dashboard:state` PubSub; updates from `trading:positions` + `trading:simulated_equity`.
+  - Historical: new `Queries.strategy_pnl_mtd/0` aggregates realized P&L from the trades table for the current calendar month, grouped by `strategy`.
+  - Reachable from the main nav (`Strategies` link added to `DashboardWeb.Layouts.@nav_items`).
+
+### Changed
+- `dashboard/test/dashboard_web/live/nav_test.exs` extended to cover the new `/strategies` route + label so the nav-presence regression test stays exhaustive.
+
+### Tests
+- New `dashboard/test/dashboard_web/live/strategies_live_test.exs`:
+  - Mount renders heading, table headers, empty state, safe initial assigns.
+  - `handle_info :state_update` updates positions + equity from broadcast; renders RSI2 / TSMOM / DONCHIAN rows; sorts alphabetically.
+  - `strategy_rows/3` derivation: groups by primary_strategy, falls back to legacy `strategy` field, defaults to RSI2 when missing, computes capital/% equity/avg hold/MTD aggregation, handles nil positions / nil mtd_pnl / unknown entry_date.
+  - Render formatters: positive/negative/zero/nil P&L color classes; equity in header.
+  - String-encoded equity from Redis parses correctly; unparseable strings → nil.
+  - `Queries.strategy_pnl_mtd/0`: returns `%{}` on DB error; resilience-fallback shape.
+- Suspends `Dashboard.RedisPoller` per the existing test-isolation pattern so PubSub broadcasts don't race assertions.
+
+### Notes
+- Stacked-area allocation chart over time was listed in the issue's "What" but not its "Acceptance"; deferred to a follow-up issue. The current table view satisfies the four acceptance criteria (open count, capital, avg hold, MTD P&L) and the nav-link requirement.
+- After this PR, the system has end-to-end multi-strategy capability: TSMOM signal → watcher → PM → executor → dashboard.
+- VERSION 0.36.2 → 0.36.3. **Closes the P1 TSMOM block (#167-#170).**
+
+---
+
 ## [0.36.2] - 2026-05-09
 
 ### Added

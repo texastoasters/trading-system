@@ -7,6 +7,7 @@ defmodule DashboardWeb.Layouts do
     {"Dashboard", "/"},
     {"Universe", "/universe"},
     {"Trades", "/trades"},
+    {"Strategies", "/strategies"},
     {"Performance", "/performance"},
     {"Logs", "/logs"},
     {"Settings", "/settings"}

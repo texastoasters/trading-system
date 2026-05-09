@@ -20,6 +20,7 @@ defmodule DashboardWeb.Router do
     live "/", DashboardLive, :index
     live "/universe", UniverseLive, :index
     live "/trades", TradesLive, :index
+    live "/strategies", StrategiesLive, :index
     live "/performance", PerformanceLive, :index
     live "/logs", LogsLive, :index
     live "/settings", SettingsLive, :index

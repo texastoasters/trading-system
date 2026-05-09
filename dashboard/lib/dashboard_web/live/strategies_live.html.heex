@@ -1,0 +1,79 @@
+<div class="min-h-screen bg-gray-900 text-gray-100 px-3 sm:px-6 py-4 space-y-4">
+
+  <div class="flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <a href="/" class="text-gray-500 hover:text-gray-300 transition-colors text-sm">← Dashboard</a>
+      <h1 class="text-lg font-bold text-white tracking-tight">Strategies</h1>
+    </div>
+    <span class="text-sm text-gray-500">
+      <%= if @equity do %>
+        Equity ${:erlang.float_to_binary(@equity * 1.0, decimals: 0)}
+      <% else %>
+        Equity —
+      <% end %>
+    </span>
+  </div>
+
+  <div class="rounded-lg border border-gray-700 overflow-hidden">
+
+    <%!-- Desktop header --%>
+    <div class="hidden sm:grid sm:grid-cols-[6rem_5rem_6rem_5rem_6rem_4rem] px-3 py-2 border-b border-gray-700 bg-gray-800/50 text-xs text-gray-500 uppercase tracking-wider">
+      <span class="pr-4">Strategy</span>
+      <span class="pr-4 text-right">Open</span>
+      <span class="pr-4 text-right">Capital</span>
+      <span class="pr-4 text-right">% Equity</span>
+      <span class="pr-4 text-right">Avg Hold</span>
+      <span class="text-right">MTD P&amp;L</span>
+    </div>
+
+    <% rows = strategy_rows(@redis_positions, @mtd_pnl, @equity) %>
+    <%= if rows == [] do %>
+      <div class="bg-gray-800 py-8 text-center text-gray-600 italic text-xs">
+        No strategy activity yet — strategies appear here once they hold positions or close trades this month.
+      </div>
+    <% else %>
+      <%= for row <- rows do %>
+        <div class="bg-gray-800/20 border border-gray-700/50 rounded-lg p-3 mb-1.5 last:mb-0
+                    sm:bg-transparent sm:border-0 sm:border-b sm:border-gray-700/50 sm:rounded-none
+                    sm:p-0 sm:px-3 sm:py-2 sm:mb-0 sm:last:border-0
+                    sm:grid sm:grid-cols-[6rem_5rem_6rem_5rem_6rem_4rem]
+                    sm:hover:bg-gray-800/30 sm:transition-colors">
+
+          <%!-- Mobile headline --%>
+          <div class="flex justify-between items-baseline mb-1.5 sm:hidden">
+            <span class="font-mono font-bold text-white">{row.strategy}</span>
+            <span class={["text-sm font-medium font-mono", pnl_class(row.mtd_pnl)]}>
+              {fmt_pnl(row.mtd_pnl)}
+            </span>
+          </div>
+
+          <%!-- Mobile label/value grid --%>
+          <div class="grid grid-cols-2 gap-x-3 gap-y-1 text-xs sm:hidden">
+            <span class="text-gray-500">Open: <span class="text-gray-200 font-mono">{row.open_count}</span></span>
+            <span class="text-gray-500">Capital: <span class="text-gray-200 font-mono">{fmt_money(row.capital)}</span></span>
+            <span class="text-gray-500">% Equity: <span class="text-gray-200 font-mono">{:erlang.float_to_binary(row.capital_pct * 1.0, decimals: 1)}%</span></span>
+            <span class="text-gray-500">Avg Hold: <span class="text-gray-200 font-mono">{:erlang.float_to_binary(row.avg_hold_days * 1.0, decimals: 1)}d</span></span>
+            <span class="text-gray-500">MTD trades: <span class="text-gray-200 font-mono">{row.mtd_trades}</span></span>
+          </div>
+
+          <%!-- Desktop cells --%>
+          <span class="hidden sm:block font-mono font-semibold text-white pr-4">{row.strategy}</span>
+          <span class="hidden sm:block text-right text-gray-300 font-mono pr-4">{row.open_count}</span>
+          <span class="hidden sm:block text-right text-gray-300 font-mono pr-4">{fmt_money(row.capital)}</span>
+          <span class="hidden sm:block text-right text-gray-300 font-mono pr-4">{:erlang.float_to_binary(row.capital_pct * 1.0, decimals: 1)}%</span>
+          <span class="hidden sm:block text-right text-gray-300 font-mono pr-4">{:erlang.float_to_binary(row.avg_hold_days * 1.0, decimals: 1)}d</span>
+          <span class={["hidden sm:block text-right font-mono", pnl_class(row.mtd_pnl)]}>{fmt_pnl(row.mtd_pnl)}</span>
+        </div>
+      <% end %>
+    <% end %>
+
+  </div>
+
+  <div class="text-xs text-gray-500 leading-relaxed">
+    <p>
+      Live data: open positions and capital sourced from Redis (<code class="font-mono">trading:positions</code>, <code class="font-mono">trading:simulated_equity</code>).
+      Historical: <strong>MTD P&amp;L</strong> is realized P&amp;L from the trades table for the current calendar month, grouped by <code class="font-mono">strategy</code>.
+    </p>
+  </div>
+
+</div>

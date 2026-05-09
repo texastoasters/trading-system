@@ -211,6 +211,33 @@ defmodule Dashboard.Queries do
   end
 
   @doc """
+  Per-strategy realized P&L for the current calendar month (UTC).
+  Returns `%{strategy => {pnl_decimal, trade_count}}`. Empty map on DB error.
+  """
+  def strategy_pnl_mtd do
+    try do
+      now = DateTime.utc_now()
+      month_start = DateTime.new!(
+        Date.new!(now.year, now.month, 1),
+        ~T[00:00:00],
+        "Etc/UTC"
+      )
+
+      from(t in Trade,
+        where: t.side == "sell"
+               and not is_nil(t.realized_pnl)
+               and t.time >= ^month_start,
+        group_by: t.strategy,
+        select: {t.strategy, sum(t.realized_pnl), count(t.id)}
+      )
+      |> Repo.all()
+      |> Map.new(fn {strategy, pnl, n} -> {strategy, {pnl, n}} end)
+    rescue
+      _ -> %{}
+    end
+  end
+
+  @doc """
   Per-instrument drawdown attribution since peak.
 
   Queries realized P&L from closed trades since `peak_date` (TimescaleDB),
