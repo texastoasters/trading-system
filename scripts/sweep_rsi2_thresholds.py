@@ -39,6 +39,7 @@ ADX_RANGING_CUTOFF = 20.0  # matches config.ADX_RANGING_THRESHOLD
 ADX_PERIOD = 14
 ATR_STOP_MULT = 2.0
 MAX_HOLD_BARS = 5
+EMBARGO_BARS = 5  # AFML ch.7 embargo: gap between train and OOS to break serial correlation
 RSI2_EXIT_LEVEL = 60.0
 SMA_PERIOD = 200
 ATR_PERIOD = 14
@@ -79,7 +80,8 @@ def classify_regime_per_bar(high: np.ndarray, low: np.ndarray,
 
 
 def simulate_threshold(open_, high, low, close, rsi2, sma200, atr14,
-                       regimes, threshold_by_regime, start=0, end=None):
+                       regimes, threshold_by_regime, start=0, end=None,
+                       purge_bars=0):
     """Run the RSI-2 strategy over [start, end) with per-regime entry
     thresholds. Same entry + exit rules as the live pipeline / prod backtest:
       - Entry: rsi2[i] < threshold_by_regime[regimes[i]] and close[i] > sma200[i].
@@ -88,6 +90,13 @@ def simulate_threshold(open_, high, low, close, rsi2, sma200, atr14,
       - Exits (checked daily after entry): stop breach (low ≤ stop) → stop
         fill, rsi2 > 60 → close, close > prev-day high → close, hold ≥ 5 → close.
 
+    `purge_bars` (default 0) blocks new entries with signal index `i > end -
+    purge_bars`. Used by the walk-forward harness to apply Lopez de Prado
+    AFML ch.7 purge: a training trade with entry near `end` would have its
+    label (eventual return) computed from bars in the OOS window — leakage.
+    Pass `purge_bars = max_hold + embargo` for the training slice; leave at
+    0 for the OOS slice.
+
     Returns a dict: {trades, total_trades, winners, losers, profit_factor,
     win_rate}. `trades` is a list of per-trade records tagged with the signal
     bar's regime so the walk-forward loop can slice by regime.
@@ -95,6 +104,7 @@ def simulate_threshold(open_, high, low, close, rsi2, sma200, atr14,
     n = len(close)
     if end is None:
         end = n
+    purge_cutoff = end - purge_bars  # entries allowed at i <= purge_cutoff
     trades = []
     in_pos = False
     entry_i = 0
@@ -136,7 +146,8 @@ def simulate_threshold(open_, high, low, close, rsi2, sma200, atr14,
                     and not np.isnan(atr14[i])
                     and rsi2[i] < threshold
                     and close[i] > sma200[i]
-                    and i + 1 < end):
+                    and i + 1 < end
+                    and i <= purge_cutoff):
                 fill_i = i + 1
                 entry_price = open_[fill_i]
                 stop_dist = ATR_STOP_MULT * atr14[fill_i]
@@ -249,6 +260,12 @@ def _sweep_window(open_, high, low, close, rsi2_vals, sma200, atr14, regimes,
     window_regimes = set(regimes[train_start:oos_end])
     window_regimes &= set(REGIMES)
     results = []
+    # Lopez de Prado AFML ch.7: purge training observations whose labels
+    # extend into OOS bars. Each RSI-2 trade's label spans up to MAX_HOLD_BARS
+    # past entry; add EMBARGO_BARS as a safety buffer against residual serial
+    # correlation. Apply purge only to the training slice — OOS is the test
+    # set and must be evaluated in full.
+    train_purge_bars = MAX_HOLD_BARS + EMBARGO_BARS
     for regime in window_regimes:
         best_thr = None
         best_pf = -1.0
@@ -256,7 +273,8 @@ def _sweep_window(open_, high, low, close, rsi2_vals, sma200, atr14, regimes,
             tmap = _isolated_threshold_map(regime, thr)
             train = simulate_threshold(open_, high, low, close, rsi2_vals,
                                        sma200, atr14, regimes, tmap,
-                                       start=train_start, end=train_end)
+                                       start=train_start, end=train_end,
+                                       purge_bars=train_purge_bars)
             if train["total_trades"] < min_train_trades:
                 continue
             if train["profit_factor"] > best_pf:

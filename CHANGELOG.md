@@ -8,6 +8,24 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.35.7] - 2026-05-08
+
+### Added
+- **Purged + embargoed CV in walk-forward sweeps (#165)** — `simulate_threshold` (`scripts/sweep_rsi2_thresholds.py`) and `simulate_max_hold` (`scripts/sweep_rsi2_max_hold.py`) now accept a `purge_bars` parameter that blocks new entries with signal index `i > end - purge_bars`. The orchestrators (`_sweep_window`, `_sweep_window_max_hold`) pass `purge_bars = max_hold + EMBARGO_BARS` (default `EMBARGO_BARS = 5`) on the **training slice only**, leaving OOS evaluation full. Implements Lopez de Prado AFML ch.7: a training trade entered near the train/OOS boundary has its label computed from OOS bars, leaking forward.
+- Methodology section appended to `docs/phase2_strategy_research_backtesting.md`.
+
+### Tests
+- 4 new cases in `scripts/test_sweep_rsi2_thresholds.py` (`TestSimulateThresholdPurgeBars`): default behavior unchanged at `purge_bars=0`, blocks entries near `end`, allows entries outside zone, boundary inclusivity at `i = end - purge_bars`.
+- 4 mirror cases in `scripts/test_sweep_rsi2_max_hold.py` (`TestSimulateMaxHoldPurgeBars`).
+- Full suite: 1002 pass, 99% coverage (unchanged baseline).
+
+### Notes
+- Real-data comparison of purged vs non-purged threshold winners requires Alpaca creds on the VPS:
+  `PYTHONPATH=scripts python3 scripts/sweep_rsi2_thresholds.py --symbol SPY --years 2`. Diff `data/rsi2_thresholds/SPY.json` before/after for the empirical delta.
+- VERSION 0.35.6 → 0.35.7.
+
+---
+
 ## [0.35.6] - 2026-05-08
 
 ### Added
