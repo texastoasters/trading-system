@@ -995,10 +995,28 @@ class TestDonchianConstants:
     def test_atr_mult_default(self):
         assert config.DONCHIAN_ATR_MULT == 3.0
 
-    def test_symbols_set_contains_research_seven(self):
-        expected = {"DG", "GOOGL", "NVDA", "AMGN", "SMH", "LIN", "XLY"}
-        assert config.DONCHIAN_SYMBOLS == expected
+    def test_donchian_symbols_removed_in_169(self):
+        # #169 dropped the static DONCHIAN_SYMBOLS list. Donchian-BO is now
+        # evaluated on every universe symbol, with concurrent positions
+        # capped via STRATEGY_MAX_CONCURRENT["DONCHIAN"] in the PM.
+        assert not hasattr(config, "DONCHIAN_SYMBOLS")
+        assert "DONCHIAN" in config.STRATEGY_MAX_CONCURRENT
 
-    def test_symbols_is_a_set_not_list(self):
-        # O(1) membership lookup in screener/watcher hot paths.
-        assert isinstance(config.DONCHIAN_SYMBOLS, (set, frozenset))
+
+class TestStrategyMaxConcurrent:
+    def test_dict_present_with_all_strategies(self):
+        assert isinstance(config.STRATEGY_MAX_CONCURRENT, dict)
+        for s in ("RSI2", "IBS", "DONCHIAN", "TSMOM"):
+            assert s in config.STRATEGY_MAX_CONCURRENT
+
+    def test_caps_are_positive_integers(self):
+        for s, cap in config.STRATEGY_MAX_CONCURRENT.items():
+            assert isinstance(cap, int) and cap > 0, f"{s}: {cap}"
+
+    def test_tsmom_symbols_removed_in_169(self):
+        assert not hasattr(config, "TSMOM_SYMBOLS")
+        assert "TSMOM" in config.STRATEGY_MAX_CONCURRENT
+
+    def test_tsmom_min_protected_days_present(self):
+        assert isinstance(config.TSMOM_MIN_PROTECTED_DAYS, int)
+        assert config.TSMOM_MIN_PROTECTED_DAYS > 0

@@ -8,6 +8,35 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.36.2] - 2026-05-09
+
+### Added
+- **TSMOM Portfolio Manager integration (#169)** — `portfolio_manager.evaluate_entry_signal` now accepts `primary_strategy="TSMOM"` signals. Sizing reuses the 1% fixed-fractional model with the signal's `suggested_stop`. Reasoning string is polymorphic — builds from whatever indicators the signal carries (rsi2 / ibs / donchian_upper / tsmom_signal / sma200), rather than hardcoding RSI-2.
+- **Per-strategy concurrent-position caps** — new `config.STRATEGY_MAX_CONCURRENT = {"RSI2": 5, "IBS": 3, "DONCHIAN": 2, "TSMOM": 3}`. PM rejects entries when the strategy's slot is full *before* asset-class limits, so the rejection reason names the actual constraint. Per-strategy cap accounts for displacement vacancy when re-processing pending entries (the `_displaced_symbol` bookkeeping path).
+- **TSMOM displacement protection** — `pick_displacement_target` skips TSMOM positions younger than `config.TSMOM_MIN_PROTECTED_DAYS` (30 days). The strategy needs months to play out; an opportunistic RSI-2 entry shouldn't kick a TSMOM position at day 5 of a 90-day hold.
+
+### Changed
+- **Dropped `config.DONCHIAN_SYMBOLS`** — Donchian-BO is now evaluated in the screener on every universe symbol. Concurrent positions are bounded by `STRATEGY_MAX_CONCURRENT["DONCHIAN"]` rather than the static 7-symbol curation.
+- **Dropped `config.TSMOM_SYMBOLS`** — `watcher.generate_tsmom_signals` now scans `tier1 + tier2` from the active universe via the new `_active_tsmom_universe` helper. Tier inferred per-symbol via `_tier_of`. Universe blacklist applied at the helper layer.
+- The redundant in-loop blacklist check in `generate_tsmom_signals` was removed (`_active_tsmom_universe` already excludes blacklisted symbols).
+
+### Tests
+- 11 new cases in `skills/portfolio_manager/test_portfolio_manager.py`:
+  - TSMOM signal acceptance + reasoning polymorphism (no rsi2/sma200 keys → no crash, indicator part shows TSMOM%)
+  - IBS-only / Donchian-only signal reasoning (no rsi2 → IBS=…, DCH=… render)
+  - Per-strategy cap rejection at cap; below cap approves; cap independent across strategies
+  - TSMOM displacement protection: young TSMOM skipped, post-protection eligible
+- 4 new cases in `scripts/test_config.py` (`STRATEGY_MAX_CONCURRENT` shape; symbol-set removal asserted; `TSMOM_MIN_PROTECTED_DAYS` present).
+- 3 new cases in `skills/watcher/test_watcher.py` (`_tier_of` helper; blacklist test rewritten to use universe shape instead of `TSMOM_SYMBOLS`).
+- Existing tests updated where they referenced the removed symbol sets.
+- Full suite: 1078 pass; total at 99% (unchanged baseline; PM 99%, watcher 100%).
+
+### Notes
+- **Out of scope (deferred):** same-symbol multi-strategy positions (positions keyed by `(symbol, primary_strategy)` would require Redis schema, executor, and reconcile changes). Issue #182 (Donchian in tier classification) is the natural follow-up — without per-strategy symbol curation, the tier system needs to fold non-RSI-2 strategy performance into universe-membership decisions.
+- VERSION 0.36.1 → 0.36.2.
+
+---
+
 ## [0.36.1] - 2026-05-09
 
 ### Added

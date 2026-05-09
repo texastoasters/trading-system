@@ -162,21 +162,36 @@ DONCHIAN_ENTRY_LEN = 20
 DONCHIAN_EXIT_LEN = 10
 DONCHIAN_MAX_HOLD_DAYS = 30
 DONCHIAN_ATR_MULT = 3.0
-DONCHIAN_SYMBOLS = {"DG", "GOOGL", "NVDA", "AMGN", "SMH", "LIN", "XLY"}
+# DONCHIAN_SYMBOLS removed in #169 — Donchian now evaluates on every universe
+# symbol, with concurrent positions capped by STRATEGY_MAX_CONCURRENT["DONCHIAN"]
+# in the Portfolio Manager. Same change applied to TSMOM (no TSMOM_SYMBOLS).
 
 # ── TSMOM trend slot (P1 #167-#170) ──────────────────────────
 # Long-only Time-Series Momentum (Moskowitz/Ooi/Pedersen 2012). At each
 # month boundary, compute trailing 12-month return excluding the most
 # recent month (12-1). Long if positive, cash otherwise. ATR-based stop
 # intra-month. Validated on 32-symbol × 10y backtest, DSR=1.000 (#221).
-# Initial deployment uses Tier 1 only — broader universe was the DSR
-# pass but exposes more capital. Promote symbols based on live observation.
+# Capital is bounded by `STRATEGY_MAX_CONCURRENT["TSMOM"]` in the PM,
+# not a static symbol allow-list — the watcher scans the full active
+# universe and the PM caps how many TSMOM positions can run concurrently.
 TSMOM_LOOKBACK_DAYS = 252      # 12 trading months of history needed
 TSMOM_SKIP_DAYS = 21           # 1 trading month skipped at the recent end
 TSMOM_MAX_HOLD_DAYS = 252      # ride the trend; effectively bounded by signal flip
 TSMOM_EXPECTED_HOLD_DAYS = 22  # ~1 month — exposed in signal payload as hint to PM
 TSMOM_ATR_MULT = 2.5
-TSMOM_SYMBOLS = {"SPY", "QQQ", "NVDA", "XLK", "XLY", "XLI"}
+TSMOM_MIN_PROTECTED_DAYS = 30  # PM displacement skips TSMOM positions younger than this
+
+# ── Per-strategy concurrent-position caps (#169) ─────────────
+# Replaces the old hardcoded DONCHIAN_SYMBOLS / TSMOM_SYMBOLS lists.
+# Strategies emit signals across the full universe; PM enforces these
+# caps per `primary_strategy` so a single strategy can't monopolise the
+# global MAX_CONCURRENT_POSITIONS budget.
+STRATEGY_MAX_CONCURRENT = {
+    "RSI2": 5,      # documents implicit current behavior
+    "IBS": 3,
+    "DONCHIAN": 2,  # was implicit at 7 symbols; now 2 concurrent slots
+    "TSMOM": 3,
+}
 
 # FINRA's Pattern Day Trader rule caps same-day round-trip closes at 3 per
 # rolling 5 business days on sub-$25K accounts. Portfolio Manager blocks a

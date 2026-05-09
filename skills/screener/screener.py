@@ -145,21 +145,21 @@ def scan_instrument(symbol, data, regime_info, threshold):
         elif latest_ibs < config.IBS_ENTRY_THRESHOLD + 0.05:
             ibs_priority = "watch"
 
+    # Donchian-BO breakout — evaluated on every universe symbol post-#169.
+    # Concurrent positions are bounded by STRATEGY_MAX_CONCURRENT["DONCHIAN"]
+    # in the Portfolio Manager rather than a static symbol curation here.
     donchian_priority = None
-    latest_upper = float('nan')
-    latest_lower = float('nan')
-    if symbol in config.DONCHIAN_SYMBOLS:
-        upper, lower = donchian_channel(
-            high, low,
-            entry_len=config.DONCHIAN_ENTRY_LEN,
-            exit_len=config.DONCHIAN_EXIT_LEN,
-        )
-        latest_upper = upper[-1]
-        latest_lower = lower[-1]
-        if (above_sma
-                and not np.isnan(latest_upper)
-                and latest_close > latest_upper):
-            donchian_priority = "signal"
+    upper, lower = donchian_channel(
+        high, low,
+        entry_len=config.DONCHIAN_ENTRY_LEN,
+        exit_len=config.DONCHIAN_EXIT_LEN,
+    )
+    latest_upper = upper[-1]
+    latest_lower = lower[-1]
+    if (above_sma
+            and not np.isnan(latest_upper)
+            and latest_close > latest_upper):
+        donchian_priority = "signal"
 
     if rsi2_priority is None and ibs_priority is None and donchian_priority is None:
         return None

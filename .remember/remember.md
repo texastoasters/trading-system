@@ -11,10 +11,12 @@ Trading System Roadmap project: https://github.com/orgs/texastoasters/projects/1
 
 ## In flight
 
-- **#168 — TSMOM watcher integration** → branch `feat/tsmom-watcher` → status In Progress
-  - `watcher.generate_tsmom_signals` w/ Redis monthly idempotency key, scans `config.TSMOM_SYMBOLS` (Tier 1)
-  - Targeting v0.36.1
-  - 18 new tests; full suite 1063 pass; watcher.py 100% cov
+- **#169 — TSMOM Portfolio Manager integration** → branch `feat/tsmom-pm-integration` → status In Progress
+  - PM accepts TSMOM signals; per-strategy concurrent caps replace static `DONCHIAN_SYMBOLS` / `TSMOM_SYMBOLS`
+  - Reasoning polymorphism (no crash on missing rsi2/sma200)
+  - TSMOM displacement protection (30 days)
+  - Targeting v0.36.2
+  - 18 new tests; full suite 1078 pass
 
 ## Done this session
 
@@ -23,6 +25,7 @@ Trading System Roadmap project: https://github.com/orgs/texastoasters/projects/1
 - **#167 TSMOM backtest harness (v0.36.0)** → PR #219 merged.
 - **TSMOM 2y validation** → PR #220 merged → DSR 0.404 fail.
 - **TSMOM 10y validation** → PR #221 merged → 32-sym × 10y DSR=1.000 (test stat 4.39, 365 trades). Cleared the methodology bar; building #168-170 wiring justified.
+- **#168 TSMOM watcher integration (v0.36.1)** → PR #222 merged → `generate_tsmom_signals`, monthly idempotency, alert formatting, full universe scan.
 
 ## Strategy direction (agreed 2026-05-08)
 
