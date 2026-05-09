@@ -8,6 +8,24 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.35.6] - 2026-05-08
+
+### Added
+- **Monte Carlo bootstrap on backtest equity curves (#164)** — `scripts/backtest_mc_bootstrap.py` resamples a backtest's trade-return list with replacement (default N=10000) and reports p5/p50/p95 of profit factor, win rate, max drawdown, and terminal equity. Handles RSI-2 (via `backtest_rsi2.run_rsi2_backtest`), IBS, and Donchian-BO (via `backtest_alt_strategies.run_backtest`). Output: `data/mc_bootstrap_summary.md`. CLI:
+  - `--strategy RSI-2 --symbol SPY --years 2`
+  - `--all` for the full Tier 1 × {RSI-2, IBS, Donchian-BO} matrix.
+- Reference link added to `data/alt_strategies_summary.md` so readers of the headline aggregate land on the tail-risk distribution.
+
+### Tests
+- 16 new cases in `scripts/test_backtest_mc_bootstrap.py` covering: empty trades, single-trade collapse, seed reproducibility, distributions varying with seed, p5≤p50≤p95, max-DD non-negative, account-size scaling, all-winners infinite-PF handling, markdown writer (per-row + error rows), CLI single-strategy, CLI `--all` matrix, CLI error capture.
+- Full suite: 994 pass, 99% coverage (unchanged baseline).
+
+### Notes
+- Real percentile numbers populate when the script runs on the VPS with Alpaca creds; this PR ships the harness + reference scaffolding only.
+- Method is the simple trade-return bootstrap (independent resampling). Block bootstrap (preserves serial correlation) is a follow-up if the simple-bootstrap tails look inflated relative to walk-forward OOS.
+
+---
+
 ## [0.35.5] - 2026-05-08
 
 ### Fixed
