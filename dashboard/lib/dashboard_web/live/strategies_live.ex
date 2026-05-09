@@ -40,6 +40,14 @@ defmodule DashboardWeb.StrategiesLive do
      |> assign(:equity, equity)}
   end
 
+  @impl true
+  def handle_info({:set_mtd_pnl, mtd_pnl}, socket) do
+    # Test hook: lets the LiveView test suite inject a fixed MTD P&L map
+    # without standing up a real trades table. Mirrors trades_live's
+    # `{:set_trades, ...}` pattern.
+    {:noreply, assign(socket, :mtd_pnl, mtd_pnl)}
+  end
+
   # ── Derivations ──────────────────────────────────────────────
 
   @doc """

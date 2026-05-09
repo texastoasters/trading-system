@@ -284,15 +284,7 @@ defmodule DashboardWeb.StrategiesLiveTest do
         "trading:simulated_equity" => 5000.0
       }})
 
-      # Patch mtd_pnl directly
-      :sys.replace_state(view.pid, fn state ->
-        socket = Phoenix.Component.assign(
-          state.socket,
-          :mtd_pnl,
-          %{"RSI2" => {Decimal.new("250.00"), 3}}
-        )
-        %{state | socket: socket}
-      end)
+      send(view.pid, {:set_mtd_pnl, %{"RSI2" => {Decimal.new("250.00"), 3}}})
 
       html = render(view)
       assert html =~ "+$250.00"
@@ -307,14 +299,7 @@ defmodule DashboardWeb.StrategiesLiveTest do
         "trading:simulated_equity" => 5000.0
       }})
 
-      :sys.replace_state(view.pid, fn state ->
-        socket = Phoenix.Component.assign(
-          state.socket,
-          :mtd_pnl,
-          %{"TSMOM" => {Decimal.new("-75.00"), 1}}
-        )
-        %{state | socket: socket}
-      end)
+      send(view.pid, {:set_mtd_pnl, %{"TSMOM" => {Decimal.new("-75.00"), 1}}})
 
       html = render(view)
       assert html =~ "-$75.00"
@@ -329,14 +314,7 @@ defmodule DashboardWeb.StrategiesLiveTest do
         "trading:simulated_equity" => 5000.0
       }})
 
-      :sys.replace_state(view.pid, fn state ->
-        socket = Phoenix.Component.assign(
-          state.socket,
-          :mtd_pnl,
-          %{"IBS" => {Decimal.new("0"), 2}}
-        )
-        %{state | socket: socket}
-      end)
+      send(view.pid, {:set_mtd_pnl, %{"IBS" => {Decimal.new("0"), 2}}})
 
       html = render(view)
       assert html =~ "IBS"
