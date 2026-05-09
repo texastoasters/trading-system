@@ -164,6 +164,20 @@ DONCHIAN_MAX_HOLD_DAYS = 30
 DONCHIAN_ATR_MULT = 3.0
 DONCHIAN_SYMBOLS = {"DG", "GOOGL", "NVDA", "AMGN", "SMH", "LIN", "XLY"}
 
+# ── TSMOM trend slot (P1 #167-#170) ──────────────────────────
+# Long-only Time-Series Momentum (Moskowitz/Ooi/Pedersen 2012). At each
+# month boundary, compute trailing 12-month return excluding the most
+# recent month (12-1). Long if positive, cash otherwise. ATR-based stop
+# intra-month. Validated on 32-symbol × 10y backtest, DSR=1.000 (#221).
+# Initial deployment uses Tier 1 only — broader universe was the DSR
+# pass but exposes more capital. Promote symbols based on live observation.
+TSMOM_LOOKBACK_DAYS = 252      # 12 trading months of history needed
+TSMOM_SKIP_DAYS = 21           # 1 trading month skipped at the recent end
+TSMOM_MAX_HOLD_DAYS = 252      # ride the trend; effectively bounded by signal flip
+TSMOM_EXPECTED_HOLD_DAYS = 22  # ~1 month — exposed in signal payload as hint to PM
+TSMOM_ATR_MULT = 2.5
+TSMOM_SYMBOLS = {"SPY", "QQQ", "NVDA", "XLK", "XLY", "XLI"}
+
 # FINRA's Pattern Day Trader rule caps same-day round-trip closes at 3 per
 # rolling 5 business days on sub-$25K accounts. Portfolio Manager blocks a
 # displacement close when the target was entered today and this cap is hit.
@@ -332,6 +346,14 @@ class Keys:
         """Set when a Telegram entry alert is sent; expires at midnight ET.
         Prevents repeated alerts for the same signal within the trading day."""
         return f"trading:entry_alerted:{symbol}:{strategy}"
+
+    @staticmethod
+    def tsmom_last_rebalance_month() -> str:
+        """`YYYY-MM` of the last month TSMOM rebalanced. Idempotency guard
+        for `generate_tsmom_signals` — emits only when current month differs
+        from the stored value. First-install (None) sets the key without
+        emitting to avoid mid-month deploy entries."""
+        return "trading:tsmom:last_rebalance_month"
 
     @staticmethod
     def manual_exit(symbol: str) -> str:

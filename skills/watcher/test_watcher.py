@@ -2071,6 +2071,62 @@ class TestRunCycleEntryAlertFormatting:
         assert "RSI-2=5.2" in msg
         assert "IBS=0.12" in msg
 
+    def test_tsmom_signal_shows_tsmom_pct(self):
+        sig = {
+            "symbol": "SPY", "signal_type": "entry",
+            "strategies": ["TSMOM"], "primary_strategy": "TSMOM",
+            "indicators": {
+                "tsmom_signal": 0.0823,  # 8.23%
+                "atr14": 1.5,
+                "close": 480.0,
+            },
+            "suggested_stop": 476.25,
+            "tier": 1,
+        }
+        mock_notify = self._run([sig])
+        msg = mock_notify.call_args[0][0]
+        assert "TSMOM=+8.2%" in msg
+        assert "RSI-2" not in msg
+        assert "IBS" not in msg
+
+    def test_tsmom_signals_extend_entry_list_in_run_cycle(self):
+        """run_cycle merges generate_tsmom_signals output into entry_signals
+        and passes both through publish_signals + alert formatting."""
+        rsi_sig = {
+            "symbol": "QQQ", "signal_type": "entry",
+            "strategies": ["RSI2"], "primary_strategy": "RSI2",
+            "indicators": {"rsi2": 4.5}, "suggested_stop": 400.0, "tier": 1,
+        }
+        tsmom_sig = {
+            "symbol": "SPY", "signal_type": "entry",
+            "strategies": ["TSMOM"], "primary_strategy": "TSMOM",
+            "indicators": {"tsmom_signal": 0.10, "atr14": 2.0, "close": 500.0},
+            "suggested_stop": 495.0, "tier": 1,
+        }
+        r = make_redis()
+        notify_mock = MagicMock()
+        publish_mock = MagicMock()
+        with patch('watcher.get_redis', return_value=r), \
+             patch('watcher.config.init_redis_state'), \
+             patch('watcher.config.load_overrides'), \
+             patch('watcher.generate_exit_signals', return_value=[]), \
+             patch('watcher.generate_entry_signals', return_value=[rsi_sig]), \
+             patch('watcher.generate_tsmom_signals', return_value=[tsmom_sig]), \
+             patch('watcher.publish_signals', publish_mock), \
+             patch('watcher.notify', notify_mock), \
+             patch('watcher._midnight_et_ttl', return_value=3600):
+            from watcher import run_cycle
+            run_cycle()
+        # publish_signals called with the merged list (RSI2 + TSMOM)
+        publish_mock.assert_called_once()
+        published = publish_mock.call_args[0][1]
+        symbols = {s["symbol"] for s in published}
+        assert symbols == {"QQQ", "SPY"}
+        # Notify message includes both
+        msg = notify_mock.call_args[0][0]
+        assert "QQQ" in msg and "SPY" in msg
+        assert "TSMOM=+10.0%" in msg
+
 
 class TestRunCycleEntryAlertDedup:
     """Telegram entry alerts fire once per symbol+strategy per day."""
@@ -2166,3 +2222,220 @@ class TestMidnightEtTtl:
             from watcher import _midnight_et_ttl
             result = _midnight_et_ttl()
         assert result == 7199
+
+
+# ── TSMOM signal generation (#168) ──────────────────────────
+
+def _make_uptrend_close(n=270, daily_drift=0.001, base=100.0):
+    """Synthetic ramp-up daily closes producing a positive 12-1 momentum."""
+    return base * np.exp(np.cumsum(np.full(n, daily_drift)))
+
+
+def _make_downtrend_close(n=270, daily_drift=-0.001, base=100.0):
+    """Synthetic ramp-down daily closes producing a negative 12-1 momentum."""
+    return base * np.exp(np.cumsum(np.full(n, daily_drift)))
+
+
+def _tsmom_daily_bars(close, atr14=1.0):
+    """Wrap a close array as a {dates, close, high, low, atr14}-style dict
+    that fetch_recent_bars normally returns. Watcher's TSMOM helper reads
+    'close' (np.array) and 'atr14' (np.array) for stop-loss calc."""
+    n = len(close)
+    return {
+        "dates": [f"2026-{(i // 30) + 1:02d}-{(i % 30) + 1:02d}" for i in range(n)],
+        "close": np.asarray(close),
+        "high":  np.asarray(close) * 1.005,
+        "low":   np.asarray(close) * 0.995,
+    }
+
+
+class TestComputeTsmomSignal:
+    def test_returns_none_when_insufficient_history(self):
+        from watcher import compute_tsmom_signal
+        assert compute_tsmom_signal(np.linspace(100.0, 110.0, 50)) is None
+
+    def test_positive_for_uptrend(self):
+        from watcher import compute_tsmom_signal
+        sig = compute_tsmom_signal(_make_uptrend_close(n=260))
+        assert sig is not None
+        assert sig > 0
+
+    def test_negative_for_downtrend(self):
+        from watcher import compute_tsmom_signal
+        sig = compute_tsmom_signal(_make_downtrend_close(n=260))
+        assert sig is not None
+        assert sig < 0
+
+    def test_returns_none_when_past_price_is_nan(self):
+        from watcher import compute_tsmom_signal
+        arr = _make_uptrend_close(n=260)
+        # Inject NaN at the lookback bar
+        arr[len(arr) - 1 - config.TSMOM_LOOKBACK_DAYS] = np.nan
+        assert compute_tsmom_signal(arr) is None
+
+    def test_returns_none_when_past_price_is_zero(self):
+        from watcher import compute_tsmom_signal
+        arr = _make_uptrend_close(n=260)
+        arr[len(arr) - 1 - config.TSMOM_LOOKBACK_DAYS] = 0.0
+        assert compute_tsmom_signal(arr) is None
+
+
+class TestGenerateTsmomSignals:
+    def _setup_redis_with_last_month(self, last_month: str | None,
+                                     positions: dict | None = None):
+        store = {Keys.POSITIONS: json.dumps(positions or {})}
+        if last_month is not None:
+            store[Keys.tsmom_last_rebalance_month()] = last_month
+        return make_redis(store)
+
+    def _patches(self, atr_value=1.0):
+        """Common patches for TSMOM signal tests: patch fetch_recent_bars to
+        return synthetic uptrend bars, patch atr to return a steady value."""
+        bars = _tsmom_daily_bars(_make_uptrend_close(n=260))
+
+        def _fake_fetch(*args, **kwargs):
+            return bars
+
+        def _fake_atr(*args, **kwargs):
+            return np.full(len(bars["close"]), atr_value)
+
+        return _fake_fetch, _fake_atr
+
+    def test_returns_empty_when_already_rebalanced_this_month(self):
+        from watcher import generate_tsmom_signals
+        current_month = datetime.now().strftime("%Y-%m")
+        r = self._setup_redis_with_last_month(current_month)
+        signals = generate_tsmom_signals(r, MagicMock(), MagicMock())
+        assert signals == []
+
+    def test_returns_empty_on_first_install_to_avoid_mid_month_entry(self):
+        """When the rebalance key has never been set, mark the current month
+        and skip signal emission. Avoids deploy-day mid-month entries."""
+        from watcher import generate_tsmom_signals
+        r = self._setup_redis_with_last_month(None)
+        signals = generate_tsmom_signals(r, MagicMock(), MagicMock())
+        assert signals == []
+        # Mark must have been written so subsequent same-month calls also no-op
+        current_month = datetime.now().strftime("%Y-%m")
+        r.set.assert_any_call(Keys.tsmom_last_rebalance_month(), current_month)
+
+    def test_emits_signals_on_month_transition_for_positive_momentum(self):
+        from watcher import generate_tsmom_signals
+        r = self._setup_redis_with_last_month("2025-12")
+        fake_fetch, fake_atr = self._patches()
+        with patch("watcher.fetch_recent_bars", side_effect=fake_fetch), \
+             patch("watcher.atr", side_effect=fake_atr):
+            signals = generate_tsmom_signals(r, MagicMock(), MagicMock())
+        assert len(signals) >= 1
+        s = signals[0]
+        assert s["primary_strategy"] == "TSMOM"
+        assert s["strategies"] == ["TSMOM"]
+        assert s["signal_type"] == "entry"
+        assert s["direction"] == "long"
+        assert "tsmom_signal" in s["indicators"]
+        assert s["indicators"]["tsmom_signal"] > 0
+        assert s["expected_hold_days"] == 22
+        # Stop must be set below entry close
+        assert s["suggested_stop"] < s["indicators"]["close"]
+
+    def test_skips_symbol_with_open_position(self):
+        from watcher import generate_tsmom_signals
+        r = self._setup_redis_with_last_month(
+            "2025-12", positions={"SPY": {"symbol": "SPY"}}
+        )
+        fake_fetch, fake_atr = self._patches()
+        with patch("watcher.fetch_recent_bars", side_effect=fake_fetch), \
+             patch("watcher.atr", side_effect=fake_atr):
+            signals = generate_tsmom_signals(r, MagicMock(), MagicMock())
+        assert all(s["symbol"] != "SPY" for s in signals)
+
+    def test_skips_symbol_in_tsmom_whipsaw(self):
+        from watcher import generate_tsmom_signals
+        r = self._setup_redis_with_last_month("2025-12")
+        # Whipsaw set 1h ago — still within 24h cooldown
+        whipsaw_ts = (datetime.now() - timedelta(hours=1)).isoformat()
+        store_get = r.get
+        r.get = lambda k: (
+            whipsaw_ts if k == Keys.whipsaw("SPY", "TSMOM") else store_get(k)
+        )
+        fake_fetch, fake_atr = self._patches()
+        with patch("watcher.fetch_recent_bars", side_effect=fake_fetch), \
+             patch("watcher.atr", side_effect=fake_atr):
+            signals = generate_tsmom_signals(r, MagicMock(), MagicMock())
+        assert all(s["symbol"] != "SPY" for s in signals)
+
+    def test_skips_symbol_with_negative_momentum(self):
+        """If 12-1 momentum is non-positive, no entry signal."""
+        from watcher import generate_tsmom_signals
+        r = self._setup_redis_with_last_month("2025-12")
+        downtrend_bars = _tsmom_daily_bars(_make_downtrend_close(n=260))
+        atr_arr = np.full(260, 1.0)
+        with patch("watcher.fetch_recent_bars", return_value=downtrend_bars), \
+             patch("watcher.atr", return_value=atr_arr):
+            signals = generate_tsmom_signals(r, MagicMock(), MagicMock())
+        assert signals == []
+
+    def test_marks_rebalance_done_after_emit(self):
+        from watcher import generate_tsmom_signals
+        r = self._setup_redis_with_last_month("2025-12")
+        fake_fetch, fake_atr = self._patches()
+        with patch("watcher.fetch_recent_bars", side_effect=fake_fetch), \
+             patch("watcher.atr", side_effect=fake_atr):
+            generate_tsmom_signals(r, MagicMock(), MagicMock())
+        current_month = datetime.now().strftime("%Y-%m")
+        r.set.assert_any_call(Keys.tsmom_last_rebalance_month(), current_month)
+
+    def test_skips_when_fetch_returns_none(self):
+        """Symbols whose data fetch fails must not crash the function."""
+        from watcher import generate_tsmom_signals
+        r = self._setup_redis_with_last_month("2025-12")
+        with patch("watcher.fetch_recent_bars", return_value=None), \
+             patch("watcher.atr", return_value=np.array([])):
+            signals = generate_tsmom_signals(r, MagicMock(), MagicMock())
+        assert signals == []  # all symbols' fetches failed → no signals
+
+    def test_skips_blacklisted_symbol(self):
+        """Symbols on the universe blacklist must not produce TSMOM signals."""
+        from watcher import generate_tsmom_signals
+        # Take a symbol from TSMOM_SYMBOLS, blacklist it, fetch returns
+        # uptrend bars for any other call → only the non-blacklisted ones emit.
+        bl_symbol = sorted(config.TSMOM_SYMBOLS)[0]
+        universe = {"blacklisted": {bl_symbol: True}}
+        store = {
+            Keys.POSITIONS: "{}",
+            Keys.UNIVERSE: json.dumps(universe),
+            Keys.tsmom_last_rebalance_month(): "2025-12",
+        }
+        r = make_redis(store)
+        bars = _tsmom_daily_bars(_make_uptrend_close(n=260))
+        with patch("watcher.fetch_recent_bars", return_value=bars), \
+             patch("watcher.atr", return_value=np.full(260, 1.0)):
+            signals = generate_tsmom_signals(r, MagicMock(), MagicMock())
+        assert all(s["symbol"] != bl_symbol for s in signals)
+
+    def test_skips_when_atr_is_invalid(self):
+        """If ATR returns empty / NaN / non-positive, skip the symbol."""
+        from watcher import generate_tsmom_signals
+        r = self._setup_redis_with_last_month("2025-12")
+        bars = _tsmom_daily_bars(_make_uptrend_close(n=260))
+        with patch("watcher.fetch_recent_bars", return_value=bars), \
+             patch("watcher.atr", return_value=np.full(260, np.nan)):
+            signals = generate_tsmom_signals(r, MagicMock(), MagicMock())
+        assert signals == []
+
+    def test_skips_when_computed_stop_invalid(self):
+        """Stop must be > 0 and below entry close. Force atr huge so the
+        computed stop sits at or below 0."""
+        from watcher import generate_tsmom_signals
+        r = self._setup_redis_with_last_month("2025-12")
+        # Use a very small close so atr*mult dwarfs it → stop ≤ 0
+        bars = _tsmom_daily_bars(np.full(260, 1.0))
+        # Need positive momentum to even reach the stop check — make a tiny
+        # ramp inside the array
+        bars["close"] = np.linspace(0.5, 1.0, 260)
+        bars["high"] = bars["close"] * 1.005
+        bars["low"] = bars["close"] * 0.995
+        with patch("watcher.fetch_recent_bars", return_value=bars), \
+             patch("watcher.atr", return_value=np.full(260, 100.0)):
+            signals = generate_tsmom_signals(r, MagicMock(), MagicMock())
+        assert signals == []
