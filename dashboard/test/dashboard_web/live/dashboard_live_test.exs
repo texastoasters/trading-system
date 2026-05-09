@@ -1,6 +1,23 @@
 defmodule DashboardWeb.DashboardLiveTest do
   use DashboardWeb.ConnCase
 
+  # Dashboard.RedisPoller broadcasts {:state_update, _} every 2s from
+  # whatever happens to be in Redis. In tests that race a polled broadcast
+  # against the LiveView mount, that bleeds non-deterministic state into
+  # the assertion. Tests in this file inject their own state_update messages
+  # directly via send/2, so suspending the poller has no negative effect.
+  setup do
+    if pid = Process.whereis(Dashboard.RedisPoller) do
+      :sys.suspend(pid)
+
+      on_exit(fn ->
+        if pid = Process.whereis(Dashboard.RedisPoller), do: :sys.resume(pid)
+      end)
+    end
+
+    :ok
+  end
+
   describe "mount" do
     test "renders page title", %{conn: conn} do
       {:ok, _view, html} = live(conn, "/")
