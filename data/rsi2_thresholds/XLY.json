@@ -1,0 +1,20 @@
+{
+  "symbol": "XLY",
+  "last_refit": "2026-05-09",
+  "windows_tested": 12,
+  "thresholds": {
+    "RANGING": null,
+    "UPTREND": null,
+    "DOWNTREND": null
+  },
+  "oos_pf_avg": {
+    "RANGING": null,
+    "UPTREND": null,
+    "DOWNTREND": null
+  },
+  "trades_per_regime": {
+    "RANGING": 11,
+    "UPTREND": 0,
+    "DOWNTREND": 0
+  }
+}
