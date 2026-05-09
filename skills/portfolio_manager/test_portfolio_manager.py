@@ -546,15 +546,20 @@ class TestApprovedOrderStrategies:
         assert order["primary_strategy"] == "IBS"
 
     def test_ibs_only_signal_without_rsi2_in_indicators_does_not_raise(self):
+        # Post-#169: reasoning omits indicators that aren't in the signal
+        # rather than printing "RSI-2=N/A". An IBS-only signal must produce
+        # a valid order without crashing on the missing rsi2 key.
         r = make_redis()
         sig = make_signal()
         sig["strategies"] = ["IBS"]
         sig["primary_strategy"] = "IBS"
         del sig["indicators"]["rsi2"]
+        sig["indicators"]["ibs"] = 0.12
         from portfolio_manager import evaluate_entry_signal
         order, reason = evaluate_entry_signal(r, sig)
         assert order is not None
-        assert "RSI-2=N/A" in order["reasoning"]
+        assert "RSI-2" not in order["reasoning"]
+        assert "IBS=0.12" in order["reasoning"]
 
     def test_order_defaults_to_rsi2_when_signal_lacks_strategies(self):
         # Back-compat: legacy signals without strategies[] assume RSI-2
@@ -846,3 +851,189 @@ class TestDisplacementPendingQueue:
             if c[0][0] == Keys.APPROVED_ORDERS
         }
         assert "XLI" in approved, f"XLI was not approved — published to APPROVED_ORDERS: {approved}"
+
+
+# ── TSMOM signal handling (#169) ─────────────────────────────
+
+
+def make_tsmom_signal(symbol="SPY", close=500.0, stop=490.0, tier=1,
+                      tsmom_signal=0.085, signal_score=60.0):
+    """A minimal TSMOM entry signal — note no rsi2 / sma200 in indicators.
+    The PM must build reasoning + approve without crashing on missing keys."""
+    return {
+        "symbol": symbol,
+        "signal_type": "entry",
+        "direction": "long",
+        "tier": tier,
+        "suggested_stop": stop,
+        "fee_adjusted": False,
+        "primary_strategy": "TSMOM",
+        "strategy": "TSMOM",
+        "strategies": ["TSMOM"],
+        "signal_score": signal_score,
+        "expected_hold_days": 22,
+        "atr_multiplier": 2.5,
+        "indicators": {
+            "close": close,
+            "tsmom_signal": tsmom_signal,
+            "atr14": 1.5,
+        },
+    }
+
+
+class TestTsmomSignalAcceptance:
+    def test_tsmom_signal_approved_when_room(self):
+        from portfolio_manager import evaluate_entry_signal
+        r = make_redis()
+        order, reason = evaluate_entry_signal(r, make_tsmom_signal())
+        assert order is not None, f"unexpected rejection: {reason}"
+        assert order["primary_strategy"] == "TSMOM"
+        assert order["strategies"] == ["TSMOM"]
+        assert order["symbol"] == "SPY"
+        assert order["quantity"] >= 1
+
+    def test_tsmom_reasoning_does_not_crash_on_missing_rsi2(self):
+        """Pre-#169 reasoning string indexed signal['indicators']['rsi2'] +
+        signal['indicators']['sma200']. TSMOM signals don't carry those."""
+        from portfolio_manager import evaluate_entry_signal
+        r = make_redis()
+        order, reason = evaluate_entry_signal(r, make_tsmom_signal())
+        assert order is not None, f"unexpected rejection: {reason}"
+        assert "TSMOM" in order["reasoning"]
+        assert "RSI-2" not in order["reasoning"]
+
+    def test_ibs_only_signal_reasoning_does_not_crash(self):
+        """Same defensive check for an IBS-only signal with no rsi2 key."""
+        from portfolio_manager import evaluate_entry_signal
+        r = make_redis()
+        sig = {
+            "symbol": "EWZ", "signal_type": "entry", "direction": "long",
+            "tier": 3, "suggested_stop": 39.0, "fee_adjusted": False,
+            "primary_strategy": "IBS", "strategy": "IBS", "strategies": ["IBS"],
+            "signal_score": 55.0, "atr_multiplier": 2.0,
+            "indicators": {"close": 40.0, "ibs": 0.12, "atr14": 0.5},
+        }
+        order, reason = evaluate_entry_signal(r, sig)
+        assert order is not None, f"unexpected rejection: {reason}"
+        assert "IBS" in order["reasoning"]
+
+    def test_donchian_signal_reasoning_includes_dch(self):
+        from portfolio_manager import evaluate_entry_signal
+        r = make_redis()
+        sig = {
+            "symbol": "DG", "signal_type": "entry", "direction": "long",
+            "tier": 3, "suggested_stop": 95.0, "fee_adjusted": False,
+            "primary_strategy": "DONCHIAN", "strategy": "DONCHIAN",
+            "strategies": ["DONCHIAN"],
+            "signal_score": 55.0, "atr_multiplier": 3.0,
+            "indicators": {"close": 100.0, "donchian_upper": 99.5, "atr14": 1.5},
+        }
+        order, reason = evaluate_entry_signal(r, sig)
+        assert order is not None, f"unexpected rejection: {reason}"
+        assert "DCH=99.50" in order["reasoning"]
+
+
+class TestPerStrategyConcurrentCaps:
+    def _open_positions(self, strategy: str, n: int):
+        """Build a positions dict with n positions on `strategy`."""
+        return {
+            f"SYM{i}": {
+                "symbol": f"SYM{i}", "entry_price": 100.0, "stop_price": 95.0,
+                "entry_date": "2026-04-01", "quantity": 10,
+                "primary_strategy": strategy, "strategy": strategy,
+                "strategies": [strategy],
+                "unrealized_pnl_pct": 0.5,
+            }
+            for i in range(n)
+        }
+
+    def test_rejects_when_strategy_at_cap(self):
+        """3 TSMOM positions already open → 4th TSMOM signal rejected."""
+        from portfolio_manager import evaluate_entry_signal
+        positions = self._open_positions("TSMOM",
+                                         config.STRATEGY_MAX_CONCURRENT["TSMOM"])
+        r = make_redis({Keys.POSITIONS: json.dumps(positions)})
+        order, reason = evaluate_entry_signal(r, make_tsmom_signal(symbol="SPY"))
+        assert order is None
+        assert "TSMOM" in reason
+        # The reason must call out the per-strategy cap
+        assert "cap" in reason.lower() or "concurrent" in reason.lower()
+
+    def test_independent_caps_across_strategies(self):
+        """TSMOM at its cap must NOT block an RSI-2 entry."""
+        from portfolio_manager import evaluate_entry_signal
+        positions = self._open_positions("TSMOM",
+                                         config.STRATEGY_MAX_CONCURRENT["TSMOM"])
+        r = make_redis({Keys.POSITIONS: json.dumps(positions)})
+        # RSI-2 signal should still be evaluated (may pass or fail other checks
+        # like global cap, but not on per-strategy TSMOM cap)
+        order, reason = evaluate_entry_signal(r, make_signal(symbol="QQQ"))
+        if order is None:
+            # If rejected, it must NOT be for TSMOM cap reasons
+            assert "TSMOM" not in (reason or "")
+        else:
+            assert order["primary_strategy"] in ("RSI2", None)
+
+    def test_below_cap_approves_normally(self):
+        """2 TSMOM positions open (below cap of 3) → 3rd TSMOM signal approved."""
+        from portfolio_manager import evaluate_entry_signal
+        cap = config.STRATEGY_MAX_CONCURRENT["TSMOM"]
+        positions = self._open_positions("TSMOM", cap - 1)
+        r = make_redis({Keys.POSITIONS: json.dumps(positions)})
+        order, reason = evaluate_entry_signal(r, make_tsmom_signal(symbol="SPY"))
+        assert order is not None, f"unexpected rejection: {reason}"
+
+
+class TestTsmomDisplacementProtection:
+    def test_tsmom_position_in_protection_window_skipped(self):
+        """A TSMOM position held < TSMOM_MIN_PROTECTED_DAYS must not be
+        chosen as a displacement target."""
+        from portfolio_manager import pick_displacement_target
+        # TSMOM position 5 days old; RSI-2 position 7 days old. Both profitable.
+        # TSMOM should be skipped despite higher pnl.
+        positions = {
+            "TSMOM_SYM": {
+                "symbol": "TSMOM_SYM", "entry_price": 100.0, "stop_price": 95.0,
+                "entry_date": (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d"),
+                "quantity": 10, "primary_strategy": "TSMOM",
+                "strategies": ["TSMOM"], "unrealized_pnl_pct": 5.0,
+            },
+            "RSI_SYM": {
+                "symbol": "RSI_SYM", "entry_price": 100.0, "stop_price": 95.0,
+                "entry_date": (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d"),
+                "quantity": 10, "primary_strategy": "RSI2",
+                "strategies": ["RSI2"], "unrealized_pnl_pct": 1.0,
+            },
+        }
+        r = make_redis({Keys.POSITIONS: json.dumps(positions)})
+        result = pick_displacement_target(r)
+        assert result is not None
+        _, target = result
+        assert target["symbol"] == "RSI_SYM", (
+            f"TSMOM_SYM was chosen despite being in protection window; got {target['symbol']}"
+        )
+
+    def test_tsmom_position_after_protection_can_be_displaced(self):
+        """TSMOM held > TSMOM_MIN_PROTECTED_DAYS is eligible like any other."""
+        from portfolio_manager import pick_displacement_target
+        old = (datetime.now() - timedelta(days=config.TSMOM_MIN_PROTECTED_DAYS + 5))
+        positions = {
+            "TSMOM_OLD": {
+                "symbol": "TSMOM_OLD", "entry_price": 100.0, "stop_price": 95.0,
+                "entry_date": old.strftime("%Y-%m-%d"),
+                "quantity": 10, "primary_strategy": "TSMOM",
+                "strategies": ["TSMOM"], "unrealized_pnl_pct": 5.0,
+            },
+            "RSI_SYM": {
+                "symbol": "RSI_SYM", "entry_price": 100.0, "stop_price": 95.0,
+                "entry_date": (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d"),
+                "quantity": 10, "primary_strategy": "RSI2",
+                "strategies": ["RSI2"], "unrealized_pnl_pct": 1.0,
+            },
+        }
+        r = make_redis({Keys.POSITIONS: json.dumps(positions)})
+        result = pick_displacement_target(r)
+        assert result is not None
+        _, target = result
+        # TSMOM_OLD has higher pnl and is past protection — should win the rank
+        assert target["symbol"] == "TSMOM_OLD"

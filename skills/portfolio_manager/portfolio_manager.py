@@ -97,6 +97,9 @@ def pick_displacement_target(r):
     → longest held. Fallback when no profitable position: smallest loser.
 
     Positions entered today are skipped unless trading:same_day_protection == "0".
+    TSMOM positions younger than `config.TSMOM_MIN_PROTECTED_DAYS` are
+    skipped — the strategy needs months to play out and shouldn't be
+    kicked at day 5 of a 90-day hold (#169).
     Returns (key, position) or None if no eligible target exists.
     """
     positions = get_open_positions(r)
@@ -110,6 +113,12 @@ def pick_displacement_target(r):
     for key, pos in positions.items():
         if protection_on and pos.get("entry_date") == today:
             continue
+        # TSMOM hold-protection: don't displace a young TSMOM position.
+        primary = pos.get("primary_strategy", pos.get("strategy", "RSI2"))
+        if primary == "TSMOM":
+            held_days = _position_hold_days(pos)
+            if held_days < config.TSMOM_MIN_PROTECTED_DAYS:
+                continue
         pnl = pos.get("unrealized_pnl_pct", 0)
         held = _position_hold_days(pos)
         max_hold = _position_max_hold(pos) or 1
@@ -230,6 +239,34 @@ def evaluate_entry_signal(r, signal):
         r.expire(pending_key, 3600)
         return None, f"Displacement queued — {target_pos['symbol']} closing for {symbol}"
 
+    # ── Per-strategy concurrent cap (#169) ──
+    # Each strategy gets its own slot allocation so a single strategy can't
+    # monopolise the global MAX_CONCURRENT_POSITIONS budget. Replaces the
+    # previous DONCHIAN_SYMBOLS / TSMOM_SYMBOLS curation. Checked before
+    # asset-class limits so the rejection reason is the more specific one.
+    incoming_strategy = (
+        signal.get("primary_strategy") or signal.get("strategy") or "RSI2"
+    )
+    strategy_cap = config.STRATEGY_MAX_CONCURRENT.get(incoming_strategy)
+    if strategy_cap is not None:
+        same_strategy = sum(
+            1 for p in existing_positions.values()
+            if p.get("primary_strategy", p.get("strategy")) == incoming_strategy
+        )
+        # Subtract the vacating displaced position when its strategy matches
+        # the incoming one (same logic as the global cap's vacating offset).
+        if _vacating_in_redis:
+            vacating_pos = existing_positions.get(_vacating, {})
+            vacating_strategy = vacating_pos.get(
+                "primary_strategy", vacating_pos.get("strategy"))
+            if vacating_strategy == incoming_strategy:
+                same_strategy -= 1
+        if same_strategy >= strategy_cap:
+            return None, (
+                f"{incoming_strategy} concurrent cap reached "
+                f"({same_strategy}/{strategy_cap})"
+            )
+
     # Asset class limits
     if is_crypto(symbol) and _crypto_count - int(_vacating_is_crypto) >= config.MAX_CRYPTO_POSITIONS:
         return None, "Max crypto positions reached"
@@ -301,6 +338,23 @@ def evaluate_entry_signal(r, signal):
     if not primary_strategy:
         primary_strategy = strategies[0]
 
+    # Build a reasoning string from whatever indicators the signal carries.
+    # Each strategy contributes the indicator that triggered it; missing keys
+    # are silently omitted (no more crash on TSMOM signals lacking rsi2/sma200).
+    ind = signal["indicators"]
+    parts = []
+    if ind.get("rsi2") is not None:
+        parts.append(f"RSI-2={ind['rsi2']:.1f}")
+    if ind.get("ibs") is not None:
+        parts.append(f"IBS={ind['ibs']:.2f}")
+    if ind.get("donchian_upper") is not None:
+        parts.append(f"DCH={ind['donchian_upper']:.2f}")
+    if ind.get("tsmom_signal") is not None:
+        parts.append(f"TSMOM={ind['tsmom_signal'] * 100:+.1f}%")
+    if ind.get("sma200") is not None:
+        parts.append(f"Close={entry_price} > SMA200={ind['sma200']}")
+    indicator_part = ", ".join(parts) if parts else "indicators=N/A"
+
     order = {
         "time": datetime.now().isoformat(),
         "symbol": symbol,
@@ -321,10 +375,7 @@ def evaluate_entry_signal(r, signal):
         "fee_adjusted": fee_adjusted,
         "regime": regime_info.get("regime", "UNKNOWN"),
         "reasoning": (
-            f"RSI-2={signal['indicators']['rsi2']:.1f}, " if signal["indicators"].get("rsi2") is not None
-            else "RSI-2=N/A, "
-        ) + (
-            f"Close={entry_price} > SMA200={signal['indicators']['sma200']}. "
+            f"{indicator_part}. "
             f"{regime_info.get('regime', 'UNKNOWN')} regime. "
             f"Tier {signal_tier}. Risk ${actual_risk:.2f} ({actual_risk_pct:.1f}%)."
         ),

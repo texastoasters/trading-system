@@ -2249,6 +2249,25 @@ def _tsmom_daily_bars(close, atr14=1.0):
     }
 
 
+class TestTierOf:
+    def test_returns_tier_number_for_known_symbol(self):
+        from watcher import _tier_of
+        u = {"tier1": ["SPY"], "tier2": ["GOOGL"], "tier3": ["V"]}
+        assert _tier_of("SPY", u) == 1
+        assert _tier_of("GOOGL", u) == 2
+        assert _tier_of("V", u) == 3
+
+    def test_defaults_to_tier_2_for_unknown_symbol(self):
+        from watcher import _tier_of
+        u = {"tier1": ["SPY"], "tier2": ["GOOGL"], "tier3": ["V"]}
+        assert _tier_of("UNKNOWN_TICKER", u) == 2
+
+    def test_handles_missing_tier_keys(self):
+        from watcher import _tier_of
+        # Empty universe dict — falls through every branch to default
+        assert _tier_of("ANY", {}) == 2
+
+
 class TestComputeTsmomSignal:
     def test_returns_none_when_insufficient_history(self):
         from watcher import compute_tsmom_signal
@@ -2397,10 +2416,14 @@ class TestGenerateTsmomSignals:
     def test_skips_blacklisted_symbol(self):
         """Symbols on the universe blacklist must not produce TSMOM signals."""
         from watcher import generate_tsmom_signals
-        # Take a symbol from TSMOM_SYMBOLS, blacklist it, fetch returns
-        # uptrend bars for any other call → only the non-blacklisted ones emit.
-        bl_symbol = sorted(config.TSMOM_SYMBOLS)[0]
-        universe = {"blacklisted": {bl_symbol: True}}
+        # Pick a tier1 symbol, blacklist it, verify it doesn't appear in
+        # the emitted signals while other tier1/tier2 symbols still do.
+        bl_symbol = sorted(config.DEFAULT_UNIVERSE["tier1"])[0]
+        universe = {
+            "tier1": list(config.DEFAULT_UNIVERSE["tier1"]),
+            "tier2": list(config.DEFAULT_UNIVERSE["tier2"]),
+            "blacklisted": {bl_symbol: True},
+        }
         store = {
             Keys.POSITIONS: "{}",
             Keys.UNIVERSE: json.dumps(universe),

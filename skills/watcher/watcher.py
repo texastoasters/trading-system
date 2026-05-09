@@ -489,13 +489,36 @@ def compute_tsmom_signal(close):
     return float((near - past) / past)
 
 
+def _tier_of(symbol, universe_data):
+    """Return tier number (1, 2, 3) for a symbol; defaults to 2 if the
+    symbol isn't in any tier list."""
+    for tier_num, key in enumerate(("tier1", "tier2", "tier3"), start=1):
+        if symbol in (universe_data.get(key) or []):
+            return tier_num
+    return 2  # safe default for symbols not in the curated tiers
+
+
+def _active_tsmom_universe(universe_data):
+    """Symbols TSMOM is allowed to scan: tier1 + tier2 from the active
+    universe, minus blacklisted. Tier3 + disabled excluded by default —
+    PM's per-strategy cap bounds how many of these turn into positions."""
+    syms = []
+    for tier in ("tier1", "tier2"):
+        syms.extend(universe_data.get(tier) or [])
+    blacklisted = set(universe_data.get("blacklisted") or {})
+    return sorted(s for s in dict.fromkeys(syms) if s not in blacklisted)
+
+
 def generate_tsmom_signals(r, stock_client, crypto_client):
-    """At each calendar-month transition, scan `config.TSMOM_SYMBOLS` for
-    symbols whose 12-1 momentum is positive and emit entry signals. A
-    Redis idempotency key (`Keys.tsmom_last_rebalance_month`) guarantees
-    one emit per month even if the watcher cycles many times that day.
-    First install (key absent) writes the current month and skips emission
-    so a mid-month deploy doesn't fire late entries.
+    """At each calendar-month transition, scan the active universe (tier1
+    + tier2) for symbols whose 12-1 momentum is positive and emit entry
+    signals. A Redis idempotency key (`Keys.tsmom_last_rebalance_month`)
+    guarantees one emit per month even if the watcher cycles many times
+    that day. First install (key absent) writes the current month and
+    skips emission so a mid-month deploy doesn't fire late entries.
+
+    Per-strategy caps in the Portfolio Manager (#169) bound how many of
+    these signals actually become positions.
     """
     current_month = datetime.now().strftime("%Y-%m")
     last_month = r.get(Keys.tsmom_last_rebalance_month())
@@ -509,14 +532,15 @@ def generate_tsmom_signals(r, stock_client, crypto_client):
 
     open_positions = json.loads(r.get(Keys.POSITIONS) or "{}")
     universe_raw = r.get(Keys.UNIVERSE)
-    universe_data = json.loads(universe_raw) if universe_raw else {}
-    blacklisted_symbols = set(universe_data.get("blacklisted") or {})
+    universe_data = (
+        json.loads(universe_raw) if universe_raw else config.DEFAULT_UNIVERSE
+    )
 
     signals = []
-    for symbol in sorted(config.TSMOM_SYMBOLS):
+    # Universe helper already excludes blacklisted symbols; only positional
+    # state and per-strategy whipsaw need re-checking inside the loop.
+    for symbol in _active_tsmom_universe(universe_data):
         if symbol in open_positions:
-            continue
-        if symbol in blacklisted_symbols:
             continue
         if check_whipsaw(r, symbol, "TSMOM"):
             continue
@@ -553,7 +577,7 @@ def generate_tsmom_signals(r, stock_client, crypto_client):
             "regime": None,  # TSMOM is regime-agnostic; ADX not required
             "is_day_trade": False,
             "fee_adjusted": is_crypto(symbol),
-            "tier": 1,  # current TSMOM_SYMBOLS is Tier 1; broader universe later
+            "tier": _tier_of(symbol, universe_data),
             "indicators": {
                 "tsmom_signal": signal,
                 "atr14": atr_val,

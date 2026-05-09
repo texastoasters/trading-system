@@ -317,8 +317,10 @@ class TestScanInstrumentIbs:
 # ── Donchian-BO (Wave 4 #4b) ─────────────────────────────────
 
 class TestScanInstrumentDonchian:
-    """Screener tags DONCHIAN_SYMBOLS with donchian_priority='signal' on breakout
-    (close > prior-20d high) while still trend-gated above SMA(200)."""
+    """Screener tags any universe symbol with donchian_priority='signal' on
+    breakout (close > prior-20d high) while still trend-gated above SMA(200).
+    Post-#169 the static DONCHIAN_SYMBOLS allow-list is gone — concurrent
+    Donchian positions are bounded by STRATEGY_MAX_CONCURRENT in the PM."""
 
     def _scan(self, symbol, close_val=110.0, sma200_val=100.0, rsi2_val=50.0,
               ibs_val=0.5, upper_val=109.0, lower_val=95.0, atr_val=2.0,
@@ -336,25 +338,28 @@ class TestScanInstrumentDonchian:
             threshold = config.RSI2_ENTRY_CONSERVATIVE
             return scan_instrument(symbol, data, regime, threshold)
 
-    def test_breakout_on_enabled_symbol_emits_donchian_signal(self):
-        # DG is in DONCHIAN_SYMBOLS. close=110 > upper=109 AND close > sma200.
+    def test_breakout_emits_donchian_signal(self):
+        # close=110 > upper=109 AND close > sma200 — Donchian-BO fires
+        # regardless of which symbol.
         result = self._scan("DG", close_val=110.0, upper_val=109.0, sma200_val=100.0)
         assert result is not None
         assert result['donchian_priority'] == 'signal'
 
-    def test_no_breakout_on_enabled_symbol_is_none(self):
+    def test_no_breakout_is_none(self):
         # close=105 not above upper=109 → no breakout
         result = self._scan("DG", close_val=105.0, upper_val=109.0,
                             rsi2_val=3.0)  # rsi2 signal still present so row admitted
         assert result is not None
         assert result['donchian_priority'] is None
 
-    def test_non_enabled_symbol_never_emits_donchian(self):
-        # SPY not in DONCHIAN_SYMBOLS. Even with close > upper it should stay None.
+    def test_breakout_on_any_symbol_emits_donchian_post_169(self):
+        # SPY (or any symbol, post-#169) emits Donchian on breakout. The
+        # PM's STRATEGY_MAX_CONCURRENT["DONCHIAN"] cap bounds how many of
+        # these signals actually become positions.
         result = self._scan("SPY", close_val=110.0, upper_val=109.0,
                             rsi2_val=3.0)
         assert result is not None
-        assert result['donchian_priority'] is None
+        assert result['donchian_priority'] == 'signal'
 
     def test_breakout_blocked_by_trend_gate_below_sma(self):
         # close=110 above upper=109 but below sma200=120 → trend gate kills it
