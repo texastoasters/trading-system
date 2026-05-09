@@ -467,6 +467,110 @@ def generate_entry_signals(r, stock_client, crypto_client):
     return signals
 
 
+# ── TSMOM (12-1) signal generation (#168) ────────────────────
+
+def compute_tsmom_signal(close):
+    """12-1 momentum: trailing 12-month return excluding the most recent
+    month, computed at the most recent close. Returns None when there
+    isn't enough history.
+
+    `close` is a numeric sequence (np.array or list); the function reads
+    the last bar as `close[-1]` and looks back `TSMOM_LOOKBACK_DAYS` and
+    `TSMOM_SKIP_DAYS` from there.
+    """
+    n = len(close)
+    if n < config.TSMOM_LOOKBACK_DAYS + 1:
+        return None
+    arr = np.asarray(close, dtype=float)
+    past = arr[n - 1 - config.TSMOM_LOOKBACK_DAYS]
+    near = arr[n - 1 - config.TSMOM_SKIP_DAYS]
+    if past <= 0 or np.isnan(past) or np.isnan(near):
+        return None
+    return float((near - past) / past)
+
+
+def generate_tsmom_signals(r, stock_client, crypto_client):
+    """At each calendar-month transition, scan `config.TSMOM_SYMBOLS` for
+    symbols whose 12-1 momentum is positive and emit entry signals. A
+    Redis idempotency key (`Keys.tsmom_last_rebalance_month`) guarantees
+    one emit per month even if the watcher cycles many times that day.
+    First install (key absent) writes the current month and skips emission
+    so a mid-month deploy doesn't fire late entries.
+    """
+    current_month = datetime.now().strftime("%Y-%m")
+    last_month = r.get(Keys.tsmom_last_rebalance_month())
+
+    if last_month is None:
+        r.set(Keys.tsmom_last_rebalance_month(), current_month)
+        return []
+
+    if last_month == current_month:
+        return []
+
+    open_positions = json.loads(r.get(Keys.POSITIONS) or "{}")
+    universe_raw = r.get(Keys.UNIVERSE)
+    universe_data = json.loads(universe_raw) if universe_raw else {}
+    blacklisted_symbols = set(universe_data.get("blacklisted") or {})
+
+    signals = []
+    for symbol in sorted(config.TSMOM_SYMBOLS):
+        if symbol in open_positions:
+            continue
+        if symbol in blacklisted_symbols:
+            continue
+        if check_whipsaw(r, symbol, "TSMOM"):
+            continue
+
+        bars = fetch_recent_bars(symbol, stock_client, crypto_client,
+                                 days=config.TSMOM_LOOKBACK_DAYS + 5)
+        if bars is None:
+            continue
+
+        close = bars["close"]
+        signal = compute_tsmom_signal(close)
+        if signal is None or signal <= 0:
+            continue
+
+        atr_arr = atr(bars["high"], bars["low"], close, 14)
+        if len(atr_arr) == 0 or np.isnan(atr_arr[-1]) or atr_arr[-1] <= 0:
+            continue
+
+        current_close = float(close[-1])
+        atr_val = float(atr_arr[-1])
+        stop = current_close - config.TSMOM_ATR_MULT * atr_val
+        if stop <= 0 or stop >= current_close:
+            continue
+
+        signals.append({
+            "time": datetime.now().isoformat(),
+            "symbol": symbol,
+            "strategies": ["TSMOM"],
+            "primary_strategy": "TSMOM",
+            "strategy": "TSMOM",
+            "signal_type": "entry",
+            "direction": "long",
+            "confidence": 1.0,
+            "regime": None,  # TSMOM is regime-agnostic; ADX not required
+            "is_day_trade": False,
+            "fee_adjusted": is_crypto(symbol),
+            "tier": 1,  # current TSMOM_SYMBOLS is Tier 1; broader universe later
+            "indicators": {
+                "tsmom_signal": signal,
+                "atr14": atr_val,
+                "close": current_close,
+            },
+            "suggested_stop": stop,
+            "atr_multiplier": config.TSMOM_ATR_MULT,
+            "expected_hold_days": config.TSMOM_EXPECTED_HOLD_DAYS,
+            "signal_score": 0.0,  # multi-strategy scoring TBD; PM ranks separately
+        })
+
+    # Mark this month rebalanced regardless of whether any signals fired —
+    # the next cycle this month must not re-fire.
+    r.set(Keys.tsmom_last_rebalance_month(), current_month)
+    return signals
+
+
 def generate_exit_signals(r, stock_client, crypto_client):
     """Check open positions for exit conditions."""
     positions_raw = r.get(Keys.POSITIONS)
@@ -710,6 +814,12 @@ def run_cycle():
     entry_signals = []
     if status != "halted":
         entry_signals = generate_entry_signals(r, stock_client, crypto_client)
+        # TSMOM runs on monthly cadence; the helper short-circuits to []
+        # on non-rebalance days so this is cheap to call every cycle.
+        tsmom_signals = generate_tsmom_signals(r, stock_client, crypto_client)
+        if tsmom_signals:
+            print(f"[Watcher] Generated {len(tsmom_signals)} TSMOM entry signal(s)")
+            entry_signals.extend(tsmom_signals)
         if entry_signals:
             print(f"[Watcher] Generated {len(entry_signals)} entry signal(s)")
             publish_signals(r, entry_signals)
@@ -745,6 +855,10 @@ def run_cycle():
             v = s["indicators"].get("donchian_upper")
             if v is not None:
                 parts.append(f"DCH={v:.2f}")
+        if "TSMOM" in strategies:
+            v = s["indicators"].get("tsmom_signal")
+            if v is not None:
+                parts.append(f"TSMOM={v * 100:+.1f}%")
         indicator_str = " ".join(parts) if parts else "—"
         signal_lines.append(
             f"📊 ENTRY: <b>{s['symbol']}</b> {indicator_str} "

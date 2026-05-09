@@ -11,20 +11,18 @@ Trading System Roadmap project: https://github.com/orgs/texastoasters/projects/1
 
 ## In flight
 
-- **#167 — TSMOM backtest harness** → branch `feat/tsmom-backtest` → status In Progress
-  - `scripts/backtest_tsmom.py` — 12-1 momentum, monthly rebalance, ATR stop, next-bar-open fills
-  - MC bootstrap adapter extended to support TSMOM (`--strategy TSMOM`, `--all` includes it)
-  - Targeting v0.36.0 (minor bump — first new strategy in 2026)
-  - 12 new tests; full suite 1045 pass
+- **#168 — TSMOM watcher integration** → branch `feat/tsmom-watcher` → status In Progress
+  - `watcher.generate_tsmom_signals` w/ Redis monthly idempotency key, scans `config.TSMOM_SYMBOLS` (Tier 1)
+  - Targeting v0.36.1
+  - 18 new tests; full suite 1063 pass; watcher.py 100% cov
 
 ## Done this session
 
-- **#162 — Backtest exec alignment (v0.35.4)** → PR #213 merged.
-- **#163 — Same-day gap-up exit churn (v0.35.5)** → PR #214 merged.
-- **#164 — MC bootstrap (v0.35.6)** → PR #215 merged.
-- **#165 — Purged k-fold CV (v0.35.7)** → PR #216 merged.
-- **#166 — Deflated Sharpe Ratio (v0.35.8)** → PR #217 merged → closed P0 Foundation block.
-- **VPS data artifacts** → PR #218 → exec_alignment_delta + mc_bootstrap_summary + rsi2_thresholds (all null under purged CV) + alt_strategies regenerated with DSR. **Empirical finding: only RSI-2 passes DSR > 0.95** out of 12 candidates; IBS borderline (0.923).
+- **P0 Foundation closed** — #162-#166 all merged (v0.35.4 through v0.35.8).
+- **VPS data artifacts** → PR #218 merged → empirical finding: only RSI-2 passes DSR > 0.95 out of 12 candidates; IBS borderline (0.923).
+- **#167 TSMOM backtest harness (v0.36.0)** → PR #219 merged.
+- **TSMOM 2y validation** → PR #220 merged → DSR 0.404 fail.
+- **TSMOM 10y validation** → PR #221 merged → 32-sym × 10y DSR=1.000 (test stat 4.39, 365 trades). Cleared the methodology bar; building #168-170 wiring justified.
 
 ## Strategy direction (agreed 2026-05-08)
 

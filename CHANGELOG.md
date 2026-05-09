@@ -8,6 +8,30 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.36.1] - 2026-05-09
+
+### Added
+- **TSMOM watcher integration (#168)** — `watcher.generate_tsmom_signals` runs every cycle but emits at most once per calendar month via the `trading:tsmom:last_rebalance_month` Redis idempotency key. On a month transition, scans `config.TSMOM_SYMBOLS` (Tier 1 to start), computes 12-1 momentum, and emits an entry signal for each positive-momentum symbol that isn't already in position, blacklisted, or in TSMOM whipsaw cooldown. First-install (key absent) writes the current month and skips emission so a mid-month deploy doesn't fire late entries.
+  - Signal payload includes `primary_strategy="TSMOM"`, `strategies=["TSMOM"]`, `expected_hold_days=22`, `indicators.tsmom_signal=<12-1 return>`, ATR-based `suggested_stop`.
+  - Whipsaw cooldown keyed independently via `Keys.whipsaw(symbol, "TSMOM")`.
+- **Config additions** in `scripts/config.py`: `TSMOM_LOOKBACK_DAYS`, `TSMOM_SKIP_DAYS`, `TSMOM_MAX_HOLD_DAYS`, `TSMOM_EXPECTED_HOLD_DAYS`, `TSMOM_ATR_MULT`, `TSMOM_SYMBOLS`. New `Keys.tsmom_last_rebalance_month()` helper.
+- **Alert formatting** — entry alert now includes `TSMOM=±X.X%` when a TSMOM signal fires, rendered alongside RSI-2 / IBS / DCH lines.
+- **`run_cycle` integration** — TSMOM signals are merged into `entry_signals` and flow through the existing `publish_signals` + alert path.
+
+### Tests
+- 18 new cases in `skills/watcher/test_watcher.py`:
+  - `compute_tsmom_signal`: insufficient history, uptrend → positive, downtrend → negative, NaN/zero past price guards
+  - `generate_tsmom_signals`: idempotency (already rebalanced this month), first-install no-emit, month-transition emit, signal payload schema, skip on open position / whipsaw / blacklist / negative momentum, fetch failure, invalid ATR, invalid stop, marks rebalance done
+  - `run_cycle` alert: TSMOM-only signal renders pct correctly; multi-strategy run merges TSMOM into the published entry list and notify message
+- Full suite: 1063 pass; `skills/watcher/watcher.py` back to **100%**; total project at 99% baseline.
+
+### Notes
+- TSMOM_SYMBOLS starts as Tier 1 (SPY, QQQ, NVDA, XLK, XLY, XLI). The 32-symbol DSR pass (#221) gives a clean signal that broadening helps; promotion is a follow-up once #169 (PM) and #170 (dashboard) ship.
+- VERSION 0.36.0 → 0.36.1.
+- #169 (PM displacement / sizing for monthly-rebalance positions) and #170 (dashboard surfacing) are next.
+
+---
+
 ## [0.36.0] - 2026-05-09
 
 ### Added
