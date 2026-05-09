@@ -11,11 +11,15 @@ Trading System Roadmap project: https://github.com/orgs/texastoasters/projects/1
 
 ## In flight
 
-- **#162 — Foundation: Align backtest entry timing with live (next-bar open)** → branch `fix/backtest-execution-alignment` → status In Progress
-  - Audit found v0.31.0 already fixed primary backtest scripts to `open[i+1]`
-  - This PR adds `entry_timing` parameter + `scripts/backtest_exec_alignment_delta.py` + STRATEGY_REVIEW resolved-marker
-  - Targeting v0.35.4
-  - Real delta numbers require Alpaca creds (run on VPS post-merge)
+- **#163 — Foundation: Fix `close > prev_high` exit firing same-day on gap-up opens** → branch `fix/gap-up-prev-high-exit` → status In Progress
+  - `hold_days >= 1` guard on RSI/prev_high exits in watcher + 4 backtest scripts + 2 sweeps
+  - Defense-in-depth: breakeven whipsaw retained for Donchian same-day chandelier residual
+  - Targeting v0.35.5
+  - 9 new tests (6 watcher + 3 backtest); full suite 978 pass
+
+## Done this session
+
+- **#162 — Backtest exec alignment (v0.35.4)** → PR #213 merged → `entry_timing` param + delta-report script. Real delta numbers still need Alpaca creds on VPS run.
 
 ## Strategy direction (agreed 2026-05-08)
 

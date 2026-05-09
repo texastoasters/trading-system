@@ -154,9 +154,10 @@ def run_rsi2(data, symbol, asset_type="equity", account_size=5000.0,
 
             if low[i] <= stop_p:
                 ex, exp, reason = True, stop_p, "stop"
-            elif rsi2[i] > 60:
+            # #163: RSI / prev-high exits gated on hold >= 1.
+            elif hold >= 1 and rsi2[i] > 60:
                 ex, exp, reason = True, close[i], "rsi_exit"
-            elif close[i] > high[i-1]:
+            elif hold >= 1 and close[i] > high[i-1]:
                 ex, exp, reason = True, close[i], "prev_high"
             elif hold >= 5:
                 ex, exp, reason = True, close[i], "time"

@@ -8,6 +8,19 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.35.5] - 2026-05-08
+
+### Fixed
+- **Same-day gap-up exit churn (#163)** — RSI(2) > 60 and close > prev_high exits now gated on `hold_days >= 1` in `watcher.generate_exit_signals` (live) and the four RSI-2 backtest scripts plus both walk-forward sweeps. The 5/8 round-trip pattern (CLMT/DAR/OSK/KMI same-day exits at near-entry price) is blocked at source. Stop-loss and time-stop are unchanged. The breakeven whipsaw guard remains as defense-in-depth for the residual Donchian same-day chandelier path.
+- Mirrored the guard in `backtest_rsi2.py`, `backtest_rsi2_expanded.py`, `backtest_rsi2_universe.py`, `sweep_rsi2_thresholds.py`, `sweep_rsi2_max_hold.py`, and `docs/STRATEGY_REVIEW.md`. `backtest_alt_strategies.py` is research-only and deferred.
+
+### Tests
+- 6 new cases in `skills/watcher/test_watcher.py` covering: same-day RSI exit blocked; same-day prev-high exit blocked; one-day-hold positive cases; same-day stop-loss still fires; Donchian same-day chandelier still fires + sets breakeven whipsaw.
+- 3 new cases in `scripts/test_backtest_entry_mechanics.py` covering: no entry-day prev-high exit; no entry-day RSI exit; entry-day stop-loss still fires.
+- Full suite: 978 pass, 99% coverage (unchanged baseline).
+
+---
+
 ## [0.35.4] - 2026-05-08
 
 ### Added
