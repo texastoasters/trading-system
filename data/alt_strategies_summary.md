@@ -3,6 +3,8 @@
 Run date: 2026-04-17 00:37
 Universe: 33 symbols  •  Years: 2.0
 
+> **Tail-risk read:** the per-strategy point estimates below are the headline numbers from one historical run. For the 5th-percentile / 95th-percentile distribution under sequence-resampled trades (Monte Carlo bootstrap, N=10k), see [`data/mc_bootstrap_summary.md`](mc_bootstrap_summary.md). Run via `PYTHONPATH=scripts python3 scripts/backtest_mc_bootstrap.py --all`.
+
 ## Per-strategy aggregate (across all symbols)
 
 | Strategy | Trades | WinRate% | PF (wins$/loss$) | TotalReturn% (avg) | MaxDD% (avg) | AvgHoldDays |
