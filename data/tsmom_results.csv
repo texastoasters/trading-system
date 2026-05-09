@@ -1,0 +1,7 @@
+symbol,total_trades,win_rate,profit_factor,total_return_pct,max_drawdown_pct,avg_hold_days,pct_time_invested
+SPY,3,33.33,0.832,-0.31,1.87,71.0,85.54
+QQQ,1,100.0,99.0,7.11,0.0,234.0,93.98
+NVDA,1,100.0,99.0,4.42,0.0,214.0,85.94
+XLK,2,0.0,0.0,-1.04,1.04,65.0,52.21
+XLY,2,50.0,0.06,-0.82,0.87,75.0,60.24
+XLI,1,100.0,99.0,5.02,0.0,234.0,93.98
