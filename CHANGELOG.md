@@ -8,6 +8,27 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.35.8] - 2026-05-08
+
+### Added
+- **Deflated Sharpe Ratio (#166)** — `scripts/deflated_sharpe.py` implements Bailey/Lopez de Prado (2014) DSR. Adjusts an observed Sharpe ratio for selection bias from running multiple trials, sample skew + kurtosis, and finite sample size. Pure-Python (no scipy): standard normal CDF via `math.erf`, inverse CDF via Acklam's rational approximation.
+  - `compute_sharpe(returns, periods_per_year=252)` — annualised SR with float-precision-safe zero-vol guard
+  - `compute_deflated_sharpe(returns, n_trials, periods_per_year=252, threshold=0.95)` — returns `{sr_raw, sr_annualized, sr_expected_max, skew, kurt, test_statistic, dsr, p_value, passes_threshold, n_obs, n_trials}`
+  - `expected_max_sharpe(n_trials)` — E[max IID N(0,1)] across N trials, in z-units
+- **Alt-strategy summary integration** — `scripts/backtest_alt_strategies.py` per-strategy aggregate table now emits four extra columns: annualised Sharpe, DSR, p-value, and a ✓/✗ flag for `DSR > 0.95`. Trade returns flattened across all symbols per strategy; `n_trials` set to the number of strategies actually evaluated this run.
+
+### Tests
+- 31 cases in `scripts/test_deflated_sharpe.py` covering: norm CDF/PPF round-trip, expected-max-Sharpe monotonicity, sentinel paths (empty, singleton, zero vol), DSR ∈ [0,1], DSR ↓ as n_trials ↑, DSR ↑ as observed SR ↑, threshold flag, annualisation factor, reproducibility, the kurt ≥ skew²+1 inequality boundary (negative se_factor sentinel), helper-level guards.
+- `scripts/deflated_sharpe.py` at **100% coverage**.
+- Full suite: 1028 pass; total coverage 99% (unchanged baseline).
+
+### Notes
+- Real numbers populate when `backtest_alt_strategies.py` runs on the VPS with Alpaca creds; this PR ships the engine + integration only. The committed `data/alt_strategies_summary.md` (2026-04-17) regenerates on next run.
+- Closes the P0 Foundation block (#162–#166). Methodology layer is now ready for the P1 TSMOM build.
+- VERSION 0.35.7 → 0.35.8.
+
+---
+
 ## [0.35.7] - 2026-05-08
 
 ### Added

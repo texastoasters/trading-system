@@ -625,8 +625,14 @@ def main():
              f"Run date: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
              f"Universe: {len(datasets)} symbols  •  Years: {args.years}",
              "", "## Per-strategy aggregate (across all symbols)", ""]
-    lines.append("| Strategy | Trades | WinRate% | PF (wins$/loss$) | TotalReturn% (avg) | MaxDD% (avg) | AvgHoldDays |")
-    lines.append("|----------|-------:|---------:|-----------------:|-------------------:|-------------:|------------:|")
+    # Deflated Sharpe Ratio (Bailey/Lopez de Prado 2014): selection-bias-corrected
+    # significance test across `n_trials` candidate strategies. n_trials = number
+    # of strategies actually evaluated in this run.
+    from deflated_sharpe import compute_sharpe, compute_deflated_sharpe
+    n_trials = len(strat_totals)
+
+    lines.append("| Strategy | Trades | WinRate% | PF (wins$/loss$) | TotalReturn% (avg) | MaxDD% (avg) | AvgHoldDays | Sharpe (ann) | DSR | p-value | DSR>0.95 |")
+    lines.append("|----------|-------:|---------:|-----------------:|-------------------:|-------------:|------------:|-------------:|----:|--------:|---------:|")
     for name, results in sorted(strat_totals.items(),
                                 key=lambda kv: -sum(r.total_return_pct for r in kv[1]) / max(1, len(kv[1]))):
         n_tr = sum(r.n for r in results)
@@ -638,7 +644,23 @@ def main():
         avg_ret = np.mean([r.total_return_pct for r in results])
         avg_dd = np.mean([r.max_dd_pct for r in results])
         avg_hold = np.mean([r.avg_hold_days for r in results if r.n])
-        lines.append(f"| {name} | {n_tr} | {wr:.1f} | {pf:.2f} | {avg_ret:+.2f} | {avg_dd:.2f} | {avg_hold:.1f} |")
+        # DSR: flatten per-trade pct returns across all symbols for this strategy
+        pct_returns = [t.pnl_pct / 100.0 for r in results for t in r.trades]
+        sharpe_ann = compute_sharpe(pct_returns, periods_per_year=252) if n_tr >= 2 else 0.0
+        if n_tr >= 2 and n_trials >= 2:
+            dsr_info = compute_deflated_sharpe(pct_returns, n_trials=n_trials)
+            dsr_val = dsr_info["dsr"]
+            p_val = dsr_info["p_value"]
+            passes = "✓" if dsr_info["passes_threshold"] else "✗"
+        else:
+            dsr_val = 0.0
+            p_val = 1.0
+            passes = "—"
+        lines.append(
+            f"| {name} | {n_tr} | {wr:.1f} | {pf:.2f} | {avg_ret:+.2f} "
+            f"| {avg_dd:.2f} | {avg_hold:.1f} "
+            f"| {sharpe_ann:+.2f} | {dsr_val:.3f} | {p_val:.3f} | {passes} |"
+        )
 
     # Per-tier breakdown
     lines += ["", "## Per-tier × strategy (average total_return %)", ""]
