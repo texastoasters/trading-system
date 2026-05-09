@@ -41,18 +41,34 @@ Identical: `stop_loss` → `rsi2 > 60` → `close > prev_high` → `time_stop`.
 
 ### But bar-timing assumptions differ — this is the real bug
 
-| | Backtest | Live |
-|--|----------|------|
-| Entry trigger bar | day D (close) | day D (screener at 16:15 ET) |
-| Entry fill price | `close[D]` | day D+1 opening print |
-| First exit check | day D+1 | day D+1 within minutes of fill |
-| Exit rule `close > prev_high` uses | `high[D]` (the signal bar's high) | `high[D]` (same) |
+> **Resolved in v0.31.0 (entry alignment) + v0.35.5 (delta report + parameterised mode).**
+> The four canonical RSI-2 backtest scripts (`backtest_rsi2.py`,
+> `backtest_rsi2_expanded.py`, `backtest_rsi2_universe.py`, `discover_universe.py`),
+> `backtest_alt_strategies.py`, and the walk-forward sweeps now fill at
+> `open[D+1]`. `run_rsi2_backtest` accepts `entry_timing="next_open"` (default,
+> live-aligned) or `entry_timing="signal_close"` (legacy bug, retained for
+> delta studies). `scripts/backtest_exec_alignment_delta.py` produces a
+> per-symbol comparison; output at `data/exec_alignment_delta.md`. Run with
+> `PYTHONPATH=scripts python3 scripts/backtest_exec_alignment_delta.py`.
+>
+> Residual gap: the `close > prev_high` exit in backtest fires at
+> `close[D+1]`; live fires intraday near `open[D+1]`. Tracked separately by
+> issue #163 (gap-up exit fix).
 
-In the backtest, the entry price is `close[D]` which is definitionally ≤
-`high[D]` — so the prev-high exit cannot fire on entry day. In live, fill
+| | Backtest (legacy / pre-0.31.0) | Backtest (current) | Live |
+|--|--------------------------------|--------------------|------|
+| Entry trigger bar | day D (close) | day D (close) | day D (screener at 16:15 ET) |
+| Entry fill price | `close[D]` | `open[D+1]` | day D+1 opening print |
+| First exit check | day D+1 | day D+1 | day D+1 within minutes of fill |
+| Exit rule `close > prev_high` uses | `high[D]` | `high[D]` | `high[D]` |
+
+In the legacy backtest, the entry price `close[D]` was definitionally ≤
+`high[D]` — so the prev-high exit could not fire on entry day. In live, fill
 happens at day-D+1 *open*, which can be (and empirically is) above `high[D]`
 on a gap-up. First watcher cycle after fill compares `latest_close` to
-`high[D]` and exits immediately at ~entry price minus spread/fees.
+`high[D]` and exits immediately at ~entry price minus spread/fees. The
+v0.31.0 alignment moves the backtest to `open[D+1]` so this scenario is now
+visible in backtest output too.
 
 ### Empirical evidence (buy/sell pairing over full DB)
 

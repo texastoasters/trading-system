@@ -8,6 +8,23 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.35.4] - 2026-05-08
+
+### Added
+- **Backtest execution-alignment delta report (#162)** — `scripts/backtest_exec_alignment_delta.py` runs the canonical RSI-2 conservative backtest two ways per symbol — legacy `signal_close` entry (`close[D]`) and current `next_open` entry (`open[D+1]`) — and writes a markdown comparison to `data/exec_alignment_delta.md`. Default universe is Tier 1 (SPY, QQQ, NVDA, XLK, XLY, XLI), 2y lookback. Surfaces per-symbol delta on trades, win rate, profit factor, total return, and max drawdown plus an aggregate row.
+- **`run_rsi2_backtest(..., entry_timing=...)` parameter** — `"next_open"` (default, live-aligned) or `"signal_close"` (legacy bug, retained for delta studies). Invalid values raise `ValueError`. Also includes the matching offset in entry_idx and stop-loss bar so each mode is internally consistent.
+
+### Changed
+- **`docs/STRATEGY_REVIEW.md`** — section 1's bar-timing table now records both legacy and current backtest behavior, references v0.31.0 as the original fix, and points at the v0.35.4 delta report and parameterised mode. Residual gap on the `close > prev_high` exit timing is explicitly deferred to issue #163.
+
+### Tests
+- 5 new cases in `scripts/test_backtest_entry_mechanics.py` covering the `entry_timing` parameter (default, signal_close, divergence, validation) plus full coverage on the new delta script in `scripts/test_backtest_exec_alignment_delta.py`.
+
+### Notes
+- VERSION was last bumped at 0.35.3; the prior commit `5f2626c` (PM displacement re-displaces fix, PR #161) referenced "v0.35.4" in its message but did not bump VERSION. This release subsumes that bump.
+
+---
+
 ## [0.35.3] - 2026-04-22
 
 ### Changed
