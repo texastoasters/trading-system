@@ -121,6 +121,72 @@ class TestBacktestRsi2EntryMechanics:
                                       entry_timing="signal_close")
         assert next_open.trades[0].entry_price != sig_close.trades[0].entry_price
 
+    def test_no_same_day_prev_high_exit_at_hold_days_zero(self):
+        """
+        #163 fix: in backtest, the `close > prev_high` exit must NOT fire on
+        the entry-fill bar (hold_days = 0). The synthetic gap-up data has
+        bar i where close=130 (signal), bar i+1 where open=135 + close=145.
+        Without the guard, the entry-fill bar's close=145 > high[i]=130*1.01
+        triggers prev_high exit at hold_days=0.
+        """
+        from backtest_rsi2 import run_rsi2_backtest
+        result = run_rsi2_backtest(make_data(), "TEST")
+        for trade in result.trades:
+            if trade.exit_reason == "close > prev_high":
+                assert trade.hold_days >= 1, (
+                    f"prev_high exit fired at hold_days={trade.hold_days}; "
+                    f"trade={trade}"
+                )
+
+    def test_no_same_day_rsi2_exit_at_hold_days_zero(self):
+        """
+        #163 fix: the `rsi2 > 60` exit must not fire on the entry-fill bar.
+        """
+        from backtest_rsi2 import run_rsi2_backtest
+        result = run_rsi2_backtest(make_data(), "TEST")
+        for trade in result.trades:
+            if trade.exit_reason.startswith("rsi2 >"):
+                assert trade.hold_days >= 1, (
+                    f"rsi2 > 60 exit fired at hold_days={trade.hold_days}; "
+                    f"trade={trade}"
+                )
+
+    def test_stop_loss_can_still_fire_at_hold_days_zero(self):
+        """
+        Stop-loss is intra-bar and represents a real loss; the hold_days
+        guard does NOT apply. Construct data where the entry-fill bar's
+        low breaches the stop.
+        """
+        from backtest_rsi2 import run_rsi2_backtest
+        # Build data: long ramp + dip → entry → next bar with low under stop
+        prices = [50.0 + 0.5 * i for i in range(200)]
+        opens = list(prices)
+        prices += [140.0, 130.0]
+        opens += [140.0, 130.0]
+        prices += [125.0]      # close on entry-fill bar
+        opens += [128.0]       # open on entry-fill bar
+        prices += [125.0] * 10
+        opens += [125.0] * 10
+        close = np.array(prices)
+        open_ = np.array(opens)
+        high = close * 1.01
+        # The entry-fill bar (index 202) has low far below open (gap-down)
+        low = close * 0.99
+        low[202] = 100.0  # blow through any reasonable ATR stop
+        dates = [f"2024-{(i // 20) + 1:02d}-{(i % 20) + 1:02d}"
+                 for i in range(len(close))]
+        data = {
+            "dates": dates, "open": open_, "high": high,
+            "low": low, "close": close,
+            "volume": np.full(len(close), 1_000_000.0),
+        }
+        result = run_rsi2_backtest(data, "TEST")
+        # First trade should be a stop_loss at hold_days=0
+        assert len(result.trades) >= 1
+        first = result.trades[0]
+        assert first.exit_reason == "stop_loss"
+        assert first.hold_days == 0
+
 
 # ── backtest_rsi2_expanded.py ────────────────────────────────
 

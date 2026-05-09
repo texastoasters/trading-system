@@ -1081,19 +1081,51 @@ class TestGenerateExitSignals:
         # No stop signal — Alpaca owns this stop
         assert signals == []
 
-    def test_breakeven_same_day_takeprofit_sets_short_whipsaw(self):
-        """Same-day take_profit at ~breakeven → 4h whipsaw cooldown.
-
-        Bar-timing leak: backtest enters at close[D] but live enters at
-        open[D+1]. If RSI-2 flips above 60 on the first bar, we round-trip
-        at ~entry price. Block re-entry for 4h to avoid immediate re-fire.
+    def test_same_day_rsi2_exit_blocked_by_hold_days_guard(self):
+        """
+        #163 fix: same-day RSI-2 > 60 must NOT fire on entry day. The exit
+        relies on a *closed* daily bar to compute RSI; intraday partials
+        produce false-positives during gap-up mornings (the 5/8 round-trip
+        pattern observed in production).
         """
         today = datetime.now().strftime("%Y-%m-%d")
         pos = {"SPY": make_position(entry_price=500.0, stop_price=485.0,
                                     entry_date=today)}
         r = make_redis({Keys.POSITIONS: json.dumps(pos)})
-        # close=500.0 == entry 500.0 → pnl_pct = 0.0; rsi=65 → take_profit
         with patch('watcher.fetch_intraday_bars', return_value=make_intraday(close=500.0, low=495.0)), \
+             patch('watcher.fetch_recent_bars', return_value=make_daily(close=500.0, prev_high=498.0)), \
+             patch('watcher.rsi', return_value=np.array([65.0])), \
+             patch('watcher.is_market_hours', return_value=True):
+            from watcher import generate_exit_signals
+            signals = generate_exit_signals(r, MagicMock(), MagicMock())
+        assert signals == []
+
+    def test_same_day_close_above_prev_high_exit_blocked(self):
+        """
+        #163 fix: gap-up entry day → intraday close above prev_high must
+        NOT fire the take_profit exit. This is the canonical bug: entry
+        at open[D+1] above high[D], first watcher cycle exits at near-entry.
+        """
+        today = datetime.now().strftime("%Y-%m-%d")
+        pos = {"SPY": make_position(entry_price=500.0, stop_price=485.0,
+                                    entry_date=today)}
+        r = make_redis({Keys.POSITIONS: json.dumps(pos)})
+        # gap-up: close=505 > prev_high=500 (open was already above prev_high)
+        with patch('watcher.fetch_intraday_bars', return_value=make_intraday(close=505.0, low=500.0)), \
+             patch('watcher.fetch_recent_bars', return_value=make_daily(close=505.0, prev_high=500.0)), \
+             patch('watcher.rsi', return_value=np.array([40.0])), \
+             patch('watcher.is_market_hours', return_value=True):
+            from watcher import generate_exit_signals
+            signals = generate_exit_signals(r, MagicMock(), MagicMock())
+        assert signals == []
+
+    def test_one_day_hold_rsi2_exit_fires(self):
+        """Positive case for the guard: at hold_days=1 the RSI-2 exit fires normally."""
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        pos = {"SPY": make_position(entry_price=490.0, stop_price=480.0,
+                                    entry_date=yesterday)}
+        r = make_redis({Keys.POSITIONS: json.dumps(pos)})
+        with patch('watcher.fetch_intraday_bars', return_value=make_intraday(close=500.0, low=490.0)), \
              patch('watcher.fetch_recent_bars', return_value=make_daily(close=500.0, prev_high=498.0)), \
              patch('watcher.rsi', return_value=np.array([65.0])), \
              patch('watcher.is_market_hours', return_value=True):
@@ -1101,9 +1133,66 @@ class TestGenerateExitSignals:
             signals = generate_exit_signals(r, MagicMock(), MagicMock())
         assert len(signals) == 1
         assert signals[0]["signal_type"] == "take_profit"
+        assert "RSI-2" in signals[0]["reason"]
+
+    def test_one_day_hold_close_above_prev_high_exit_fires(self):
+        """Positive case for the guard: at hold_days=1 the prev-high exit fires."""
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        pos = {"SPY": make_position(entry_price=490.0, stop_price=480.0,
+                                    entry_date=yesterday)}
+        r = make_redis({Keys.POSITIONS: json.dumps(pos)})
+        with patch('watcher.fetch_intraday_bars', return_value=make_intraday(close=505.0, low=490.0)), \
+             patch('watcher.fetch_recent_bars', return_value=make_daily(close=505.0, prev_high=500.0)), \
+             patch('watcher.rsi', return_value=np.array([40.0])), \
+             patch('watcher.is_market_hours', return_value=True):
+            from watcher import generate_exit_signals
+            signals = generate_exit_signals(r, MagicMock(), MagicMock())
+        assert len(signals) == 1
+        assert signals[0]["signal_type"] == "take_profit"
+        assert "prev high" in signals[0]["reason"]
+
+    def test_same_day_stop_loss_still_fires_despite_hold_days_guard(self):
+        """The hold_days guard applies only to RSI/prev-high exits.
+        Stop-loss must still fire on entry day if intraday low breaches it."""
+        today = datetime.now().strftime("%Y-%m-%d")
+        pos = {"SPY": make_position(entry_price=500.0, stop_price=490.0,
+                                    entry_date=today)}
+        r = make_redis({Keys.POSITIONS: json.dumps(pos)})
+        with patch('watcher.fetch_intraday_bars', return_value=make_intraday(close=489.0, low=488.0)), \
+             patch('watcher.fetch_recent_bars', return_value=make_daily(close=489.0, prev_high=499.0)), \
+             patch('watcher.rsi', return_value=np.array([20.0])), \
+             patch('watcher.is_market_hours', return_value=True):
+            from watcher import generate_exit_signals
+            signals = generate_exit_signals(r, MagicMock(), MagicMock())
+        assert len(signals) == 1
+        assert signals[0]["signal_type"] == "stop_loss"
+
+    def test_breakeven_whipsaw_still_fires_for_donchian_same_day_chandelier(self):
+        """
+        Defense-in-depth: even after #163's hold_days guard blocks RSI/prev-high
+        same-day exits, a Donchian primary position can still take_profit on
+        the chandelier path same-day if the trail breaks. The 4h breakeven
+        whipsaw must still fire for that residual case.
+        """
+        today = datetime.now().strftime("%Y-%m-%d")
+        pos = {"DON": make_position(symbol="DON", entry_price=500.0,
+                                    stop_price=485.0, entry_date=today,
+                                    strategy="DONCHIAN", primary_strategy="DONCHIAN")}
+        r = make_redis({Keys.POSITIONS: json.dumps(pos)})
+        # close=500.0 == entry → pnl_pct = 0.0; donchian_channel returns lower=505 → close < lower → chandelier exit
+        with patch('watcher.fetch_intraday_bars', return_value=make_intraday(close=500.0, low=495.0)), \
+             patch('watcher.fetch_recent_bars', return_value=make_daily(close=500.0, prev_high=498.0)), \
+             patch('watcher.rsi', return_value=np.array([40.0])), \
+             patch('watcher.donchian_channel',
+                   return_value=(np.array([np.nan]), np.array([505.0]))), \
+             patch('watcher.is_market_hours', return_value=True):
+            from watcher import generate_exit_signals
+            signals = generate_exit_signals(r, MagicMock(), MagicMock())
+        assert len(signals) == 1
+        assert signals[0]["signal_type"] == "take_profit"
         assert signals[0]["hold_days"] == 0
-        # 4h breakeven whipsaw set
-        r.set.assert_any_call(Keys.whipsaw("SPY"), ANY, ex=14400)
+        # 4h breakeven whipsaw set on DON's DONCHIAN strategy
+        r.set.assert_any_call(Keys.whipsaw("DON", "DONCHIAN"), ANY, ex=14400)
 
     def test_multi_day_takeprofit_does_not_set_breakeven_whipsaw(self):
         """Take-profit after >0 hold days is a real win — no whipsaw block."""

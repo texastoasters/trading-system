@@ -206,11 +206,13 @@ def run_rsi2(
                 exit_signal = True
                 exit_price = stop_price
                 exit_reason = "stop_loss"
-            elif rsi2[i] > rsi_exit:
+            # #163: RSI / prev-high exits gated on hold_days >= 1, matching
+            # the live watcher guard. Stops + time stop unchanged.
+            elif hold_days >= 1 and rsi2[i] > rsi_exit:
                 exit_signal = True
                 exit_price = close[i]
                 exit_reason = f"rsi2 > {rsi_exit}"
-            elif close[i] > high[i - 1]:
+            elif hold_days >= 1 and close[i] > high[i - 1]:
                 exit_signal = True
                 exit_price = close[i]
                 exit_reason = "close > prev_high"

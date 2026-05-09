@@ -193,26 +193,40 @@ def run_rsi2_backtest(
             exit_signal = False
             exit_reason = ""
 
-            # Stop-loss
+            # Stop-loss (intra-bar — fires same-day if low breaches stop)
             if low[i] <= stop_price:
                 exit_signal = True
                 exit_price = stop_price  # assume stop fill at stop price
                 exit_reason = "stop_loss"
 
-            # RSI exit (conservative mode)
-            elif not use_sma_exit and rsi2[i] > rsi_exit_threshold:
+            # RSI exit (conservative mode).
+            # #163: gated on hold_days >= 1. With next-bar-open entry, the
+            # entry-fill bar's RSI can flip above the exit threshold and
+            # round-trip the trade at near-entry price. Match the live-side
+            # guard in watcher.generate_exit_signals.
+            elif (not use_sma_exit
+                  and hold_days >= 1
+                  and rsi2[i] > rsi_exit_threshold):
                 exit_signal = True
                 exit_price = close[i]
                 exit_reason = f"rsi2 > {rsi_exit_threshold}"
 
-            # Close > previous day's high (conservative mode)
-            elif use_prev_high_exit and not use_sma_exit and close[i] > high[i - 1]:
+            # Close > previous day's high (conservative mode).
+            # #163: gated on hold_days >= 1. Gap-up entry days otherwise
+            # close immediately at near-entry price.
+            elif (use_prev_high_exit
+                  and not use_sma_exit
+                  and hold_days >= 1
+                  and close[i] > high[i - 1]):
                 exit_signal = True
                 exit_price = close[i]
                 exit_reason = "close > prev_high"
 
-            # SMA exit (aggressive mode)
-            elif use_sma_exit and close[i] > exit_sma[i]:
+            # SMA exit (aggressive mode).
+            # #163: gated on hold_days >= 1 — same rationale as the RSI exit.
+            elif (use_sma_exit
+                  and hold_days >= 1
+                  and close[i] > exit_sma[i]):
                 exit_signal = True
                 exit_price = close[i]
                 exit_reason = f"close > SMA({sma_exit_period})"

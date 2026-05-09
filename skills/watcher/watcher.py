@@ -558,8 +558,12 @@ def generate_exit_signals(r, stock_client, crypto_client):
             r.set(Keys.whipsaw(symbol, pos_primary),
                   datetime.now().isoformat(), ex=86400)
 
-        # RSI-2 exit (> 60) - RSI-2 primary only
+        # RSI-2 exit (> 60) - RSI-2 primary only.
+        # #163: gated on hold_days >= 1. RSI evaluated against an intraday
+        # partial bar produces false-positive same-day exits on gap-up
+        # entries. Wait for the entry day's bar to close before this fires.
         elif (pos_primary == "RSI2"
+              and hold_days >= 1
               and not np.isnan(rsi2_val)
               and rsi2_val > config.RSI2_EXIT):
             exit_signal = {
@@ -578,8 +582,12 @@ def generate_exit_signals(r, stock_client, crypto_client):
             }
 
         # Close > previous day's high — RSI-2/IBS only.
+        # #163: gated on hold_days >= 1. On gap-up entry days the intraday
+        # close immediately exceeds prev_high, closing at near-entry price.
         # DONCHIAN is trend-following and must ride past prior highs.
-        elif pos_primary != "DONCHIAN" and latest_close > prev_high:
+        elif (pos_primary != "DONCHIAN"
+              and hold_days >= 1
+              and latest_close > prev_high):
             exit_signal = {
                 "signal_type": "take_profit",
                 "exit_price": latest_close,

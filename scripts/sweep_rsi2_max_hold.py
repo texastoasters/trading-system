@@ -97,12 +97,13 @@ def simulate_max_hold(open_, high, low, close, rsi2, sma200, atr14,
                 trades.append(_trade(entry_i, entry_price, i, stop_price,
                                      "stop", pnl))
                 in_pos = False
-            elif rsi2[i] > RSI2_EXIT_LEVEL:
+            # #163: RSI / prev-high exits gated on hold >= 1, matching live.
+            elif hold >= 1 and rsi2[i] > RSI2_EXIT_LEVEL:
                 pnl = (close[i] - entry_price) / entry_price * 100
                 trades.append(_trade(entry_i, entry_price, i, close[i],
                                      "rsi_exit", pnl))
                 in_pos = False
-            elif close[i] > high[i - 1]:
+            elif hold >= 1 and close[i] > high[i - 1]:
                 pnl = (close[i] - entry_price) / entry_price * 100
                 trades.append(_trade(entry_i, entry_price, i, close[i],
                                      "prev_high", pnl))

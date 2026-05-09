@@ -41,19 +41,29 @@ Identical: `stop_loss` → `rsi2 > 60` → `close > prev_high` → `time_stop`.
 
 ### But bar-timing assumptions differ — this is the real bug
 
-> **Resolved in v0.31.0 (entry alignment) + v0.35.5 (delta report + parameterised mode).**
-> The four canonical RSI-2 backtest scripts (`backtest_rsi2.py`,
-> `backtest_rsi2_expanded.py`, `backtest_rsi2_universe.py`, `discover_universe.py`),
-> `backtest_alt_strategies.py`, and the walk-forward sweeps now fill at
-> `open[D+1]`. `run_rsi2_backtest` accepts `entry_timing="next_open"` (default,
-> live-aligned) or `entry_timing="signal_close"` (legacy bug, retained for
-> delta studies). `scripts/backtest_exec_alignment_delta.py` produces a
-> per-symbol comparison; output at `data/exec_alignment_delta.md`. Run with
+> **Resolved in v0.31.0 (entry alignment) + v0.35.4 (delta report + parameterised mode) + v0.35.5 (`hold_days >= 1` exit guard, #163).**
+>
+> Entry alignment: the four canonical RSI-2 backtest scripts (`backtest_rsi2.py`,
+> `backtest_rsi2_expanded.py`, `backtest_rsi2_universe.py`,
+> `discover_universe.py`), `backtest_alt_strategies.py`, and the walk-forward
+> sweeps fill at `open[D+1]`. `run_rsi2_backtest` accepts
+> `entry_timing="next_open"` (default, live-aligned) or
+> `entry_timing="signal_close"` (legacy bug, retained for delta studies).
+> `scripts/backtest_exec_alignment_delta.py` produces a per-symbol comparison;
+> output at `data/exec_alignment_delta.md`. Run with
 > `PYTHONPATH=scripts python3 scripts/backtest_exec_alignment_delta.py`.
 >
-> Residual gap: the `close > prev_high` exit in backtest fires at
-> `close[D+1]`; live fires intraday near `open[D+1]`. Tracked separately by
-> issue #163 (gap-up exit fix).
+> Same-day exit guard (#163): the `RSI(2) > 60` and `close > prev_high` exits
+> are gated on `hold_days >= 1` in both `watcher.generate_exit_signals` (live)
+> and `backtest_rsi2.py` / `backtest_rsi2_expanded.py` /
+> `backtest_rsi2_universe.py` / `sweep_rsi2_thresholds.py` /
+> `sweep_rsi2_max_hold.py`. The CLMT/KMI/DAR/OSK churn pattern (5/8 round-trips
+> closing same-day at ~entry price) is now blocked at source. Stop-loss + time-stop
+> are unaffected.
+>
+> Stale residual: `backtest_alt_strategies.py` is research code with the same
+> vulnerability across its 12 strategies; deferred until those strategies move
+> closer to production.
 
 | | Backtest (legacy / pre-0.31.0) | Backtest (current) | Live |
 |--|--------------------------------|--------------------|------|
