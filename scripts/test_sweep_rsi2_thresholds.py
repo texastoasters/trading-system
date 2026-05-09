@@ -291,6 +291,79 @@ class TestSimulateThreshold:
         assert out["profit_factor"] == pytest.approx(1.0, rel=0.01)
 
 
+class TestSimulateThresholdPurgeBars:
+    """Lopez de Prado AFML ch.7: purge training observations whose labels
+    extend into the test window. Implemented by blocking new entries in
+    the last `purge_bars` bars of the training slice."""
+
+    def _setup(self, n=30):
+        open_, high, low, close = _flat_bars(n, price=100.0)
+        rsi2 = np.full(n, 50.0)
+        sma200 = np.full(n, 50.0)
+        atr14 = np.full(n, 1.0)
+        regimes = ["RANGING"] * n
+        return open_, high, low, close, rsi2, sma200, atr14, regimes
+
+    def test_default_purge_bars_is_zero_unchanged_behavior(self):
+        n = 30
+        open_, high, low, close, rsi2, sma200, atr14, regimes = self._setup(n)
+        rsi2[20] = 3.0  # signal close to end of slice
+        thr = {"RANGING": 10, "UPTREND": 10, "DOWNTREND": 10}
+        without = simulate_threshold(open_, high, low, close, rsi2, sma200,
+                                     atr14, regimes, thr, start=0, end=28)
+        with_zero = simulate_threshold(open_, high, low, close, rsi2, sma200,
+                                       atr14, regimes, thr, start=0, end=28,
+                                       purge_bars=0)
+        assert without["total_trades"] == with_zero["total_trades"]
+        assert without["trades"] == with_zero["trades"]
+
+    def test_purge_bars_blocks_entries_near_end_of_window(self):
+        n = 30
+        open_, high, low, close, rsi2, sma200, atr14, regimes = self._setup(n)
+        rsi2[20] = 3.0  # signal at i=20; without purge would fill at open[21]
+        thr = {"RANGING": 10, "UPTREND": 10, "DOWNTREND": 10}
+        # end=28; purge_bars=10 → entries at i > 28 - 10 = 18 are blocked.
+        # Signal at i=20 is in the purge zone → no trade.
+        out = simulate_threshold(open_, high, low, close, rsi2, sma200, atr14,
+                                 regimes, thr, start=0, end=28, purge_bars=10)
+        assert out["total_trades"] == 0
+
+    def test_purge_bars_allows_entries_outside_purge_zone(self):
+        n = 30
+        open_, high, low, close, rsi2, sma200, atr14, regimes = self._setup(n)
+        rsi2[10] = 3.0  # signal well before purge zone
+        thr = {"RANGING": 10, "UPTREND": 10, "DOWNTREND": 10}
+        # end=28; purge_bars=10 → block i > 18. Signal at i=10 → trade fires.
+        out = simulate_threshold(open_, high, low, close, rsi2, sma200, atr14,
+                                 regimes, thr, start=0, end=28, purge_bars=10)
+        assert out["total_trades"] == 1
+        assert out["trades"][0]["entry_i"] == 11  # open[i+1]
+
+    def test_purge_bars_boundary_inclusive(self):
+        """A signal exactly at end - purge_bars must be allowed; one bar
+        later must be blocked."""
+        n = 30
+        thr = {"RANGING": 10, "UPTREND": 10, "DOWNTREND": 10}
+        # Allowed: signal at end-purge_bars (i=18 with end=28, purge=10)
+        open_, high, low, close, rsi2, sma200, atr14, regimes = self._setup(n)
+        rsi2[18] = 3.0
+        out_at = simulate_threshold(open_, high, low, close, rsi2, sma200,
+                                    atr14, regimes, thr, start=0, end=28,
+                                    purge_bars=10)
+        assert out_at["total_trades"] == 1, (
+            "signal at i == end - purge_bars should be allowed"
+        )
+        # Blocked: signal one bar past
+        open_, high, low, close, rsi2, sma200, atr14, regimes = self._setup(n)
+        rsi2[19] = 3.0
+        out_past = simulate_threshold(open_, high, low, close, rsi2, sma200,
+                                      atr14, regimes, thr, start=0, end=28,
+                                      purge_bars=10)
+        assert out_past["total_trades"] == 0, (
+            "signal at i > end - purge_bars should be blocked"
+        )
+
+
 class TestWalkForwardWindows:
     def test_yields_contiguous_train_then_oos_slices(self):
         """First window: train = [warmup, warmup+train), oos follows."""

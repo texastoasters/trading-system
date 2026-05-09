@@ -173,6 +173,68 @@ class TestSimulateMaxHold:
         assert ranging["total_trades"] == 1
 
 
+class TestSimulateMaxHoldPurgeBars:
+    """Lopez de Prado AFML ch.7 purge: block training entries near `end`
+    so labels (returns) don't span into OOS bars."""
+
+    def _setup(self, n=30):
+        close = np.full(n, 100.0)
+        high = close + 0.5
+        low = close - 0.5
+        open_ = close.copy()
+        rsi2 = np.full(n, 40.0)
+        sma200 = np.full(n, 50.0)
+        atr14 = np.full(n, 100.0)
+        return open_, high, low, close, rsi2, sma200, atr14
+
+    def test_default_purge_bars_is_zero_unchanged_behavior(self):
+        n = 30
+        bars = self._setup(n)
+        bars[4][20] = 3.0  # rsi2[20] signals entry near end
+        regimes = _regimes(n)
+        without = simulate_max_hold(*bars, regimes=regimes,
+                                    max_hold_bars=5, start=0, end=28)
+        with_zero = simulate_max_hold(*bars, regimes=regimes,
+                                      max_hold_bars=5, start=0, end=28,
+                                      purge_bars=0)
+        assert without["total_trades"] == with_zero["total_trades"]
+
+    def test_purge_bars_blocks_entries_near_end_of_window(self):
+        n = 30
+        bars = self._setup(n)
+        bars[4][20] = 3.0  # signal in purge zone
+        regimes = _regimes(n)
+        # end=28, purge_bars=10 → block i > 18. signal at 20 → blocked.
+        out = simulate_max_hold(*bars, regimes=regimes, max_hold_bars=5,
+                                start=0, end=28, purge_bars=10)
+        assert out["total_trades"] == 0
+
+    def test_purge_bars_allows_entries_outside_purge_zone(self):
+        n = 30
+        bars = self._setup(n)
+        bars[4][10] = 3.0  # signal well before purge zone
+        regimes = _regimes(n)
+        out = simulate_max_hold(*bars, regimes=regimes, max_hold_bars=5,
+                                start=0, end=28, purge_bars=10)
+        assert out["total_trades"] == 1
+
+    def test_purge_bars_boundary_inclusive(self):
+        n = 30
+        regimes = _regimes(n)
+        # i = end - purge_bars allowed
+        bars = self._setup(n)
+        bars[4][18] = 3.0
+        at = simulate_max_hold(*bars, regimes=regimes, max_hold_bars=5,
+                               start=0, end=28, purge_bars=10)
+        assert at["total_trades"] == 1
+        # i = end - purge_bars + 1 blocked
+        bars = self._setup(n)
+        bars[4][19] = 3.0
+        past = simulate_max_hold(*bars, regimes=regimes, max_hold_bars=5,
+                                 start=0, end=28, purge_bars=10)
+        assert past["total_trades"] == 0
+
+
 # ── pick_max_hold_winner ─────────────────────────────────────
 
 class TestPickMaxHoldWinner:

@@ -219,6 +219,24 @@ If any strategy fails to meet its validation thresholds during paper trading, it
 
 ---
 
+## Methodology Addendum (2026-05-08, v0.35.7)
+
+The walk-forward sweep harness for per-symbol RSI-2 entry thresholds (`scripts/sweep_rsi2_thresholds.py`) and time-stop bars (`scripts/sweep_rsi2_max_hold.py`) now applies **purged + embargoed cross-validation** per Lopez de Prado, *Advances in Financial Machine Learning* (2018), ch.7.
+
+**Why:** RSI-2 trades have multi-bar labels — each trade's return is computed from bars between entry and exit. A training trade entered near `train_end` would have its label computed from bars in [train_end, train_end + max_hold), which fall in the OOS window. Standard walk-forward leaks those OOS labels into training metric computation, biasing threshold selection toward overfit configurations.
+
+**Mechanism:** the `simulate_threshold` and `simulate_max_hold` engines accept a `purge_bars` parameter that blocks new entries with signal index `i > end - purge_bars`. The orchestrators (`_sweep_window` and `_sweep_window_max_hold`) pass `purge_bars = max_hold + EMBARGO_BARS` (default `EMBARGO_BARS = 5`) on the **training slice only**. The OOS slice is evaluated unmodified — it is the test set and its trades count as actual out-of-sample performance.
+
+**Effect on training trade count:** training PFs are now computed over slightly fewer trades (entries in the last 10 training bars are dropped). The expected effect is a small reduction in training PF for thresholds that rely heavily on near-end-of-window entries, and more honest OOS PF estimates as a result. The `min_train_trades` guardrail (default 5) catches degenerate windows.
+
+**To compare purged vs non-purged threshold winners on real data**, run on the VPS with creds:
+
+```bash
+PYTHONPATH=scripts python3 scripts/sweep_rsi2_thresholds.py --symbol SPY --years 2
+```
+
+Then diff the resulting `data/rsi2_thresholds/SPY.json` against the prior committed version.
+
 ## Key Takeaway for the Agents
 
 The most important insight from Phase 2 is that **simplicity wins**. The RSI-2 mean reversion strategy — which uses a single indicator with one filter (200-day SMA) and straightforward entry/exit rules — has the best backtested performance of any strategy we evaluated. More complex approaches (gap trading, PEAD) showed weaker and less reliable edges. The agents' instruction sets should encode this hierarchy clearly: execute the simple, proven strategies consistently, and only layer on complexity (ORB, PEAD) when the simple strategies are idle.

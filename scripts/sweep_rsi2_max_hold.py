@@ -38,6 +38,7 @@ RSI2_EXIT_LEVEL = 60.0
 SMA_PERIOD = 200
 ATR_PERIOD = 14
 DEFAULT_MAX_HOLD_GRID = [2, 3, 5, 7, 10]
+EMBARGO_BARS = 5  # AFML ch.7 embargo: gap between train and OOS to break serial correlation
 DEFAULT_TRAIN_DAYS = 252
 DEFAULT_TEST_DAYS = 63
 DEFAULT_STEP_DAYS = 63
@@ -71,17 +72,26 @@ def classify_regime_per_bar(high: np.ndarray, low: np.ndarray,
 
 def simulate_max_hold(open_, high, low, close, rsi2, sma200, atr14,
                       regimes, max_hold_bars, start=0, end=None,
-                      aggressive=5.0, conservative=10.0):
+                      aggressive=5.0, conservative=10.0,
+                      purge_bars=0):
     """Run the RSI-2 strategy over [start, end) with a fixed `max_hold_bars`
     time stop. Entry threshold picked per-bar from regime:
       - UPTREND → `aggressive`; else → `conservative`.
     Exit precedence (per bar, after position open):
       stop → rsi_exit (rsi > 60) → prev_high (close > prev high) → time.
+
+    `purge_bars` (default 0) blocks new entries with signal index `i > end -
+    purge_bars`. Used by the walk-forward harness to apply Lopez de Prado
+    AFML ch.7 purge: a training trade entered near `end` would have its
+    label computed from bars in OOS — leakage. Pass `max_hold + embargo`
+    on the training slice; leave at 0 for OOS.
+
     Returns {trades, total_trades, winners, losers, profit_factor, win_rate}.
     """
     n = len(close)
     if end is None:
         end = n
+    purge_cutoff = end - purge_bars
     trades = []
     in_pos = False
     entry_i = 0
@@ -121,7 +131,8 @@ def simulate_max_hold(open_, high, low, close, rsi2, sma200, atr14,
                     and not np.isnan(atr14[i])
                     and rsi2[i] < threshold
                     and close[i] > sma200[i]
-                    and i + 1 < end):
+                    and i + 1 < end
+                    and i <= purge_cutoff):
                 fill_i = i + 1
                 entry_price = open_[fill_i]
                 stop_dist = ATR_STOP_MULT * atr14[fill_i]
@@ -205,13 +216,20 @@ def _sweep_window_max_hold(open_, high, low, close, rsi2_vals, sma200, atr14,
                            oos_end, grid, min_train_trades):
     """Pick the `max_hold` with the highest train PF (≥ min_train_trades),
     then score on OOS. Returns a single-entry dict or None if no cell had
-    enough train trades."""
+    enough train trades.
+
+    AFML ch.7 purged CV: training slice purges entries whose labels would
+    extend into OOS. Purge buffer = max_hold_grid_max + EMBARGO_BARS so the
+    same training slice serves every grid candidate consistently.
+    """
     best_mh = None
     best_pf = -1.0
+    train_purge_bars = max(grid) + EMBARGO_BARS
     for mh in grid:
         train = simulate_max_hold(open_, high, low, close, rsi2_vals, sma200,
                                   atr14, regimes, mh,
-                                  start=train_start, end=train_end)
+                                  start=train_start, end=train_end,
+                                  purge_bars=train_purge_bars)
         if train["total_trades"] < min_train_trades:
             continue
         if train["profit_factor"] > best_pf:

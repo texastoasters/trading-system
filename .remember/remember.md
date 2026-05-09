@@ -11,17 +11,17 @@ Trading System Roadmap project: https://github.com/orgs/texastoasters/projects/1
 
 ## In flight
 
-- **#164 — Monte Carlo bootstrap on backtest equity curves** → branch `feat/mc-bootstrap-backtest` → status In Progress
-  - `scripts/backtest_mc_bootstrap.py` — trade-return resampling, N=10k default
-  - Per-strategy/per-symbol p5/p50/p95 of PF, WR, MaxDD, terminal equity
-  - Targeting v0.35.6
-  - 16 new tests; full suite 994 pass
-  - Real numbers need Alpaca creds (post-merge VPS run)
+- **#165 — Purged k-fold CV (Lopez de Prado AFML ch.7)** → branch `feat/purged-kfold-cv` → status In Progress
+  - `purge_bars` parameter on `simulate_threshold` + `simulate_max_hold`; orchestrators pass `max_hold + EMBARGO_BARS=5` on training slice only
+  - Targeting v0.35.7
+  - 8 new tests; full suite 1002 pass
+  - Real-data winner-comparison needs Alpaca creds (post-merge VPS run)
 
 ## Done this session
 
-- **#162 — Backtest exec alignment (v0.35.4)** → PR #213 merged → `entry_timing` param + delta-report script. Real delta numbers still need Alpaca creds on VPS run.
-- **#163 — Same-day gap-up exit churn (v0.35.5)** → PR #214 merged → `hold_days >= 1` guard on RSI/prev_high exits in watcher + 4 backtest scripts + 2 sweeps. Defense-in-depth breakeven whipsaw retained for Donchian path.
+- **#162 — Backtest exec alignment (v0.35.4)** → PR #213 merged → `entry_timing` param + delta-report script.
+- **#163 — Same-day gap-up exit churn (v0.35.5)** → PR #214 merged → `hold_days >= 1` guard on RSI/prev_high exits in watcher + 4 backtest scripts + 2 sweeps.
+- **#164 — MC bootstrap (v0.35.6)** → PR #215 merged → `scripts/backtest_mc_bootstrap.py` + p5/p50/p95 distributions across PF/WR/MaxDD/terminal.
 
 ## Strategy direction (agreed 2026-05-08)
 
