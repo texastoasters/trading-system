@@ -130,13 +130,23 @@ def run_rsi2_backtest(
     max_hold_days: int = 5,
     atr_stop_multiplier: float = 2.0,
     strategy_name: str = "RSI-2 Conservative",
+    entry_timing: str = "next_open",
 ) -> BacktestResult:
     """
     Run the RSI-2 mean reversion backtest.
 
     Conservative: entry RSI-2 < 10, exit RSI-2 > 60 or close > prev high
     Aggressive:   entry RSI-2 < 5,  exit close > 5-period SMA
+
+    entry_timing:
+      - "next_open"    fill at open[i+1] — matches live executor (default)
+      - "signal_close" fill at close[i]  — legacy bug, kept for delta studies
     """
+    if entry_timing not in ("next_open", "signal_close"):
+        raise ValueError(
+            f"entry_timing must be 'next_open' or 'signal_close', "
+            f"got {entry_timing!r}"
+        )
 
     close = data['close']
     high = data['high']
@@ -245,12 +255,17 @@ def run_rsi2_backtest(
             # Check entry conditions
             # RSI-2 below threshold AND close above 200-day SMA
             if rsi2[i] < rsi_entry_threshold and close[i] > sma200[i]:
-                # Signal fires EOD; executor fills at next-bar open.
-                if i + 1 >= n:
-                    continue
-                entry_price = open_[i + 1]
-                entry_date = dates[i + 1]
-                entry_idx = i + 1
+                if entry_timing == "next_open":
+                    # Signal fires EOD; executor fills at next-bar open.
+                    if i + 1 >= n:
+                        continue
+                    entry_price = open_[i + 1]
+                    entry_date = dates[i + 1]
+                    entry_idx = i + 1
+                else:  # "signal_close" — legacy bug mode for delta studies
+                    entry_price = close[i]
+                    entry_date = dates[i]
+                    entry_idx = i
 
                 # Position sizing: 1% risk
                 stop_price = entry_price - (atr_stop_multiplier * atr14[entry_idx])

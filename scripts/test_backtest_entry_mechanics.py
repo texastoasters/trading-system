@@ -82,6 +82,45 @@ class TestBacktestRsi2EntryMechanics:
             f"expected entry at open[i+1]=135.0, got {first_entry}"
         )
 
+    def test_entry_timing_default_is_next_open(self):
+        from backtest_rsi2 import run_rsi2_backtest
+        result = run_rsi2_backtest(make_data(), "TEST")
+        assert result.trades[0].entry_price == pytest.approx(135.0)
+
+    def test_entry_timing_signal_close_uses_signal_day_close(self):
+        """
+        Legacy bug mode: entry at close[i] of signal day, not open[i+1].
+        Provided for delta studies (`backtest_exec_alignment_delta.py`)
+        and to make the methodology change explicit/testable.
+        """
+        from backtest_rsi2 import run_rsi2_backtest
+        result = run_rsi2_backtest(
+            make_data(), "TEST", entry_timing="signal_close"
+        )
+        assert len(result.trades) >= 1
+        # First signal at i=201 (close=130). Entry at close[201]=130.
+        assert result.trades[0].entry_price == pytest.approx(130.0), (
+            f"expected entry at close[i]=130.0, got "
+            f"{result.trades[0].entry_price}"
+        )
+
+    def test_entry_timing_invalid_raises(self):
+        from backtest_rsi2 import run_rsi2_backtest
+        with pytest.raises(ValueError, match="entry_timing"):
+            run_rsi2_backtest(make_data(), "TEST", entry_timing="bogus")
+
+    def test_entry_timing_modes_produce_different_results(self):
+        """
+        The two modes must diverge on a gap-up entry day
+        (open[i+1] != close[i]).
+        """
+        from backtest_rsi2 import run_rsi2_backtest
+        next_open = run_rsi2_backtest(make_data(), "TEST",
+                                      entry_timing="next_open")
+        sig_close = run_rsi2_backtest(make_data(), "TEST",
+                                      entry_timing="signal_close")
+        assert next_open.trades[0].entry_price != sig_close.trades[0].entry_price
+
 
 # ── backtest_rsi2_expanded.py ────────────────────────────────
 
