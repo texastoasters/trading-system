@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
 DEFAULT_TIER1 = ["SPY", "QQQ", "NVDA", "XLK", "XLY", "XLI"]
-SUPPORTED_STRATEGIES = ("RSI-2", "IBS", "Donchian-BO")
+SUPPORTED_STRATEGIES = ("RSI-2", "IBS", "Donchian-BO", "TSMOM")
 
 
 # ── Bootstrap core ──────────────────────────────────────────
@@ -134,6 +134,11 @@ def run_strategy_for_symbol(strategy: str, symbol: str, years: int,
         from backtest_rsi2 import fetch_daily_bars, run_rsi2_backtest
         data = fetch_daily_bars(symbol, years)
         return run_rsi2_backtest(data, symbol, account_size=account)
+
+    if strategy == "TSMOM":
+        from backtest_tsmom import fetch_daily_bars, run_tsmom_backtest
+        data = fetch_daily_bars(symbol, years)
+        return run_tsmom_backtest(data, symbol, account_size=account)
 
     if strategy in ("IBS", "Donchian-BO"):
         from alpaca.data.historical import StockHistoricalDataClient
