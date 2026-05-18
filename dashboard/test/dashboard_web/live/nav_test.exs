@@ -1,8 +1,8 @@
 defmodule DashboardWeb.NavTest do
   use DashboardWeb.ConnCase
 
-  @pages ["/", "/universe", "/trades", "/performance", "/logs", "/settings"]
-  @nav_labels ["Dashboard", "Universe", "Trades", "Performance", "Logs", "Settings"]
+  @pages ["/", "/universe", "/trades", "/strategies", "/performance", "/logs", "/settings"]
+  @nav_labels ["Dashboard", "Universe", "Trades", "Strategies", "Performance", "Logs", "Settings"]
 
   describe "mobile nav" do
     test "hamburger button and hidden mobile menu present on every page", %{conn: conn} do

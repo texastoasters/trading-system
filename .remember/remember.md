@@ -11,12 +11,10 @@ Trading System Roadmap project: https://github.com/orgs/texastoasters/projects/1
 
 ## In flight
 
-- **#169 — TSMOM Portfolio Manager integration** → branch `feat/tsmom-pm-integration` → status In Progress
-  - PM accepts TSMOM signals; per-strategy concurrent caps replace static `DONCHIAN_SYMBOLS` / `TSMOM_SYMBOLS`
-  - Reasoning polymorphism (no crash on missing rsi2/sma200)
-  - TSMOM displacement protection (30 days)
-  - Targeting v0.36.2
-  - 18 new tests; full suite 1078 pass
+- **#170 — TSMOM dashboard surfacing** → branch `feat/tsmom-dashboard` → In Progress
+  - New `/strategies` LiveView page with per-strategy state (open count, capital, avg hold, MTD P&L)
+  - `Queries.strategy_pnl_mtd/0` aggregates realized P&L by strategy for current month
+  - Targeting v0.36.3 — closes P1 TSMOM block
 
 ## Done this session
 
@@ -26,6 +24,7 @@ Trading System Roadmap project: https://github.com/orgs/texastoasters/projects/1
 - **TSMOM 2y validation** → PR #220 merged → DSR 0.404 fail.
 - **TSMOM 10y validation** → PR #221 merged → 32-sym × 10y DSR=1.000 (test stat 4.39, 365 trades). Cleared the methodology bar; building #168-170 wiring justified.
 - **#168 TSMOM watcher integration (v0.36.1)** → PR #222 merged → `generate_tsmom_signals`, monthly idempotency, alert formatting, full universe scan.
+- **#169 TSMOM PM integration + per-strategy caps (v0.36.2)** → PR #223 merged → `STRATEGY_MAX_CONCURRENT` replaces `DONCHIAN_SYMBOLS`/`TSMOM_SYMBOLS`; reasoning polymorphism; TSMOM displacement protection (30d).
 
 ## Strategy direction (agreed 2026-05-08)
 

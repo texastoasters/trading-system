@@ -104,6 +104,18 @@ defmodule Dashboard.QueriesTest do
   end
 
 
+  describe "strategy_pnl_mtd/0" do
+    test "returns empty map when no trades exist (DB error or empty table)" do
+      assert Queries.strategy_pnl_mtd() == %{}
+    end
+
+    test "result is a map even on DB resilience fallback" do
+      result = Queries.strategy_pnl_mtd()
+      assert is_map(result)
+    end
+  end
+
+
   describe "instrument_performance/1" do
     test "returns [] when no trades exist (DB error or empty table)" do
       assert Queries.instrument_performance(30) == []
