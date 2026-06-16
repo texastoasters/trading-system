@@ -8,6 +8,22 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.36.4] - 2026-06-16
+
+### Fixed
+- **Stop-loss qty drift → repeating "Stop-loss failed" critical alert.** When a GTC stop partially filled (e.g. 2 of 3 shares) and was then cancelled, nothing reconciled the sold shares: Redis `quantity` stayed at 3 while Alpaca held 1. Every watcher exit cycle then ran `execute_sell` → cancel stop → market-sell qty 3 → `403 insufficient qty (available: 1)` → restore-stop qty 3 → 403 again → `critical_alert("Stop-loss failed …")`, looping indefinitely (observed live on TTE). Two layers of fix:
+  - **Guard (`execute_sell`)** — new `_alpaca_position_qty()` helper reads the broker's actual position size; `execute_sell` reconciles Redis down to it before acting. If Alpaca holds fewer shares, the sell + any stop-restore use the real qty; if Alpaca holds none, the position is cleaned from Redis and `exit_signaled` cleared (stops the loop). Unknown/transient reads (API error or non-list response) fall back to the Redis qty, so a blip never deletes a live position.
+  - **Source (`_check_cancelled_stops`)** — new `_reconcile_partial_stop_fill()` books realized P&L for shares a stop sold before being cancelled, decrements Redis qty, and the cancelled-stop branch now syncs the remaining qty to the broker before resubmitting protection. Prevents the drift at origin and attributes the partial sale's P&L.
+
+### Tests
+- 17 new cases in `skills/executor/test_executor.py`: `_alpaca_position_qty` (present/absent/non-list/api-error/abs/non-numeric/bad-string), `execute_sell` qty reconciliation (clamp down, position-gone cleanup + exit_signaled clear, api-error fallback, matching-qty no-op), `_reconcile_partial_stop_fill` (no-fill, unparseable qty, books partial + decrements, fill-price fallback, crypto fee), and `_check_cancelled_stops` partial-fill reconcile + broker-qty clamp.
+- `skills/executor/executor.py` back to **100%** coverage; full suite 1097 pass.
+
+### Ops
+- The live stuck position self-heals on the next post-deploy exit cycle (`execute_sell` reconciles qty and either sells the remaining share or cleans Redis). No manual server intervention. Note `scripts/reconcile.py --fix` did **not** help here — it resubmits stops at the same stale Redis qty; a follow-up could fold the broker-qty sync into reconcile too.
+
+---
+
 ## [0.36.3] - 2026-05-09
 
 ### Added
