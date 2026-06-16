@@ -1,42 +1,21 @@
-# Session State (2026-05-08)
-
-## Roadmap board live
-
-Trading System Roadmap project: https://github.com/orgs/texastoasters/projects/1
-- 51 issues seeded (#162–#212), labeled `roadmap` + `priority/Px` + `type/...`
-- Status field: Backlog → Todo → In Progress → In Review → Blocked → Done
-- Custom fields: Priority (P0–P5), Area (screener, watcher, portfolio_manager, executor, supervisor, dashboard, scripts, docs, infra)
-- Workflow toggle for "PR merged → Done", "Item closed → Done" still pending UI step (GraphQL doesn't expose enable mutation)
-- Workflow rule established: pick top Todo by priority, move to In Progress before starting work
+# Session State (2026-06-16)
 
 ## In flight
 
-- **#170 — TSMOM dashboard surfacing** → branch `feat/tsmom-dashboard` → In Progress
-  - New `/strategies` LiveView page with per-strategy state (open count, capital, avg hold, MTD P&L)
-  - `Queries.strategy_pnl_mtd/0` aggregates realized P&L by strategy for current month
-  - Targeting v0.36.3 — closes P1 TSMOM block
+- **fix/stop-loss-qty-drift (v0.36.4)** → branch `fix/stop-loss-qty-drift`
+  - Bug: a GTC stop partially filled (2 of 3) then cancelled → Redis qty stayed 3 while Alpaca held 1. Every watcher exit cycle: `execute_sell` cancel→market-sell qty3→`403 insufficient qty (available:1)`→restore-stop qty3→403→`critical_alert("Stop-loss failed for TTE …")`, looping. Observed live on TTE.
+  - **Fix B (guard, load-bearing):** `_alpaca_position_qty()` reads broker's real qty; `execute_sell` reconciles Redis down to it before selling/replacing stop. Broker holds none → clean Redis + clear `exit_signaled`. API error / non-list → fall back to Redis qty (never delete on a blip).
+  - **Fix A (source):** `_reconcile_partial_stop_fill()` books realized P&L for shares a stop sold before cancel + decrements qty; `_check_cancelled_stops` cancelled branch syncs remaining qty to broker before resubmit.
+  - `skills/executor/executor.py` 100% cov; full suite 1097 pass.
+  - Live position self-heals on next post-deploy exit cycle — no server change. `scripts/reconcile.py --fix` does NOT fix it (resubmits at same stale qty) → follow-up candidate.
 
-## Done this session
+## Recently shipped
 
-- **P0 Foundation closed** — #162-#166 all merged (v0.35.4 through v0.35.8).
-- **VPS data artifacts** → PR #218 merged → empirical finding: only RSI-2 passes DSR > 0.95 out of 12 candidates; IBS borderline (0.923).
-- **#167 TSMOM backtest harness (v0.36.0)** → PR #219 merged.
-- **TSMOM 2y validation** → PR #220 merged → DSR 0.404 fail.
-- **TSMOM 10y validation** → PR #221 merged → 32-sym × 10y DSR=1.000 (test stat 4.39, 365 trades). Cleared the methodology bar; building #168-170 wiring justified.
-- **#168 TSMOM watcher integration (v0.36.1)** → PR #222 merged → `generate_tsmom_signals`, monthly idempotency, alert formatting, full universe scan.
-- **#169 TSMOM PM integration + per-strategy caps (v0.36.2)** → PR #223 merged → `STRATEGY_MAX_CONCURRENT` replaces `DONCHIAN_SYMBOLS`/`TSMOM_SYMBOLS`; reasoning polymorphism; TSMOM displacement protection (30d).
+- **P1 TSMOM block complete** (v0.36.0–0.36.3, PRs #219/#222/#223/#224): backtest harness, watcher integration, PM integration + per-strategy caps (`STRATEGY_MAX_CONCURRENT` replaced `DONCHIAN_SYMBOLS`/`TSMOM_SYMBOLS`), `/strategies` dashboard.
+- TSMOM validated DSR=1.000 on 32-sym×10y (365 trades).
 
-## Strategy direction (agreed 2026-05-08)
+## Process reminders
 
-1. **P0 Foundation first** — measurement system (backtest/live alignment, gap-up exit, MC bootstrap, purged k-fold CV, deflated Sharpe). Don't add strategies on top of unverified backtests.
-2. **P1 TSMOM next** — time-series momentum (Moskowitz 2012) as second primary strategy. Long-only, monthly rebalance, anti-correlated with mean-reversion. Fixes DOWNTREND dead zone.
-3. **P4 deferred decision** post-TSMOM — PEAD vs Options Wheel. Wheel unlocks vol risk premium return source if multi-strategy plumbing proves clean.
-4. **Skip:** stockmarketguides.com (no API, unauditable). ORB intraday until daily system rock-solid. Pure factor (low capacity at $5K).
-
-## Recent borrows from r/algotrading research
-
-- Purged k-fold CV (Lopez de Prado AFML ch.7) → issue #165
-- Deflated Sharpe Ratio (Bailey/Lopez de Prado) → issue #166
-- Monte Carlo bootstrap on equity curves → issue #164
-- Meta-labelling layer for signal-score field → future ticket once strategy layer settles
-- Next-bar-open execution alignment → issue #162 (this PR)
+- Bug fixes via PR + CI/CD only; never edit/deploy on the server directly. SSH is read-only for diagnosis.
+- TDD: failing test first. Keep Python + Elixir at 100% coverage; no coveralls-ignore shortcuts.
+- Roadmap board (Project #1): pick top Todo by priority, move to In Progress before starting.

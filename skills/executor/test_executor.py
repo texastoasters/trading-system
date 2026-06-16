@@ -139,6 +139,13 @@ def make_account(blocked=False, pdt=False, acct_blocked=False, equity="5000.0", 
     return a
 
 
+def make_alpaca_pos(symbol="SPY", qty=10):
+    p = MagicMock()
+    p.symbol = symbol
+    p.qty = str(qty)
+    return p
+
+
 # ── Graceful Shutdown ────────────────────────────────────────
 
 class TestGracefulShutdown:
@@ -1485,6 +1492,114 @@ class TestCheckCancelledStops:
         mock_alert.assert_called_once()
         assert "SPY" in mock_alert.call_args[0][0]
 
+    def _make_alpaca_position_qty(self, symbol="SPY", qty=1):
+        p = MagicMock()
+        p.symbol = symbol
+        p.qty = str(qty)
+        return p
+
+    def test_cancelled_partial_fill_books_pnl_and_resubmits_remainder(self):
+        """Stop sold 2 of 3 then cancelled, 1 left on Alpaca → book the 2
+        sold shares, sync Redis qty to 1, resubmit a stop for 1 (not 3)."""
+        pos = make_position(symbol="TTE", qty=3, entry=88.09, stop=84.09,
+                            stop_order_id="old")
+        r, store = make_redis({"TTE": pos})
+
+        stop = MagicMock()
+        stop.id = "old"
+        stop.status = "cancelled"
+        stop.filled_qty = "2"
+        stop.filled_avg_price = "83.87"
+
+        tc = MagicMock()
+        tc.get_order_by_id.return_value = stop
+        tc.get_all_positions.return_value = [self._make_alpaca_position_qty("TTE", 1)]
+
+        with patch("executor.submit_stop_loss", return_value="new-1") as mock_submit, \
+             patch("executor._log_trade") as mock_log, \
+             patch("executor.exit_alert"), \
+             patch("executor.critical_alert"):
+            from executor import _check_cancelled_stops
+            _check_cancelled_stops(tc, r)
+
+        # The 2 partially-sold shares were booked
+        mock_log.assert_called_once()
+        log_kwargs = mock_log.call_args.kwargs
+        assert log_kwargs["quantity"] == 2.0
+        assert log_kwargs["exit_reason"] == "stop_loss_partial"
+
+        # Resubmit used the remaining 1 share, not the stale 3
+        mock_submit.assert_called_once()
+        assert mock_submit.call_args[0][2] == 1  # (tc, symbol, quantity, stop_price)
+
+        # Redis synced: qty 1, new stop id
+        saved = json.loads(store["trading:positions"])["TTE"]
+        assert saved["quantity"] == 1
+        assert saved["stop_order_id"] == "new-1"
+
+    def test_cancelled_full_partial_fill_then_gone_cleans_up(self):
+        """Stop filled all 3 across fills then cancelled, none left on Alpaca
+        → book the sold shares, no resubmit, clean Redis."""
+        pos = make_position(symbol="TTE", qty=3, entry=88.09, stop=84.09,
+                            stop_order_id="old")
+        r, store = make_redis({"TTE": pos})
+
+        stop = MagicMock()
+        stop.id = "old"
+        stop.status = "cancelled"
+        stop.filled_qty = "3"
+        stop.filled_avg_price = "83.87"
+
+        tc = MagicMock()
+        tc.get_order_by_id.return_value = stop
+        tc.get_all_positions.return_value = []  # gone
+
+        with patch("executor.submit_stop_loss") as mock_submit, \
+             patch("executor._log_trade") as mock_log, \
+             patch("executor.exit_alert"), \
+             patch("executor.critical_alert") as mock_alert:
+            from executor import _check_cancelled_stops
+            _check_cancelled_stops(tc, r)
+
+        mock_log.assert_called_once()
+        assert mock_log.call_args.kwargs["quantity"] == 3.0
+        mock_submit.assert_not_called()
+        assert "TTE" not in json.loads(store["trading:positions"])
+        mock_alert.assert_called_once()
+
+    def test_cancelled_no_partial_clamps_qty_to_broker(self):
+        """Cancelled stop with no partial fill but Redis qty drifted above
+        broker qty → clamp down before resubmitting (no 403 loop). Also
+        exercises the bad-qty skip in the broker-qty map build."""
+        pos = make_position(symbol="TTE", qty=3, stop=84.09, stop_order_id="old")
+        r, store = make_redis({"TTE": pos})
+
+        stop = MagicMock()
+        stop.id = "old"
+        stop.status = "cancelled"
+        stop.filled_qty = "0"  # no partial fill
+
+        bad = MagicMock()
+        bad.symbol = "ZZZ"
+        bad.qty = "not_a_number"  # exercises qty-parse skip in map build
+
+        tc = MagicMock()
+        tc.get_order_by_id.return_value = stop
+        tc.get_all_positions.return_value = [
+            self._make_alpaca_position_qty("TTE", 1), bad
+        ]
+
+        with patch("executor.submit_stop_loss", return_value="new-1") as mock_submit, \
+             patch("executor._log_trade") as mock_log, \
+             patch("executor.critical_alert"):
+            from executor import _check_cancelled_stops
+            _check_cancelled_stops(tc, r)
+
+        mock_log.assert_not_called()  # no partial booking
+        mock_submit.assert_called_once()
+        assert mock_submit.call_args[0][2] == 1  # clamped 3 → 1
+        assert json.loads(store["trading:positions"])["TTE"]["quantity"] == 1
+
     def test_cancelled_stop_resubmit_fails_fires_naked_position_alert(self):
         """Cancelled stop + resubmit returns None → NAKED POSITION alert, no Redis change.
 
@@ -2679,3 +2794,252 @@ class TestSecondsUntilMidnightEt:
         from executor import _seconds_until_midnight_et
         result = _seconds_until_midnight_et()
         assert 1 <= result <= 86400
+
+
+# ── _alpaca_position_qty ─────────────────────────────────────
+
+class TestAlpacaPositionQty:
+    def test_returns_qty_when_symbol_present(self):
+        from executor import _alpaca_position_qty
+        tc = MagicMock()
+        tc.get_all_positions.return_value = [
+            make_alpaca_pos("SPY", 10), make_alpaca_pos("TTE", 1)
+        ]
+        assert _alpaca_position_qty(tc, "TTE") == 1.0
+
+    def test_returns_zero_when_symbol_absent_in_real_list(self):
+        from executor import _alpaca_position_qty
+        tc = MagicMock()
+        tc.get_all_positions.return_value = [make_alpaca_pos("SPY", 10)]
+        assert _alpaca_position_qty(tc, "TTE") == 0.0
+
+    def test_returns_none_when_response_not_a_list(self):
+        # Unconfigured mock (or unexpected type) → unknown → caller falls back.
+        from executor import _alpaca_position_qty
+        tc = MagicMock()  # get_all_positions() returns a child MagicMock, not a list
+        assert _alpaca_position_qty(tc, "TTE") is None
+
+    def test_returns_none_on_api_error(self):
+        from executor import _alpaca_position_qty
+        tc = MagicMock()
+        tc.get_all_positions.side_effect = Exception("API down")
+        assert _alpaca_position_qty(tc, "TTE") is None
+
+    def test_absolute_value_for_qty(self):
+        from executor import _alpaca_position_qty
+        tc = MagicMock()
+        tc.get_all_positions.return_value = [make_alpaca_pos("TTE", -2)]
+        assert _alpaca_position_qty(tc, "TTE") == 2.0
+
+    def test_returns_none_when_qty_non_numeric_type(self):
+        from executor import _alpaca_position_qty
+        tc = MagicMock()
+        p = MagicMock()
+        p.symbol = "TTE"
+        p.qty = object()  # not int/float/str
+        tc.get_all_positions.return_value = [p]
+        assert _alpaca_position_qty(tc, "TTE") is None
+
+    def test_returns_none_when_qty_unparseable_string(self):
+        from executor import _alpaca_position_qty
+        tc = MagicMock()
+        p = MagicMock()
+        p.symbol = "TTE"
+        p.qty = "not_a_number"
+        tc.get_all_positions.return_value = [p]
+        assert _alpaca_position_qty(tc, "TTE") is None
+
+
+# ── _reconcile_partial_stop_fill ─────────────────────────────
+
+class TestReconcilePartialStopFill:
+    def _stop(self, filled_qty=None, avg="83.87", stop_id="old"):
+        s = MagicMock()
+        s.id = stop_id
+        s.filled_qty = filled_qty
+        s.filled_avg_price = avg
+        return s
+
+    def test_returns_zero_when_no_fill(self):
+        pos = make_position(symbol="TTE", qty=3)
+        positions = {"TTE": pos}
+        r, _ = make_redis(positions)
+        with patch("executor._log_trade") as ml:
+            from executor import _reconcile_partial_stop_fill
+            assert _reconcile_partial_stop_fill(r, pos, positions, "TTE",
+                                                self._stop(filled_qty="0")) == 0.0
+        ml.assert_not_called()
+
+    def test_unparseable_filled_qty_returns_zero(self):
+        pos = make_position(symbol="TTE", qty=3)
+        positions = {"TTE": pos}
+        r, _ = make_redis(positions)
+        with patch("executor._log_trade"):
+            from executor import _reconcile_partial_stop_fill
+            assert _reconcile_partial_stop_fill(r, pos, positions, "TTE",
+                                                self._stop(filled_qty="abc")) == 0.0
+
+    def test_books_partial_and_decrements_qty(self):
+        pos = make_position(symbol="TTE", qty=3, entry=88.09, stop=84.09)
+        positions = {"TTE": pos}
+        r, store = make_redis(positions)
+        with patch("executor._log_trade") as ml:
+            from executor import _reconcile_partial_stop_fill
+            filled = _reconcile_partial_stop_fill(
+                r, pos, positions, "TTE", self._stop(filled_qty="2", avg="83.87"))
+        assert filled == 2.0
+        ml.assert_called_once()
+        assert ml.call_args.kwargs["quantity"] == 2.0
+        assert ml.call_args.kwargs["price"] == pytest.approx(83.87)
+        assert json.loads(store["trading:positions"])["TTE"]["quantity"] == 1
+
+    def test_unparseable_fill_price_falls_back_to_stop_price(self):
+        pos = make_position(symbol="TTE", qty=3, entry=88.09, stop=84.09)
+        positions = {"TTE": pos}
+        r, _ = make_redis(positions)
+        with patch("executor._log_trade") as ml:
+            from executor import _reconcile_partial_stop_fill
+            _reconcile_partial_stop_fill(r, pos, positions, "TTE",
+                                         self._stop(filled_qty="2", avg="bad"))
+        assert ml.call_args.kwargs["price"] == pytest.approx(84.09)  # stop_price
+
+    def test_crypto_partial_applies_fee(self):
+        pos = make_position(symbol="BTC/USD", qty=0.5, entry=30000.0, stop=29000.0)
+        positions = {"BTC/USD": pos}
+        r, store = make_redis(positions, extra={"trading:simulated_equity": "5000.0"})
+        with patch("executor._log_trade"):
+            from executor import _reconcile_partial_stop_fill
+            filled = _reconcile_partial_stop_fill(
+                r, pos, positions, "BTC/USD", self._stop(filled_qty="0.2", avg="29000.0"))
+        assert filled == 0.2
+        # remaining qty stays fractional for crypto
+        assert json.loads(store["trading:positions"])["BTC/USD"]["quantity"] == pytest.approx(0.3)
+
+
+# ── execute_sell qty reconciliation against Alpaca (drift guard) ──
+
+class TestExecuteSellQtyReconcile:
+    def test_clamps_sell_qty_to_alpaca_available(self):
+        """Redis says 3 but Alpaca holds 1 (partial stop fill) → sell 1, not 3."""
+        from config import Keys
+        pos = make_position(symbol="TTE", qty=3, entry=88.09, stop=84.09)
+        r, store = make_redis({"TTE": pos})
+
+        filled = MagicMock()
+        filled.status = "filled"
+        filled.filled_avg_price = "83.90"
+        filled.filled_qty = "1"
+
+        tc = MagicMock()
+        tc.get_clock.return_value = make_clock(is_open=True)
+        tc.get_all_positions.return_value = [make_alpaca_pos("TTE", 1)]
+        tc.submit_order.return_value = make_order(status="accepted")
+        tc.get_order_by_id.return_value = filled
+
+        captured = {}
+
+        def cap_market(**kw):
+            captured.update(kw)
+            return MagicMock()
+
+        with patch("time.sleep"), patch("notify.exit_alert"), \
+             patch("executor._wait_for_order_cancelled", return_value=True), \
+             patch("executor._seconds_until_midnight_et", return_value=3600), \
+             patch("executor.MarketOrderRequest", side_effect=cap_market):
+            from executor import execute_sell
+            result = execute_sell(r, tc, make_sell_signal("TTE"))
+
+        assert result is True
+        assert captured.get("qty") == 1  # clamped 3 → 1
+        assert "TTE" not in json.loads(store["trading:positions"])
+
+    def test_missing_alpaca_position_cleans_redis_and_clears_exit(self):
+        """Redis has position but Alpaca holds none → clean Redis, clear
+        exit_signaled, alert, no sell submitted (stops the alert loop)."""
+        from config import Keys
+        pos = make_position(symbol="TTE", qty=3)
+        r, store = make_redis(
+            {"TTE": pos},
+            extra={Keys.exit_signaled("TTE"): "take_profit"},
+        )
+
+        tc = MagicMock()
+        tc.get_clock.return_value = make_clock(is_open=True)
+        tc.get_all_positions.return_value = []  # real empty list → gone
+
+        with patch("time.sleep"), \
+             patch("executor._wait_for_order_cancelled", return_value=True), \
+             patch("executor.critical_alert") as alert:
+            from executor import execute_sell
+            result = execute_sell(r, tc, make_sell_signal("TTE"))
+
+        assert result is False
+        tc.submit_order.assert_not_called()
+        assert "TTE" not in json.loads(store["trading:positions"])
+        assert Keys.exit_signaled("TTE") not in store
+        alert.assert_called_once()
+
+    def test_api_error_falls_back_to_redis_qty(self):
+        """If Alpaca position fetch errors, behave as before (use Redis qty)."""
+        pos = make_position(symbol="SPY", qty=10, entry=500.0, stop=490.0)
+        r, store = make_redis({"SPY": pos})
+
+        filled = MagicMock()
+        filled.status = "filled"
+        filled.filled_avg_price = "505.00"
+        filled.filled_qty = "10"
+
+        tc = MagicMock()
+        tc.get_clock.return_value = make_clock(is_open=True)
+        tc.get_all_positions.side_effect = Exception("API down")
+        tc.submit_order.return_value = make_order(status="accepted")
+        tc.get_order_by_id.return_value = filled
+
+        captured = {}
+
+        def cap_market(**kw):
+            captured.update(kw)
+            return MagicMock()
+
+        with patch("time.sleep"), patch("notify.exit_alert"), \
+             patch("executor._wait_for_order_cancelled", return_value=True), \
+             patch("executor._seconds_until_midnight_et", return_value=3600), \
+             patch("executor.MarketOrderRequest", side_effect=cap_market):
+            from executor import execute_sell
+            result = execute_sell(r, tc, make_sell_signal("SPY"))
+
+        assert result is True
+        assert captured.get("qty") == 10  # unchanged — fell back to Redis qty
+        assert "SPY" not in json.loads(store["trading:positions"])
+
+    def test_alpaca_qty_matching_redis_is_unchanged(self):
+        """Alpaca qty == Redis qty → no clamp, normal sell."""
+        pos = make_position(symbol="SPY", qty=10, entry=500.0, stop=490.0)
+        r, store = make_redis({"SPY": pos})
+
+        filled = MagicMock()
+        filled.status = "filled"
+        filled.filled_avg_price = "505.00"
+        filled.filled_qty = "10"
+
+        tc = MagicMock()
+        tc.get_clock.return_value = make_clock(is_open=True)
+        tc.get_all_positions.return_value = [make_alpaca_pos("SPY", 10)]
+        tc.submit_order.return_value = make_order(status="accepted")
+        tc.get_order_by_id.return_value = filled
+
+        captured = {}
+
+        def cap_market(**kw):
+            captured.update(kw)
+            return MagicMock()
+
+        with patch("time.sleep"), patch("notify.exit_alert"), \
+             patch("executor._wait_for_order_cancelled", return_value=True), \
+             patch("executor._seconds_until_midnight_et", return_value=3600), \
+             patch("executor.MarketOrderRequest", side_effect=cap_market):
+            from executor import execute_sell
+            result = execute_sell(r, tc, make_sell_signal("SPY"))
+
+        assert result is True
+        assert captured.get("qty") == 10
