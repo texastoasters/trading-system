@@ -222,36 +222,59 @@ def _find_active_stop_order(trading_client, symbol):
     return None
 
 
-def _reconcile_partial_stop_fill(r, pos, positions, symbol, stop_order):
-    """Book realized P&L for shares a stop order sold before being cancelled.
-
-    A GTC stop can fill part of its quantity (e.g. 2 of 3) and then be
-    cancelled, leaving Redis qty stale-high. This records the realized P&L
-    for the filled portion, updates simulated equity, and decrements Redis
-    qty by the filled amount. Returns the filled qty (0.0 if none).
-
-    The caller is responsible for syncing the remaining qty to the broker's
-    authoritative position and resubmitting any protective stop.
-    """
-    raw_filled = getattr(stop_order, "filled_qty", None)
+def _order_filled_qty(order):
+    """Filled qty on an Alpaca order as a float; 0.0 if absent/unparseable.
+    The isinstance guard stops a MagicMock/garbage value from coercing via float()."""
+    raw = getattr(order, "filled_qty", None)
+    if not isinstance(raw, (int, float, str)):
+        return 0.0
     try:
-        filled = float(raw_filled) if isinstance(raw_filled, (int, float, str)) else 0.0
+        return float(raw)
     except (TypeError, ValueError):
-        filled = 0.0
-    if filled <= 0:
         return 0.0
 
-    raw_price = getattr(stop_order, "filled_avg_price", None)
-    try:
-        fill_price = (float(raw_price) if isinstance(raw_price, (int, float, str))
-                      else float(pos["stop_price"]))
-    except (TypeError, ValueError):
-        fill_price = float(pos["stop_price"])
 
+def _order_fill_price(order, fallback):
+    """filled_avg_price on an Alpaca order as a float; `fallback` if absent/unparseable."""
+    raw = getattr(order, "filled_avg_price", None)
+    if not isinstance(raw, (int, float, str)):
+        return fallback
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _book_partial_stop_fill(r, pos, positions, symbol, stop_order, broker_qty):
+    """Book shares a stop order sold before it was cancelled but that Redis
+    never recorded, then sync Redis qty down to the broker's position.
+
+    A GTC stop can fill part of its quantity (e.g. 2 of 3) and then be
+    cancelled. Those filled shares left our possession at the stop's fill
+    price, yet Redis qty stays stale-high — which makes every later sell /
+    stop resubmit request more shares than exist (403, repeating alert).
+
+    Books the unbooked delta (Redis qty − broker_qty) ONCE, at the stop's
+    `filled_avg_price`, only when the stop actually filled shares
+    (`filled_qty > 0`) — we never fabricate a fill for a position that
+    closed by some other route. Updates simulated equity, logs the realized
+    trade, and sets Redis qty to `broker_qty`.
+
+    Idempotent: after booking, Redis qty == broker_qty, so a second call
+    from another reconcile path computes a non-positive delta and books
+    nothing. Returns the qty booked (0.0 if none).
+    """
+    if _order_filled_qty(stop_order) <= 0:
+        return 0.0
+    delta = pos["quantity"] - broker_qty
+    if delta <= 0:
+        return 0.0
+
+    fill_price = _order_fill_price(stop_order, float(pos["stop_price"]))
     entry_price = pos["entry_price"]
-    pnl_dollar = (fill_price - entry_price) * filled
+    pnl_dollar = (fill_price - entry_price) * delta
     if is_crypto(symbol):
-        fee = (entry_price * filled + fill_price * filled) * (config.BTC_FEE_RATE / 2)
+        fee = (entry_price * delta + fill_price * delta) * (config.BTC_FEE_RATE / 2)
         pnl_dollar -= fee
 
     new_equity = update_simulated_equity(r, pnl_dollar)
@@ -259,9 +282,9 @@ def _reconcile_partial_stop_fill(r, pos, positions, symbol, stop_order):
     _log_trade(
         symbol=symbol,
         side="sell",
-        quantity=filled,
+        quantity=delta,
         price=fill_price,
-        total_value=fill_price * filled,
+        total_value=fill_price * delta,
         order_id=str(getattr(stop_order, "id", "")),
         strategy=pos.get("strategy", "rsi2"),
         asset_class="crypto" if is_crypto(symbol) else "equity",
@@ -269,15 +292,14 @@ def _reconcile_partial_stop_fill(r, pos, positions, symbol, stop_order):
         exit_reason="stop_loss_partial",
     )
 
-    remaining = pos["quantity"] - filled
-    pos["quantity"] = int(remaining) if not is_crypto(symbol) else remaining
+    pos["quantity"] = int(broker_qty) if not is_crypto(symbol) else broker_qty
     positions[symbol] = pos
     r.set(Keys.POSITIONS, json.dumps(positions))
 
-    print(f"  [Executor] ⚠️ {symbol}: stop partially filled {filled} @ "
-          f"${fill_price:.2f} before cancel — booked P&L ${pnl_dollar:+.2f}, "
-          f"remaining qty {pos['quantity']}, equity now ${new_equity:.2f}")
-    return filled
+    print(f"  [Executor] ⚠️ {symbol}: booked {delta} unreconciled share(s) from "
+          f"partial stop fill @ ${fill_price:.2f} (P&L ${pnl_dollar:+.2f}); "
+          f"Redis qty → {pos['quantity']}, equity now ${new_equity:.2f}")
+    return delta
 
 
 def _check_cancelled_stops(trading_client, r):
@@ -336,18 +358,22 @@ def _check_cancelled_stops(trading_client, r):
             continue
 
         if stop_order.status == "cancelled":
-            # If the stop sold some shares before being cancelled (partial
-            # fill), book that realized P&L now — otherwise those shares would
-            # be silently lost and Redis qty would stay stale, causing endless
-            # "insufficient qty" 403s on the next sell/resubmit.
-            _reconcile_partial_stop_fill(r, pos, positions, symbol, stop_order)
+            # Broker's authoritative remaining qty (0 if the position is gone).
+            broker_qty = 0.0 if symbol not in alpaca_symbols \
+                else alpaca_qty.get(symbol, pos["quantity"])
 
-            if symbol not in alpaca_symbols:
+            # If the stop sold shares before being cancelled (partial fill),
+            # book that realized P&L now and sync Redis qty to the broker —
+            # otherwise those shares are silently lost and the stale qty drives
+            # endless "insufficient qty" 403s on the next sell/resubmit.
+            _book_partial_stop_fill(r, pos, positions, symbol, stop_order, broker_qty)
+
+            if symbol not in alpaca_symbols or pos["quantity"] <= 0:
                 # No shares remain on Alpaca — position fully closed.
                 print(f"  [Executor] ⚠️  {symbol}: stop cancelled + position gone — cleaning Redis")
                 critical_alert(
                     f"STOP CANCELLED — POSITION CLOSED EXTERNALLY: {symbol}\n"
-                    f"Stop {stop_id} was cancelled and position is gone from Alpaca.\n"
+                    f"Stop {stop_id} was cancelled and no shares remain on Alpaca.\n"
                     f"Redis cleaned up. Review P&L manually."
                 )
                 positions.pop(symbol, None)
@@ -356,9 +382,8 @@ def _check_cancelled_stops(trading_client, r):
 
             # Sync Redis qty down to the broker's actual remaining shares
             # before resubmitting, so the new stop never requests more than
-            # is available (the partial-fill drift that caused this incident).
-            broker_qty = alpaca_qty.get(symbol)
-            if broker_qty is not None and broker_qty < pos["quantity"]:
+            # is available (covers drift not attributable to a stop fill).
+            if broker_qty < pos["quantity"]:
                 pos["quantity"] = int(broker_qty) if not is_crypto(symbol) else broker_qty
                 positions[symbol] = pos
                 r.set(Keys.POSITIONS, json.dumps(positions))
@@ -848,34 +873,39 @@ def execute_sell(r, trading_client, order):
     # Reconcile Redis qty against Alpaca's actual position before acting. A
     # partial stop fill (or any drift) can leave Redis qty > broker qty, which
     # makes both the market sell and the stop-restore 403 forever
-    # ("insufficient qty available"), spamming critical alerts. Sync down to
-    # what the broker actually holds. `None` = unknown → keep Redis qty.
+    # ("insufficient qty available"), spamming critical alerts. `None` = the
+    # qty is unknown (API blip) → keep Redis qty rather than risk deleting a
+    # live position.
     actual_qty = _alpaca_position_qty(trading_client, symbol)
-    if actual_qty is not None:
-        if actual_qty <= 0:
-            print(f"  [Executor] {symbol}: no Alpaca position — closed externally, cleaning Redis")
-            del positions[symbol]
-            r.set(Keys.POSITIONS, json.dumps(positions))
-            r.delete(Keys.exit_signaled(symbol))
-            critical_alert(
-                f"POSITION GONE: {symbol}\n"
-                f"Redis showed qty {quantity} but Alpaca holds none. Position was "
-                f"closed server-side. Redis cleaned up — verify realized P&L manually."
-            )
-            return False
-        if actual_qty < quantity:
+    if actual_qty is not None and actual_qty < quantity:
+        # Book any shares a partial stop fill already sold (at the stop's fill
+        # price) so their realized P&L isn't lost; this also syncs Redis qty.
+        stop_id_for_book = pos.get("stop_order_id")
+        if stop_id_for_book:
+            try:
+                prior_stop = trading_client.get_order_by_id(stop_id_for_book)
+                _book_partial_stop_fill(r, pos, positions, symbol, prior_stop, actual_qty)
+            except Exception as exc:
+                print(f"  [Executor] {symbol}: could not read prior stop for P&L booking: {exc}")
+        # Whatever the booking didn't account for (drift with no stop fill
+        # evidence), still sync down so we never request more than available.
+        if pos["quantity"] > actual_qty:
             synced = int(actual_qty) if not is_crypto(symbol) else actual_qty
-            print(f"  [Executor] {symbol}: Redis qty {quantity} > Alpaca {actual_qty} "
-                  f"— reconciling down to {synced}")
-            critical_alert(
-                f"QTY DRIFT RECONCILED: {symbol}\n"
-                f"Redis qty {quantity} exceeded Alpaca available {actual_qty} "
-                f"(likely a partial stop fill). Selling {synced} and syncing Redis."
-            )
-            quantity = synced
             pos["quantity"] = synced
             positions[symbol] = pos
             r.set(Keys.POSITIONS, json.dumps(positions))
+        quantity = pos["quantity"]
+        critical_alert(
+            f"QTY DRIFT RECONCILED: {symbol}\n"
+            f"Redis qty exceeded Alpaca available {actual_qty} (likely a partial "
+            f"stop fill). Synced Redis and booked any sold shares; selling {quantity}."
+        )
+        if quantity <= 0:
+            # Nothing left to sell — position fully closed. Clean up + stop loop.
+            del positions[symbol]
+            r.set(Keys.POSITIONS, json.dumps(positions))
+            r.delete(Keys.exit_signaled(symbol))
+            return False
 
     stop_cancelled = False
     try:

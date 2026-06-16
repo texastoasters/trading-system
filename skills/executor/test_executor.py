@@ -2852,7 +2852,11 @@ class TestAlpacaPositionQty:
 
 # ── _reconcile_partial_stop_fill ─────────────────────────────
 
-class TestReconcilePartialStopFill:
+class TestBookPartialStopFill:
+    """`_book_partial_stop_fill(r, pos, positions, symbol, stop_order, broker_qty)`
+    books the unbooked delta (Redis qty − broker_qty) once, at the stop's fill
+    price, only when the stop actually filled shares. Idempotent."""
+
     def _stop(self, filled_qty=None, avg="83.87", stop_id="old"):
         s = MagicMock()
         s.id = stop_id
@@ -2860,37 +2864,51 @@ class TestReconcilePartialStopFill:
         s.filled_avg_price = avg
         return s
 
-    def test_returns_zero_when_no_fill(self):
+    def test_returns_zero_when_stop_filled_nothing(self):
         pos = make_position(symbol="TTE", qty=3)
         positions = {"TTE": pos}
         r, _ = make_redis(positions)
         with patch("executor._log_trade") as ml:
-            from executor import _reconcile_partial_stop_fill
-            assert _reconcile_partial_stop_fill(r, pos, positions, "TTE",
-                                                self._stop(filled_qty="0")) == 0.0
+            from executor import _book_partial_stop_fill
+            assert _book_partial_stop_fill(r, pos, positions, "TTE",
+                                           self._stop(filled_qty="0"), 1) == 0.0
         ml.assert_not_called()
 
-    def test_unparseable_filled_qty_returns_zero(self):
+    def test_returns_zero_when_filled_qty_unparseable(self):
         pos = make_position(symbol="TTE", qty=3)
         positions = {"TTE": pos}
         r, _ = make_redis(positions)
         with patch("executor._log_trade"):
-            from executor import _reconcile_partial_stop_fill
-            assert _reconcile_partial_stop_fill(r, pos, positions, "TTE",
-                                                self._stop(filled_qty="abc")) == 0.0
+            from executor import _book_partial_stop_fill
+            assert _book_partial_stop_fill(r, pos, positions, "TTE",
+                                           self._stop(filled_qty="abc"), 1) == 0.0
 
-    def test_books_partial_and_decrements_qty(self):
+    def test_returns_zero_when_no_delta_idempotent(self):
+        """Redis qty already equals broker qty → nothing to book (re-run safe)."""
+        pos = make_position(symbol="TTE", qty=1)
+        positions = {"TTE": pos}
+        r, _ = make_redis(positions)
+        with patch("executor._log_trade") as ml:
+            from executor import _book_partial_stop_fill
+            assert _book_partial_stop_fill(r, pos, positions, "TTE",
+                                           self._stop(filled_qty="2"), 1) == 0.0
+        ml.assert_not_called()
+
+    def test_books_delta_and_syncs_qty_to_broker(self):
         pos = make_position(symbol="TTE", qty=3, entry=88.09, stop=84.09)
         positions = {"TTE": pos}
         r, store = make_redis(positions)
         with patch("executor._log_trade") as ml:
-            from executor import _reconcile_partial_stop_fill
-            filled = _reconcile_partial_stop_fill(
-                r, pos, positions, "TTE", self._stop(filled_qty="2", avg="83.87"))
-        assert filled == 2.0
+            from executor import _book_partial_stop_fill
+            booked = _book_partial_stop_fill(
+                r, pos, positions, "TTE", self._stop(filled_qty="2", avg="83.87"), 1)
+        assert booked == 2.0  # delta = 3 - 1
         ml.assert_called_once()
         assert ml.call_args.kwargs["quantity"] == 2.0
         assert ml.call_args.kwargs["price"] == pytest.approx(83.87)
+        assert ml.call_args.kwargs["exit_reason"] == "stop_loss_partial"
+        # realized P&L for the 2 sold shares: (83.87 - 88.09) * 2 = -8.44
+        assert ml.call_args.kwargs["realized_pnl"] == pytest.approx(-8.44, abs=0.01)
         assert json.loads(store["trading:positions"])["TTE"]["quantity"] == 1
 
     def test_unparseable_fill_price_falls_back_to_stop_price(self):
@@ -2898,21 +2916,32 @@ class TestReconcilePartialStopFill:
         positions = {"TTE": pos}
         r, _ = make_redis(positions)
         with patch("executor._log_trade") as ml:
-            from executor import _reconcile_partial_stop_fill
-            _reconcile_partial_stop_fill(r, pos, positions, "TTE",
-                                         self._stop(filled_qty="2", avg="bad"))
+            from executor import _book_partial_stop_fill
+            _book_partial_stop_fill(r, pos, positions, "TTE",
+                                    self._stop(filled_qty="2", avg="bad"), 1)
         assert ml.call_args.kwargs["price"] == pytest.approx(84.09)  # stop_price
 
-    def test_crypto_partial_applies_fee(self):
+    def test_non_numeric_fill_price_falls_back_to_stop_price(self):
+        pos = make_position(symbol="TTE", qty=3, entry=88.09, stop=84.09)
+        positions = {"TTE": pos}
+        r, _ = make_redis(positions)
+        stop = self._stop(filled_qty="2")
+        stop.filled_avg_price = None  # not int/float/str
+        with patch("executor._log_trade") as ml:
+            from executor import _book_partial_stop_fill
+            _book_partial_stop_fill(r, pos, positions, "TTE", stop, 1)
+        assert ml.call_args.kwargs["price"] == pytest.approx(84.09)  # stop_price
+
+    def test_crypto_partial_applies_fee_and_syncs(self):
         pos = make_position(symbol="BTC/USD", qty=0.5, entry=30000.0, stop=29000.0)
         positions = {"BTC/USD": pos}
         r, store = make_redis(positions, extra={"trading:simulated_equity": "5000.0"})
         with patch("executor._log_trade"):
-            from executor import _reconcile_partial_stop_fill
-            filled = _reconcile_partial_stop_fill(
-                r, pos, positions, "BTC/USD", self._stop(filled_qty="0.2", avg="29000.0"))
-        assert filled == 0.2
-        # remaining qty stays fractional for crypto
+            from executor import _book_partial_stop_fill
+            booked = _book_partial_stop_fill(
+                r, pos, positions, "BTC/USD",
+                self._stop(filled_qty="0.2", avg="29000.0"), 0.3)
+        assert booked == pytest.approx(0.2)  # delta = 0.5 - 0.3
         assert json.loads(store["trading:positions"])["BTC/USD"]["quantity"] == pytest.approx(0.3)
 
 
@@ -2951,6 +2980,99 @@ class TestExecuteSellQtyReconcile:
 
         assert result is True
         assert captured.get("qty") == 1  # clamped 3 → 1
+        assert "TTE" not in json.loads(store["trading:positions"])
+
+    def test_books_partial_pnl_from_prior_stop_during_drift(self):
+        """The 2 shares a cancelled stop sold @ 83.87 are booked (P&L recovered)
+        during the drift reconcile, then the remaining 1 is sold."""
+        pos = make_position(symbol="TTE", qty=3, entry=88.09, stop=84.09,
+                            stop_order_id="stop-456")
+        r, store = make_redis({"TTE": pos})
+
+        prior_stop = MagicMock()       # the cancelled stop that sold 2 @ 83.87
+        prior_stop.id = "stop-456"
+        prior_stop.status = "canceled"
+        prior_stop.filled_qty = "2"
+        prior_stop.filled_avg_price = "83.87"
+
+        sell_fill = MagicMock()        # the new market sell of the last 1 share
+        sell_fill.status = "filled"
+        sell_fill.filled_avg_price = "84.60"
+        sell_fill.filled_qty = "1"
+
+        def by_id(oid):
+            return prior_stop if oid == "stop-456" else sell_fill
+
+        tc = MagicMock()
+        tc.get_clock.return_value = make_clock(is_open=True)
+        tc.get_all_positions.return_value = [make_alpaca_pos("TTE", 1)]
+        tc.submit_order.return_value = make_order(alpaca_id="sell-1", status="accepted")
+        tc.get_order_by_id.side_effect = by_id
+
+        booked = []
+
+        def rec_log(**kw):
+            booked.append(kw)
+
+        with patch("time.sleep"), patch("notify.exit_alert"), \
+             patch("executor._wait_for_order_cancelled", return_value=True), \
+             patch("executor._seconds_until_midnight_et", return_value=3600), \
+             patch("executor._log_trade", side_effect=rec_log):
+            from executor import execute_sell
+            result = execute_sell(r, tc, make_sell_signal("TTE"))
+
+        assert result is True
+        # The 2 partially-sold shares were booked @ 83.87 as stop_loss_partial
+        partial = [b for b in booked if b.get("exit_reason") == "stop_loss_partial"]
+        assert len(partial) == 1
+        assert partial[0]["quantity"] == 2.0
+        assert partial[0]["price"] == pytest.approx(83.87)
+        assert partial[0]["realized_pnl"] == pytest.approx(-8.44, abs=0.01)
+        # Position fully closed after selling the remaining 1
+        assert "TTE" not in json.loads(store["trading:positions"])
+
+    def test_prior_stop_read_error_still_clamps_and_sells(self):
+        """If the prior stop can't be read for P&L booking, the drift reconcile
+        still clamps qty to the broker and sells (no crash, no 403 loop)."""
+        pos = make_position(symbol="TTE", qty=3, entry=88.09, stop=84.09,
+                            stop_order_id="stop-456")
+        r, store = make_redis({"TTE": pos})
+
+        sell_fill = MagicMock()
+        sell_fill.status = "filled"
+        sell_fill.filled_avg_price = "84.60"
+        sell_fill.filled_qty = "1"
+
+        def by_id(oid):
+            if oid == "stop-456":
+                raise RuntimeError("order not found")
+            return sell_fill
+
+        tc = MagicMock()
+        tc.get_clock.return_value = make_clock(is_open=True)
+        tc.get_all_positions.return_value = [make_alpaca_pos("TTE", 1)]
+        tc.submit_order.return_value = make_order(alpaca_id="sell-1", status="accepted")
+        tc.get_order_by_id.side_effect = by_id
+
+        captured = {}
+
+        def cap_market(**kw):
+            captured.update(kw)
+            return MagicMock()
+
+        with patch("time.sleep"), patch("notify.exit_alert"), \
+             patch("executor._wait_for_order_cancelled", return_value=True), \
+             patch("executor._seconds_until_midnight_et", return_value=3600), \
+             patch("executor.MarketOrderRequest", side_effect=cap_market), \
+             patch("executor._log_trade") as ml:
+            from executor import execute_sell
+            result = execute_sell(r, tc, make_sell_signal("TTE"))
+
+        assert result is True
+        assert captured.get("qty") == 1  # clamped despite stop-read failure
+        # No partial booking (couldn't read the stop)
+        assert all(c.kwargs.get("exit_reason") != "stop_loss_partial"
+                   for c in ml.call_args_list)
         assert "TTE" not in json.loads(store["trading:positions"])
 
     def test_missing_alpaca_position_cleans_redis_and_clears_exit(self):

@@ -8,6 +8,21 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.36.5] - 2026-06-16
+
+### Fixed
+- **Partial stop fill now books realized P&L (follow-up to 0.36.4).** 0.36.4 stopped the 403 alert loop and corrected the share count, but it did **not** book the shares a cancelled stop had already sold — their realized P&L was silently dropped — and its two reconcile paths (`execute_sell` and `_check_cancelled_stops`) could double-count. Confirmed live on TTE via a read-only Alpaca query: position qty=1 @ 88.09 entry; stop `3655cc8d` SELL qty 3, filled 2 @ 83.87, CANCELED; Redis qty=3 with the 2 sold shares (≈ −$8.44) unbooked.
+  - Replaced the non-idempotent `_reconcile_partial_stop_fill` (decrement-by-`filled_qty`) with **`_book_partial_stop_fill`**: when Redis qty exceeds the broker's actual qty **and** the position's stop shows `filled_qty > 0`, it books the unbooked delta (`redis_qty − broker_qty`) **once** at the stop's `filled_avg_price` — realized P&L to simulated equity, a `stop_loss_partial` trade logged — then syncs Redis qty to the broker. Self-idempotent: after booking, `redis == broker`, so the other reconcile path computes a non-positive delta and books nothing. Only books when the stop actually filled shares (never fabricates a fill for a position closed another way).
+  - Both paths funnel through it: `execute_sell` books the partial from the prior stop order, syncs qty (cleaning Redis + clearing `exit_signaled` if nothing remains), then sells the remainder; `_check_cancelled_stops` does the same before resubmitting protection.
+
+### Tests
+- 24 cases in `skills/executor/test_executor.py` covering `_alpaca_position_qty`, `_book_partial_stop_fill` (no-fill / unparseable qty / zero-delta idempotency / books delta + correct −$8.44 P&L / fill-price fallbacks / crypto fee), `execute_sell` reconcile (clamp + sell, books prior-stop shares @ 83.87, prior-stop-read error still clamps, position-gone cleanup, api-error fallback, matching-qty no-op), and `_check_cancelled_stops` (partial-fill book + resubmit, full-fill-then-gone cleanup, no-partial broker clamp). `skills/executor/executor.py` at **100%** coverage; full suite 1101 pass.
+
+### Notes
+- 0.36.4's redesign was developed but not included in PR #225 (merged before the follow-up commit landed); this release carries it forward. The live stuck position self-heals on the next post-deploy exit cycle — books the 2 shares' P&L, syncs Redis 3→1, sells the remaining share or resubmits its stop. No manual server intervention. `scripts/reconcile.py --fix` still does not address qty drift (resubmits at the stale qty) — flagged follow-up.
+
+---
+
 ## [0.36.4] - 2026-06-16
 
 ### Fixed
