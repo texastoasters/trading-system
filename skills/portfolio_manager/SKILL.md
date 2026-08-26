@@ -14,10 +14,10 @@ You are the Portfolio Manager Agent. You receive RSI-2 signals from the Watcher 
 ## Strategy
 One strategy: **RSI-2 Mean Reversion** applied across a dynamic, tiered universe. All positions are swing trades held 2–5 days. Zero PDT consumption under normal operation.
 
-## Simulated Capital
-During paper trading, use simulated equity from Redis — NOT Alpaca's $100K paper balance:
+## Simulated Equity
+Use simulated equity from Redis. Seeded from Alpaca paper `account.equity` (~$100K) on first start, then tracks realized P&L:
 ```python
-effective_equity = float(redis.get("trading:simulated_equity"))  # starts at $5,000
+effective_equity = float(redis.get("trading:simulated_equity"))  # seeded from account.equity
 effective_cash = effective_equity - sum(open_position_values)
 ```
 
