@@ -128,8 +128,8 @@ class TestInitRedisState:
     def test_sets_all_defaults_when_keys_missing(self):
         r = make_r(exists=False)
         init_redis_state(r)
-        # All 11 keys should have been set (includes PEAK_EQUITY_DATE)
-        assert r.set.call_count == 11
+        # Equity keys are seeded by executor.verify_startup, not here.
+        assert r.set.call_count == 8
 
     def test_skips_existing_keys(self):
         r = make_r(exists=True)

@@ -8,6 +8,17 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.37.0] - 2026-08-26
+
+### Changed
+- **Paper equity is capital.** Dropped the $5K tuition cap. `INITIAL_CAPITAL` is now `$100,000` (Alpaca paper starting balance). `init_redis_state` no longer writes `trading:simulated_equity` / `trading:peak_equity` — those are seeded by `executor.verify_startup` from live Alpaca `account.equity` so a wiped Redis cannot silently re-cap at $5K. Redis remains the live ledger after that (realized P&L, drawdown, Rule 1 cash). Circuit breakers (1% risk / 3% daily / 10–20% drawdown) still apply to that number. Still paper. Still Rule 1.
+
+### Tests
+- `init_redis_state` now sets 8 keys (not 11). `verify_startup` asserts seed from `account.equity` (`100000.0` and a non-round `98765.43` so INITIAL_CAPITAL cannot sneak in).
+- Weekly paper-report test uses $102K simulated equity vs $100K INITIAL_CAPITAL (2% return). FakeRedix stub accepts Redix 1.8's 3-tuple pipeline cast (CI floats on `~> 1.5` because mix.lock is gitignored).
+
+---
+
 ## [0.36.5] - 2026-06-16
 
 ### Fixed

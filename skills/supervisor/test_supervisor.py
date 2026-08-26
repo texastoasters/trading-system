@@ -223,7 +223,8 @@ class TestWeeklySummaryPaperReport:
         return acct
 
     def test_paper_report_included_when_alpaca_succeeds(self):
-        r = make_redis({Keys.SIMULATED_EQUITY: "5100.0"})
+        # 2% simulated return vs INITIAL_CAPITAL ($100K); 2% vs Alpaca paper start ($100K).
+        r = make_redis({Keys.SIMULATED_EQUITY: "102000.0"})
         cur = make_cursor()
         conn = MagicMock()
         conn.cursor.return_value = cur

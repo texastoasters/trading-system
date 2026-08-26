@@ -16,7 +16,7 @@ Five specialized agents handle screening, signal generation, position sizing, or
 **Key constraints:**
 - **Rule 1 (no debt)**: No shorting, no margin. Enforced independently in the Portfolio Manager, Executor, and Supervisor.
 - **PDT compliance**: Positions are held overnight as swing trades. The PDT gate fires only when an order would complete a same-session round-trip for an account with ≥ 3 day trades.
-- **$5,000 simulated capital**: Paper trading uses a virtual cap tracked in Redis, not Alpaca's $100K paper balance.
+- **Paper equity as capital**: `trading:simulated_equity` is seeded from Alpaca paper `account.equity` (~$100K) on first start. Not a $5K tuition cap. Circuit breakers still apply to that number.
 
 **Backtested performance** (3-year real data via Alpaca):
 - 17 validated instruments across broad ETFs, sector ETFs, large-cap stocks, and BTC/USD
@@ -90,7 +90,7 @@ chmod +x start_trading_system.sh
 4. Regenerate `.env`: `grep -E '^export [A-Z_]+=' ~/.trading_env | sed 's/^export //' > ~/trading-system/.env`
 5. Verify: `source ~/.trading_env && python3 scripts/verify_alpaca.py`
 
-The paper account comes with $100,000 in virtual funds. The system caps itself at $5,000 via `trading:simulated_equity` in Redis.
+The paper account comes with $100,000 in virtual funds. `trading:simulated_equity` is seeded from Alpaca `account.equity` on first start and then tracks realized P&L.
 
 ### Docker Services
 
@@ -376,7 +376,7 @@ The Phoenix LiveView dashboard (port 4000) has six pages:
 
 4. **PDT gate**: Fires only when an order would complete a same-session round-trip for an account with ≥ 3 day trades counted. Overnight exits and new buys on symbols not entered today are allowed regardless of the PDT flag. The Executor is the single enforcement point; pre-rejection in the Watcher was removed.
 
-5. **Simulated capital cap**: `trading:simulated_equity` in Redis is the source of truth for available capital, capped at $5,000. This prevents the system from learning behaviors that wouldn't work at real account size.
+5. **Simulated equity ledger**: `trading:simulated_equity` in Redis is the source of truth for available capital. Seeded from Alpaca paper `account.equity` (~$100K) on first start, then updated with realized P&L. Circuit breakers (3% daily / 10–20% drawdown) apply to that number.
 
 ## Instrument Universe
 
@@ -404,7 +404,7 @@ Promotion: max one tier up per month. Demotion: can fall multiple tiers. Disable
 | `trading:signals` | Watcher | Entry/exit signals |
 | `trading:approved_orders` | Portfolio Manager | Validated, sized orders |
 | `trading:positions` | Executor | Open positions |
-| `trading:simulated_equity` | Executor | Virtual $5K capital tracker |
+| `trading:simulated_equity` | Executor | Paper equity ledger (seeded from Alpaca) |
 | `trading:drawdown` | Executor | Current drawdown from peak |
 | `trading:closed_today` | Executor | Symbols with a sell fill today (PDT gate) |
 | `trading:system_status` | Supervisor | active / halted / daily_halt |

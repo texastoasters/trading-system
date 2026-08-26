@@ -45,10 +45,13 @@ PAPER_TRADING = True
 
 # ── Capital ─────────────────────────────────────────────────
 
-# Total virtual capital ($). NOT Alpaca's $100K paper balance. The system enforces
-# this cap via trading:simulated_equity in Redis. Position sizing and Rule 1 are
-# both based on this number, not Alpaca's reported equity.
-INITIAL_CAPITAL = 5000.00
+# Paper-account starting capital ($). Alpaca paper accounts start at $100K.
+# trading:simulated_equity is still the live ledger (updated with realized P&L),
+# but it is seeded from Alpaca account.equity on first start — not a $5K tuition cap.
+# Position sizing, Rule 1 cash ceiling, and drawdown circuit breakers all use
+# that Redis ledger. INITIAL_CAPITAL is the fallback if Redis is empty and the
+# weekly paper-vs-simulated return baseline.
+INITIAL_CAPITAL = 100_000.00
 # Maximum simultaneous open positions across all tiers and asset classes.
 MAX_CONCURRENT_POSITIONS = 5  # HOT-RELOADABLE via trading:config
 # Maximum open positions in equity instruments (stocks, ETFs).
@@ -408,15 +411,14 @@ def init_redis_state(r: redis.Redis):
         Keys.UNIVERSE:       json.dumps(DEFAULT_UNIVERSE),
         Keys.TIERS:          json.dumps(DEFAULT_TIERS),
         Keys.REGIME:         json.dumps({"regime": "RANGING", "adx": 20, "initialized_default": True}),
-        Keys.SIMULATED_EQUITY: str(INITIAL_CAPITAL),
-        Keys.PEAK_EQUITY:    str(INITIAL_CAPITAL),
-        Keys.PEAK_EQUITY_DATE: date.today().isoformat(),
         Keys.DAILY_PNL:      "0.0",
         Keys.DRAWDOWN:       "0.0",
         Keys.PDT_COUNT:      "0",
         Keys.RISK_MULTIPLIER: "1.0",
         Keys.SYSTEM_STATUS:  "active",
     }
+    # SIMULATED_EQUITY / PEAK_EQUITY are seeded by executor.verify_startup from
+    # Alpaca account.equity so a wiped Redis does not silently re-cap at INITIAL_CAPITAL.
     for key, val in defaults.items():
         if not r.exists(key):
             r.set(key, val)

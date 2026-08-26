@@ -1,25 +1,18 @@
-# Session State (2026-06-16)
+# Session State (2026-08-26)
 
 ## In flight
 
-- **fix/partial-stop-fill-pnl (v0.36.5)** → branch `fix/partial-stop-fill-pnl`
-  - Carries forward the idempotent-redesign that did NOT make it into merged PR #225 (#225 = first cut only, v0.36.4, non-idempotent `_reconcile_partial_stop_fill`, dropped the 2 sold shares' P&L). Redesign commit 526ebf6 was on the deleted branch; ported its executor.py + test_executor.py onto fresh main.
-  - **`_book_partial_stop_fill` (idempotent):** Redis qty > broker qty AND stop filled_qty>0 → book delta ONCE at stop's filled_avg_price (realized P&L → equity + `stop_loss_partial` trade), sync Redis to broker. Re-runs book nothing. Recovers the 2 TTE shares (≈ −$8.44) the first cut dropped.
-  - Both paths use `_alpaca_position_qty()` broker truth. `execute_sell` books partial + syncs (clean Redis + clear `exit_signaled` if empty) then sells; `_check_cancelled_stops` same before resubmit.
-  - executor.py 100% cov; full suite 1101 pass. Live position self-heals next exit cycle post-deploy.
-  - `scripts/reconcile.py --fix` still does NOT fix qty drift (resubmits at stale qty) → flagged follow-up.
+- **feat/paper-equity-as-capital (v0.37.0)** → branch `feat/paper-equity-as-capital`
+  - Drop $5K simulated cap. Seed `trading:simulated_equity` from Alpaca paper `account.equity` (~$100K) on first start.
+  - `init_redis_state` no longer writes equity/peak keys (would re-cap a wiped Redis at INITIAL_CAPITAL before verify_startup).
+  - CLAUDE.md / AGENTS.md left untouched this PR (agent-instruction write blocked). README + PM SKILL.md + config comments updated.
 
-## Shipped 2026-06-16
+## Openboog ops (not this PR)
 
-- **#225 (v0.36.4)** merged — stopped the TTE 403 stop-loss alert loop + corrected share count, but missed the partial-fill P&L booking (fixed in v0.36.5 above).
-
-## Recently shipped
-
-- **P1 TSMOM block complete** (v0.36.0–0.36.3, PRs #219/#222/#223/#224): backtest harness, watcher integration, PM integration + per-strategy caps (`STRATEGY_MAX_CONCURRENT` replaced `DONCHIAN_SYMBOLS`/`TSMOM_SYMBOLS`), `/strategies` dashboard.
-- TSMOM validated DSR=1.000 on 32-sym×10y (365 trades).
+- Files restored from git HEAD a6370f0. History wiped (FLUSHDB + truncate trades/signals/daily_summary). New Alpaca paper keys in both env files. systemd EnvironmentFile + start still pending until this PR is ready.
 
 ## Process reminders
 
-- Bug fixes via PR + CI/CD only; never edit/deploy on the server directly. SSH is read-only for diagnosis.
+- Bug fixes via PR + CI/CD only; never edit/deploy on the server directly. SSH is read-only for diagnosis. Ops restore / crash-loop stop / wipe / systemd env are ops, not feature deploys.
 - TDD: failing test first. Keep Python + Elixir at 100% coverage; no coveralls-ignore shortcuts.
 - Roadmap board (Project #1): pick top Todo by priority, move to In Progress before starting.

@@ -81,7 +81,7 @@ TEST_SYMBOL = "TEST"
 # ── Simulated Capital Tracking ──────────────────────────────
 
 def get_simulated_cash(r):
-    """Available cash in the simulated $5K account."""
+    """Available cash in the simulated paper ledger (equity minus open position value)."""
     equity = get_simulated_equity(r)
     positions = json.loads(r.get(Keys.POSITIONS) or "{}")
     invested = sum(p.get("value", 0) for p in positions.values())
@@ -1178,8 +1178,12 @@ def verify_startup(trading_client, r):
             all_ok = False
 
     if not r.exists(Keys.SIMULATED_EQUITY):
-        r.set(Keys.SIMULATED_EQUITY, str(config.INITIAL_CAPITAL))
-        print(f"  ✅ Simulated equity initialized: ${config.INITIAL_CAPITAL:,.2f}")
+        seed = round(float(account.equity), 2)
+        r.set(Keys.SIMULATED_EQUITY, str(seed))
+        r.set(Keys.PEAK_EQUITY, str(seed))
+        r.set(Keys.PEAK_EQUITY_DATE, date.today().isoformat())
+        r.set(Keys.DRAWDOWN, "0.0")
+        print(f"  ✅ Simulated equity initialized from Alpaca paper equity: ${seed:,.2f}")
     else:
         sim_eq = get_simulated_equity(r)
         print(f"  ✅ Simulated equity: ${sim_eq:,.2f}")

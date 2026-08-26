@@ -1232,13 +1232,24 @@ class TestVerifyStartup:
         assert account is not None
 
     def test_equity_not_set_initializes(self):
-        """When SIMULATED_EQUITY key absent, verify_startup initializes it."""
+        """When SIMULATED_EQUITY key absent, verify_startup seeds from Alpaca equity."""
         r, store = make_redis({})
         del store["trading:simulated_equity"]  # key absent → triggers init branch
-        tc = self._make_tc()
+        tc = self._make_tc(account=make_account(equity="100000.0"))
         from executor import verify_startup
         verify_startup(tc, r)
-        assert "trading:simulated_equity" in store
+        assert store["trading:simulated_equity"] == "100000.0"
+        assert store["trading:peak_equity"] == "100000.0"
+        assert store["trading:drawdown"] == "0.0"
+
+    def test_equity_init_uses_account_equity_not_initial_capital(self):
+        """Wiped Redis must not re-cap at INITIAL_CAPITAL when Alpaca equity differs."""
+        r, store = make_redis({})
+        del store["trading:simulated_equity"]
+        tc = self._make_tc(account=make_account(equity="98765.43"))
+        from executor import verify_startup
+        verify_startup(tc, r)
+        assert store["trading:simulated_equity"] == "98765.43"
 
     def test_equity_already_set(self):
         r, store = make_redis({})
