@@ -15,6 +15,7 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ### Tests
 - `init_redis_state` now sets 8 keys (not 11). `verify_startup` asserts seed from `account.equity` (`100000.0` and a non-round `98765.43` so INITIAL_CAPITAL cannot sneak in).
+- Weekly paper-report test uses $102K simulated equity vs $100K INITIAL_CAPITAL (2% return). FakeRedix stub accepts Redix 1.8's 3-tuple pipeline cast (CI floats on `~> 1.5` because mix.lock is gitignored).
 
 ---
 
