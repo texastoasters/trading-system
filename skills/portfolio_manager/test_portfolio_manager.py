@@ -641,6 +641,23 @@ class TestProcessSignal:
         assert order is None
         r.rpush.assert_called_once()
 
+    def test_stale_published_entry_cannot_bypass_temporary_tier_gate(self):
+        tiers = {**config.DEFAULT_TIERS, "GOOGL": 2}
+        r = make_redis({
+            Keys.TIERS: json.dumps(tiers),
+            Keys.DISABLED_TIERS: json.dumps([2]),
+        })
+
+        from portfolio_manager import process_signal
+        order = process_signal(
+            r, make_signal(symbol="GOOGL", tier=1, signal_type="entry")
+        )
+
+        assert order is None
+        r.publish.assert_not_called()
+        rejection = json.loads(r.rpush.call_args[0][1])
+        assert "temporarily disabled" in rejection["reason"].lower()
+
     def test_exit_approved_publishes_order(self):
         positions = {"SPY": {"symbol": "SPY", "quantity": 10, "entry_price": 500.0}}
         r = make_redis({Keys.POSITIONS: json.dumps(positions)})
@@ -790,6 +807,38 @@ class TestDisplacementPendingQueue:
         symbols_published = {json.loads(c[0][1])["symbol"] for c in r.publish.call_args_list}
         assert "FIBK" in symbols_published
         assert "UNM" in symbols_published
+
+    def test_pending_entry_is_rejected_if_its_tier_becomes_gated(self):
+        positions = {"FIBK": _pos("FIBK", held_days=2)}
+        pending = make_signal(symbol="UNM", tier=1, signal_type="entry")
+        tiers = {**config.DEFAULT_TIERS, "UNM": 2}
+        r = make_redis({
+            Keys.POSITIONS: json.dumps(positions),
+            Keys.TIERS: json.dumps(tiers),
+            Keys.DISABLED_TIERS: json.dumps([2]),
+        })
+        r.llen = MagicMock(side_effect=[1, 0])
+        r.lpop = MagicMock(return_value=json.dumps(pending))
+
+        displaced_signal = {
+            "symbol": "FIBK",
+            "signal_type": "displaced",
+            "reason": "Displaced to make room for UNM",
+            "direction": "close",
+            "exit_price": 35.0,
+        }
+        from portfolio_manager import process_signal
+        process_signal(r, displaced_signal)
+
+        approved = [
+            json.loads(call.args[1])
+            for call in r.publish.call_args_list
+            if call.args[0] == Keys.APPROVED_ORDERS
+        ]
+        assert [order["symbol"] for order in approved] == ["FIBK"]
+        rejection = json.loads(r.rpush.call_args[0][1])
+        assert rejection["symbol"] == "UNM"
+        assert "temporarily disabled" in rejection["reason"].lower()
 
     def test_blocked_exit_does_not_drain_pending_queue(self):
         r = make_redis()  # no FIBK position → exit blocked

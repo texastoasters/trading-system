@@ -1,15 +1,17 @@
-# Session State (2026-08-26)
+# Session State (2026-09-12)
 
 ## In flight
 
-- **feat/paper-equity-as-capital (v0.37.0)** → branch `feat/paper-equity-as-capital`
-  - Drop $5K simulated cap. Seed `trading:simulated_equity` from Alpaca paper `account.equity` (~$100K) on first start.
-  - `init_redis_state` no longer writes equity/peak keys (would re-cap a wiped Redis at INITIAL_CAPITAL before verify_startup).
-  - CLAUDE.md / AGENTS.md left untouched this PR (agent-instruction write blocked). README + PM SKILL.md + config comments updated.
+- **fix/p0-safety-invariants (v0.37.1)** → branch `fix/p0-safety-invariants`
+  - Fix TSMOM exit routing: preserve stop-losses, use `TSMOM_MAX_HOLD_DAYS`, and block RSI-2/prior-high mean-reversion exits.
+  - Preserve cumulative high-water drawdown across daily reset; initialize missing peak state only.
+  - Move defensive/critical temporary Tier 2/3 gates to `trading:disabled_tiers`; enforce at Watcher, TSMOM, and PM final approval boundaries without mutating permanent exclusions.
+  - Regression suite: 1120 passed. Independent GPT-5.6-Sol review passed. No deployment or Redis change occurred.
 
 ## Openboog ops (not this PR)
 
-- Files restored from git HEAD a6370f0. History wiped (FLUSHDB + truncate trades/signals/daily_summary). New Alpaca paper keys in both env files. systemd EnvironmentFile + start still pending until this PR is ready.
+- Open P0: `scripts/verify_alpaca.py` can submit a market order and overwrite/delete the production watchlist; do not run it on openboog until safely redesigned.
+- Open controls: decide live 5% risk / 20-position overrides, allocation enforcement, PDT semantics, and missing schedule policy before profitability optimization.
 
 ## Process reminders
 

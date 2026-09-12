@@ -353,6 +353,25 @@ class TestRunCircuitBreakers:
         set_calls = {c[0][0]: c[0][1] for c in r.set.call_args_list if len(c[0]) == 2}
         assert set_calls.get(Keys.RISK_MULTIPLIER) == "0.75"
 
+    def test_defensive_to_caution_clears_temporary_tier_gate(self):
+        r = _make_cb(equity=4750.0, peak=5000.0, status="defensive")
+        r.delete = MagicMock()
+
+        from supervisor import run_circuit_breakers
+        run_circuit_breakers(r)
+
+        r.delete.assert_any_call(Keys.DISABLED_TIERS)
+
+    def test_critical_to_normal_clears_temporary_tier_gate(self):
+        r = _make_cb(equity=5000.0, peak=5000.0, status="critical")
+        r.delete = MagicMock()
+
+        with patch("supervisor.notify"):
+            from supervisor import run_circuit_breakers
+            run_circuit_breakers(r)
+
+        r.delete.assert_any_call(Keys.DISABLED_TIERS)
+
     def test_recovery_re_enables(self):
         r = _make_cb(status="caution")
         with patch("supervisor.notify"), patch("supervisor.enable_all_tiers") as mock_en:
@@ -417,6 +436,20 @@ class TestRunCircuitBreakers:
             run_circuit_breakers(r)
         mock_alert.assert_not_called()
 
+    def test_daily_halt_is_not_marked_active_while_loss_still_exceeds_limit(self):
+        equity = 5000.0
+        daily_pnl = -(equity * _config.DAILY_LOSS_LIMIT_PCT) - 1
+        r = _make_cb(equity=equity, daily_pnl=daily_pnl, status="daily_halt")
+
+        from supervisor import run_circuit_breakers
+        assert run_circuit_breakers(r) is False
+
+        status_writes = [
+            call.args[1] for call in r.set.call_args_list
+            if call.args[0] == Keys.SYSTEM_STATUS
+        ]
+        assert "active" not in status_writes
+
     def test_drawdown_alert_receives_attribution(self):
         """drawdown_alert is called with attribution kwarg when DB succeeds."""
         attribution_rows = [{"symbol": "SPY", "realized_pnl": -200.0, "unrealized_pnl": 0.0, "total_pnl": -200.0}]
@@ -452,21 +485,83 @@ class TestRunCircuitBreakers:
 # ── disable_tiers / enable_all_tiers ─────────────────────────
 
 class TestTierManagement:
-    def test_disable_tiers_adds_to_disabled(self):
-        r = make_redis()
+    def test_disable_tiers_records_temporary_gate_without_mutating_universe(self):
+        universe = dict(_config.DEFAULT_UNIVERSE)
+        universe["disabled"] = ["META", "TSLA"]
+        r = make_redis({Keys.UNIVERSE: json.dumps(universe)})
         from supervisor import disable_tiers
         disable_tiers(r, [2, 3])
-        saved = json.loads(r.set.call_args[0][1])
-        assert len(saved["disabled"]) > 0
+        r.set.assert_called_once_with(Keys.DISABLED_TIERS, json.dumps([2, 3]))
+        assert all(call.args[0] != Keys.UNIVERSE for call in r.set.call_args_list)
 
-    def test_enable_all_tiers_clears_disabled(self):
+    def test_disable_tiers_replaces_stale_gate_deterministically(self):
+        r = make_redis({Keys.DISABLED_TIERS: json.dumps([1, 3])})
+        from supervisor import disable_tiers
+        disable_tiers(r, [2, 3])
+        r.set.assert_called_once_with(Keys.DISABLED_TIERS, json.dumps([2, 3]))
+
+    def test_enable_all_tiers_clears_only_temporary_gate(self):
         universe = dict(_config.DEFAULT_UNIVERSE)
         universe["disabled"] = ["TSLA", "META"]
         r = make_redis({Keys.UNIVERSE: json.dumps(universe)})
+        r.delete = MagicMock()
         from supervisor import enable_all_tiers
         enable_all_tiers(r)
-        saved = json.loads(r.set.call_args[0][1])
-        assert saved["disabled"] == []
+        r.delete.assert_called_once_with(Keys.DISABLED_TIERS)
+        assert all(call.args[0] != Keys.UNIVERSE for call in r.set.call_args_list)
+
+    def test_recovery_restores_tiers_but_not_permanent_exclusions(self):
+        universe = {
+            "tier1": ["SPY"],
+            "tier2": ["QQQ", "META", "TSLA"],
+            "tier3": ["IWM", "BAD"],
+            "disabled": ["META"],
+            "blacklisted": ["BAD"],
+        }
+        store = {Keys.UNIVERSE: json.dumps(universe)}
+        r = MagicMock()
+        r.get = lambda key: store.get(key)
+        r.set = MagicMock(side_effect=lambda key, value: store.__setitem__(key, value))
+        r.delete = MagicMock(side_effect=lambda key: store.pop(key, None))
+
+        from supervisor import disable_tiers, enable_all_tiers
+
+        disable_tiers(r, [2, 3])
+        assert _config.get_active_instruments(r) == ["SPY"]
+
+        enable_all_tiers(r)
+        assert _config.get_active_instruments(r) == ["SPY", "QQQ", "TSLA", "IWM"]
+        assert json.loads(store[Keys.UNIVERSE])["disabled"] == ["META"]
+
+    def test_breaker_recovery_keeps_disabled_and_blacklisted_symbols_excluded(self):
+        universe = {
+            "tier1": ["SPY"],
+            "tier2": ["QQQ", "META", "TSLA"],
+            "tier3": ["IWM", "BAD"],
+            "disabled": ["META"],
+            "blacklisted": ["BAD"],
+        }
+        store = {
+            Keys.UNIVERSE: json.dumps(universe),
+            Keys.DISABLED_TIERS: json.dumps([2, 3]),
+            Keys.SIMULATED_EQUITY: "5000.0",
+            Keys.PEAK_EQUITY: "5000.0",
+            Keys.SYSTEM_STATUS: "critical",
+            Keys.DAILY_PNL: "0.0",
+        }
+        r = MagicMock()
+        r.get = lambda key: store.get(key)
+        r.set = MagicMock(side_effect=lambda key, value: store.__setitem__(key, value))
+        r.delete = MagicMock(side_effect=lambda key: store.pop(key, None))
+
+        with patch("supervisor.notify"), patch("supervisor.get_db", side_effect=Exception("offline")):
+            from supervisor import run_circuit_breakers
+            run_circuit_breakers(r)
+
+        assert _config.get_active_instruments(r) == ["SPY", "QQQ", "TSLA", "IWM"]
+        recovered = json.loads(store[Keys.UNIVERSE])
+        assert recovered["disabled"] == ["META"]
+        assert recovered["blacklisted"] == ["BAD"]
 
 
 # ── attempt_service_restart ───────────────────────────────────
@@ -824,16 +919,48 @@ class TestResetDaily:
             reset_daily(r)
         r.set.assert_any_call(Keys.DAILY_PNL, "0.0")
 
-    def test_sets_peak_to_current_equity(self):
-        r = self._make(**{Keys.SIMULATED_EQUITY: "4900.0"})
+    def test_preserves_existing_peak_equity(self):
+        r = self._make(**{
+            Keys.SIMULATED_EQUITY: "4900.0",
+            Keys.PEAK_EQUITY: "5250.0",
+        })
+        with patch("supervisor.notify"):
+            from supervisor import reset_daily
+            reset_daily(r)
+        peak_calls = [call for call in r.set.call_args_list
+                      if call.args[0] == Keys.PEAK_EQUITY]
+        assert peak_calls == []
+
+    def test_preserves_existing_peak_equity_date(self):
+        r = self._make(**{
+            Keys.PEAK_EQUITY: "5250.0",
+            Keys.PEAK_EQUITY_DATE: "2026-08-26",
+        })
+        with patch("supervisor.notify"):
+            from supervisor import reset_daily
+            reset_daily(r)
+        date_calls = [call for call in r.set.call_args_list
+                      if call.args[0] == Keys.PEAK_EQUITY_DATE]
+        assert date_calls == []
+
+    def test_initializes_peak_from_current_equity_when_absent(self):
+        r = self._make(**{
+            Keys.SIMULATED_EQUITY: "4900.0",
+            Keys.PEAK_EQUITY: None,
+            Keys.PEAK_EQUITY_DATE: None,
+        })
         with patch("supervisor.notify"):
             from supervisor import reset_daily
             reset_daily(r)
         r.set.assert_any_call(Keys.PEAK_EQUITY, "4900.0")
 
-    def test_sets_peak_equity_date_on_reset(self):
+    def test_initializes_peak_equity_date_when_absent(self):
         from datetime import date
-        r = self._make(**{Keys.SIMULATED_EQUITY: "4900.0"})
+        r = self._make(**{
+            Keys.SIMULATED_EQUITY: "4900.0",
+            Keys.PEAK_EQUITY: None,
+            Keys.PEAK_EQUITY_DATE: None,
+        })
         with patch("supervisor.notify"):
             from supervisor import reset_daily
             reset_daily(r)
@@ -845,6 +972,17 @@ class TestResetDaily:
             from supervisor import reset_daily
             reset_daily(r)
         r.set.assert_any_call(Keys.SYSTEM_STATUS, "active")
+
+    def test_daily_halt_reset_clears_stale_temporary_tier_gate(self):
+        r = self._make(**{
+            Keys.SYSTEM_STATUS: "daily_halt",
+            Keys.DISABLED_TIERS: json.dumps([2, 3]),
+        })
+        with patch("supervisor.notify"):
+            from supervisor import reset_daily
+            reset_daily(r)
+
+        r.delete.assert_any_call(Keys.DISABLED_TIERS)
 
     def test_sends_morning_notify(self):
         r = self._make()

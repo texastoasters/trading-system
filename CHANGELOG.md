@@ -8,6 +8,19 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.37.1] - 2026-09-12
+
+### Fixed
+- **P0 strategy and circuit-breaker safety invariants.** TSMOM exits now use its 252-day horizon and cannot fall through RSI-2/prior-high mean-reversion exits; stop-loss handling remains unchanged.
+- **Persistent drawdown high-water mark.** Daily reset now preserves an existing peak equity/date and initializes missing values only, allowing multi-day losses to reach drawdown circuit breakers.
+- **Non-destructive temporary tier gates.** Defensive/critical drawdown gating now uses `trading:disabled_tiers` rather than mutating permanent `universe.disabled` / `universe.blacklisted`. The gate is recomputed every circuit-breaker pass and enforced by Watcher, TSMOM generation, and the Portfolio Manager's final approval boundary, including delayed displacement entries.
+
+### Tests
+- Added regressions for TSMOM exit routing, high-water preservation, stale watchlist and direct/queued PM gate bypasses, TSMOM gate/idempotency, and recovery without re-enabling permanent exclusions.
+- Full Python suite: 1120 passed.
+
+---
+
 ## [0.37.0] - 2026-08-26
 
 ### Changed

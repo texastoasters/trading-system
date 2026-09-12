@@ -150,6 +150,13 @@ def evaluate_entry_signal(r, signal):
     signal_tier = signal.get("tier", 99)
     fee_adjusted = signal.get("fee_adjusted", False)
 
+    # Final entry boundary: resolve the symbol's current tier from Redis rather
+    # than trusting a stale or manually published signal's tier annotation.
+    current_tier = get_tier(r, symbol)
+    disabled_tiers = set(json.loads(r.get(Keys.DISABLED_TIERS) or "[]"))
+    if current_tier in disabled_tiers:
+        return None, f"Tier {current_tier} is temporarily disabled for {symbol}"
+
     equity = get_simulated_equity(r)
     cash = get_effective_cash(r)
     drawdown = get_drawdown(r)
