@@ -613,6 +613,20 @@ class TestGenerateEntrySignals:
 
         assert signals == [], f"Expected no signals, got: {signals}"
 
+    def test_stale_watchlist_cannot_bypass_temporary_tier_gate(self):
+        stale_item = make_watchlist_item(symbol="GOOGL", tier=1)
+        r = make_redis({
+            Keys.WATCHLIST: json.dumps([stale_item]),
+            Keys.DISABLED_TIERS: json.dumps([2]),
+        })
+
+        with patch("watcher.is_market_hours", return_value=True), \
+             patch("watcher.check_whipsaw", return_value=False):
+            from watcher import generate_entry_signals
+            signals = generate_entry_signals(r, MagicMock(), MagicMock())
+
+        assert signals == []
+
 
 # ── generate_entry_signals IBS ───────────────────────────────
 
@@ -1400,6 +1414,76 @@ class TestGenerateExitSignalsIbs:
             signals = generate_exit_signals(r, MagicMock(), MagicMock())
         assert signals[0]["strategies"] == ["IBS"]
         assert signals[0]["primary_strategy"] == "IBS"
+
+
+class TestGenerateExitSignalsTsmom:
+    """TSMOM primary exits: stop loss and strategy-specific time stop only."""
+
+    def _entry_date_days_ago(self, days):
+        return (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+
+    def _signals(self, *, hold_days, close, low, prev_high, rsi2, stop_price=470.0,
+                 thresholds=None):
+        pos = {"NVDA": make_position(
+            symbol="NVDA", entry_price=500.0, stop_price=stop_price,
+            entry_date=self._entry_date_days_ago(hold_days), strategy="TSMOM",
+            strategies=["TSMOM"], primary_strategy="TSMOM",
+        )}
+        store = {Keys.POSITIONS: json.dumps(pos)}
+        if thresholds is not None:
+            store[Keys.thresholds("NVDA")] = json.dumps(thresholds)
+        r = make_redis(store)
+        with patch('watcher.fetch_intraday_bars',
+                   return_value=make_intraday(close=close, low=low)), \
+             patch('watcher.fetch_recent_bars',
+                   return_value=make_daily(close=close, prev_high=prev_high)), \
+             patch('watcher.rsi', return_value=np.array([rsi2])), \
+             patch('watcher.is_market_hours', return_value=True):
+            from watcher import generate_exit_signals
+            return generate_exit_signals(r, MagicMock(), MagicMock())
+
+    def test_tsmom_position_ignores_rsi2_take_profit(self):
+        signals = self._signals(
+            hold_days=1, close=495.0, low=490.0, prev_high=510.0, rsi2=75.0,
+        )
+        assert signals == []
+
+    def test_tsmom_position_ignores_close_above_prev_high(self):
+        signals = self._signals(
+            hold_days=1, close=520.0, low=515.0, prev_high=510.0, rsi2=50.0,
+        )
+        assert signals == []
+
+    def test_tsmom_ignores_per_symbol_rsi2_max_hold(self):
+        thresholds = {
+            "RANGING": 10, "UPTREND": 5, "DOWNTREND": None,
+            "max_hold": 3, "refit": "2026-04-16",
+        }
+        signals = self._signals(
+            hold_days=6, close=495.0, low=490.0, prev_high=510.0, rsi2=50.0,
+            thresholds=thresholds,
+        )
+        assert signals == []
+
+    def test_tsmom_position_exits_on_stop_loss_with_strategy_markers(self):
+        signals = self._signals(
+            hold_days=1, close=490.0, low=469.0, prev_high=510.0, rsi2=50.0,
+        )
+        assert len(signals) == 1
+        assert signals[0]["signal_type"] == "stop_loss"
+        assert signals[0]["strategy"] == "TSMOM"
+        assert signals[0]["primary_strategy"] == "TSMOM"
+        assert signals[0]["strategies"] == ["TSMOM"]
+
+    def test_tsmom_position_time_stops_at_tsmom_max_hold(self):
+        signals = self._signals(
+            hold_days=config.TSMOM_MAX_HOLD_DAYS,
+            close=495.0, low=490.0, prev_high=510.0, rsi2=50.0,
+        )
+        assert len(signals) == 1
+        assert signals[0]["signal_type"] == "time_stop"
+        assert signals[0]["hold_days"] >= config.TSMOM_MAX_HOLD_DAYS
+        assert signals[0]["primary_strategy"] == "TSMOM"
 
 
 class TestGenerateExitSignalsDonchian:
@@ -2435,6 +2519,39 @@ class TestGenerateTsmomSignals:
              patch("watcher.atr", return_value=np.full(260, 1.0)):
             signals = generate_tsmom_signals(r, MagicMock(), MagicMock())
         assert all(s["symbol"] != bl_symbol for s in signals)
+
+    def test_gated_tier_emits_nothing_and_still_marks_month_complete(self):
+        from watcher import generate_tsmom_signals
+
+        universe = {
+            "tier1": [],
+            "tier2": ["GOOGL"],
+            "tier3": [],
+            "disabled": [],
+            "blacklisted": [],
+        }
+        state = {
+            Keys.POSITIONS: "{}",
+            Keys.UNIVERSE: json.dumps(universe),
+            Keys.TIERS: json.dumps({"GOOGL": 2}),
+            Keys.DISABLED_TIERS: json.dumps([2]),
+            Keys.tsmom_last_rebalance_month(): "2025-12",
+        }
+        r = make_redis(state)
+        fallback_get = r.get
+        r.get = lambda key: state[key] if key in state else fallback_get(key)
+        r.set = MagicMock(side_effect=lambda key, value: state.__setitem__(key, value))
+        bars = _tsmom_daily_bars(_make_uptrend_close(n=260))
+
+        with patch("watcher.fetch_recent_bars", return_value=bars) as mock_fetch, \
+             patch("watcher.atr", return_value=np.full(260, 1.0)):
+            first = generate_tsmom_signals(r, MagicMock(), MagicMock())
+            second = generate_tsmom_signals(r, MagicMock(), MagicMock())
+
+        assert first == []
+        assert second == []
+        assert state[Keys.tsmom_last_rebalance_month()] == datetime.now().strftime("%Y-%m")
+        mock_fetch.assert_not_called()
 
     def test_skips_when_atr_is_invalid(self):
         """If ATR returns empty / NaN / non-positive, skip the symbol."""

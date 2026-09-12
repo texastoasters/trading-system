@@ -269,6 +269,7 @@ def generate_entry_signals(r, stock_client, crypto_client):
     universe_raw = r.get(Keys.UNIVERSE)
     universe_data = json.loads(universe_raw) if universe_raw else {}
     blacklisted_symbols = set(universe_data.get("blacklisted") or {})
+    disabled_tiers = set(json.loads(r.get(Keys.DISABLED_TIERS) or "[]"))
 
     for item in watchlist:
         symbol = item["symbol"]
@@ -278,6 +279,11 @@ def generate_entry_signals(r, stock_client, crypto_client):
 
         if symbol in blacklisted_symbols:
             print(f"  [Watcher] {symbol}: skipped (blacklisted)")
+            continue
+
+        current_tier = config.get_tier(r, symbol)
+        if current_tier in disabled_tiers:
+            print(f"  [Watcher] {symbol}: skipped (Tier {current_tier} temporarily disabled)")
             continue
 
         if not is_crypto(symbol) and not market_open:
@@ -537,9 +543,12 @@ def generate_tsmom_signals(r, stock_client, crypto_client):
     )
 
     signals = []
-    # Universe helper already excludes blacklisted symbols; only positional
-    # state and per-strategy whipsaw need re-checking inside the loop.
+    disabled_tiers = set(json.loads(r.get(Keys.DISABLED_TIERS) or "[]"))
+    # Universe helper already excludes blacklisted symbols; positional state,
+    # temporary tier gates, and per-strategy whipsaw are checked here.
     for symbol in _active_tsmom_universe(universe_data):
+        if _tier_of(symbol, universe_data) in disabled_tiers:
+            continue
         if symbol in open_positions:
             continue
         if check_whipsaw(r, symbol, "TSMOM"):
@@ -655,6 +664,8 @@ def generate_exit_signals(r, stock_client, crypto_client):
             max_hold = config.IBS_MAX_HOLD_DAYS
         elif pos_primary == "DONCHIAN":
             max_hold = config.DONCHIAN_MAX_HOLD_DAYS
+        elif pos_primary == "TSMOM":
+            max_hold = config.TSMOM_MAX_HOLD_DAYS
         else:
             max_hold = config.get_max_hold_days(r, symbol)
 
@@ -712,8 +723,8 @@ def generate_exit_signals(r, stock_client, crypto_client):
         # Close > previous day's high — RSI-2/IBS only.
         # #163: gated on hold_days >= 1. On gap-up entry days the intraday
         # close immediately exceeds prev_high, closing at near-entry price.
-        # DONCHIAN is trend-following and must ride past prior highs.
-        elif (pos_primary != "DONCHIAN"
+        # Trend-following strategies must ride past prior highs.
+        elif (pos_primary in ("RSI2", "IBS")
               and hold_days >= 1
               and latest_close > prev_high):
             exit_signal = {
@@ -722,7 +733,7 @@ def generate_exit_signals(r, stock_client, crypto_client):
                 "reason": f"Close {latest_close} > prev high {prev_high}",
             }
 
-        # Time stop (per-strategy: RSI-2=5, IBS=3, DONCHIAN=30)
+        # Time stop (per-strategy: RSI-2=5, IBS=3, DONCHIAN=30, TSMOM=252)
         elif hold_days >= max_hold:
             exit_signal = {
                 "signal_type": "time_stop",

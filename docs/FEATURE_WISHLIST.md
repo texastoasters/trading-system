@@ -1,7 +1,7 @@
 # Trading System Feature Wishlist
 
 Comprehensive list of improvements, organized by category and effort.
-System context: RSI-2 mean reversion, 5 agents, Redis pub/sub, Phoenix LiveView dashboard, Telegram alerts, Alpaca paper trading.
+System context: RSI-2, IBS, Donchian-BO, and TSMOM strategies; 5 agents; Redis pub/sub; Phoenix LiveView dashboard; Telegram alerts; Alpaca paper trading.
 
 ---
 
@@ -14,6 +14,23 @@ These are known issues documented in HANDOFF.md that can cause real harm.
 - [x] **Watcher/PM feedback loop on qty=0 positions** — PM dedup check rejects entry when position exists in Redis (including qty=0). Verified by tests. PR #58.
 - [x] **PM: qty=0 order after DOWNTREND halving** — Guard added after halving step in `evaluate_entry_signal`. PR #58.
 - [x] **Executor: submits equity market orders after market close** — `clock.is_open` check in both `execute_buy` and `execute_sell`. PR #57.
+
+---
+
+## 🐛 Verified Bugs — 2026-09-10
+
+Source-reviewed defects found during Hermboog’s T^2 context transfer. These are current-code or deployed-schedule findings, not historical `HANDOFF.md` items. No live configuration or position was changed during the audit. First three P0 fixes shipped in v0.37.1; deployment remains pending PR/CI.
+
+- [x] **P0 — TSMOM exits use mean-reversion rules** — Fixed in v0.37.1: TSMOM now uses `TSMOM_MAX_HOLD_DAYS` and cannot exit on RSI-2 or prior-high mean-reversion rules; stop-loss behavior remains active. Regression-tested.
+- [x] **P0 — Daily reset erases cumulative drawdown high-water mark** — Fixed in v0.37.1: daily reset preserves existing peak equity/date and initializes only missing values, allowing multi-day 10% / 15% / 20% breakers to accumulate. Regression-tested.
+- [x] **P0 — Drawdown recovery re-enables permanently disabled symbols** — Fixed in v0.37.1: temporary Tier 2/3 gates live in `trading:disabled_tiers`, are recalculated each breaker pass, and are enforced by Watcher, TSMOM, and PM. Recovery leaves permanent disabled/blacklisted symbols unchanged. Regression-tested.
+- [ ] **P0 — `scripts/verify_alpaca.py` is destructive against live paper state** — its alleged far-from-market limit test submits a `MarketOrderRequest`, which may fill; its Redis test writes then deletes `trading:watchlist`, destroying the production watchlist. Do not run this script against the active system. Replace trade/Redis probes with isolated test keys, no-order APIs, or explicit opt-in sandbox mode.
+- [ ] **P1 — Allocation controls are declared but unenforced** — `EQUITY_ALLOCATION_PCT` and `CRYPTO_ALLOCATION_PCT` load, validate, and appear in Settings but are not used by PM or Executor. Read-only Sep 10 audit found an SJM position worth $98,680.68 / 99.0973% of the $99,579.60 ledger, with $3,335.64 / 3.3497% stop exposure. Decide whether allocation caps are hard rules; enforce them or remove misleading controls.
+- [ ] **P1 — Local PDT counter is reset daily despite five-business-day semantics** — `reset_daily()` resets `trading:pdt:count` and deletes same-day-close state every morning. Audit whether broker PDT state is the sole binding gate; otherwise replace this with rolling-five-business-day accounting.
+- [ ] **P1 — Reconciliation and threshold refits are implemented but unscheduled** — Supervisor exposes `--reconcile` and `--refit-thresholds`, yet neither appears in repository or deployed `/etc/cron.d/trading-system`. Repo and deployed cron matched SHA-256 on Sep 10. Restore intentional schedules or remove stale claims.
+- [ ] **P2 — Discovery cron comment disagrees with execution** — comment says Monday/Wednesday 6:00 AM ET; `0 6 * * 1-5` runs every weekday. Confirm intended cadence and make comment, README, cron, and operations expectations agree.
+
+Verification: `uv run pytest -q` → 1120 passed after v0.37.1 P0 repairs. Existing P1/P2 and destructive-verification findings remain open.
 
 ---
 

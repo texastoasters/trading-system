@@ -325,7 +325,9 @@ class Keys:
     CLOSED_TODAY = "trading:closed_today"
     RISK_MULTIPLIER = "trading:risk_multiplier"
     SYSTEM_STATUS = "trading:system_status"
-    # Note: disabled instruments are stored in universe["disabled"], not a separate key
+    # Temporary circuit-breaker gates. Permanent symbol exclusions remain in
+    # universe["disabled"] / universe["blacklisted"]. Value is a JSON list.
+    DISABLED_TIERS = "trading:disabled_tiers"
     # Note: strategy params are not yet implemented
 
     RESTART_COUNT = "trading:restart_count"
@@ -432,7 +434,13 @@ def get_active_instruments(r: redis.Redis) -> list:
     blacklisted = set(universe.get("blacklisted") or [])
     disabled = set(universe.get("disabled") or [])
     excluded = blacklisted | disabled
-    all_tiers = universe["tier1"] + universe["tier2"] + universe["tier3"]
+    disabled_tiers = set(json.loads(r.get(Keys.DISABLED_TIERS) or "[]"))
+    all_tiers = [
+        symbol
+        for tier in (1, 2, 3)
+        if tier not in disabled_tiers
+        for symbol in universe[f"tier{tier}"]
+    ]
     return [s for s in all_tiers if s not in excluded]
 
 

@@ -71,6 +71,7 @@ def run_circuit_breakers(r):
         pass  # DB unavailable — alert fires without attribution
 
     prev_status = r.get(Keys.SYSTEM_STATUS)
+    _sync_temporary_tier_gate(r, dd)
 
     if dd >= config.DRAWDOWN_HALT:
         if prev_status != "halted":
@@ -85,29 +86,26 @@ def run_circuit_breakers(r):
 
     elif dd >= config.DRAWDOWN_CRITICAL:
         r.set(Keys.RISK_MULTIPLIER, "0.25")
-        disable_tiers(r, [2, 3])
-        if prev_status != "critical":
+        if prev_status not in ("critical", "daily_halt"):
             r.set(Keys.SYSTEM_STATUS, "critical")
             drawdown_alert(dd, "25% position size. Only Tier 1 active. BTC disabled.", attribution=attribution)
 
     elif dd >= config.DRAWDOWN_DEFENSIVE:
         r.set(Keys.RISK_MULTIPLIER, "0.5")
-        disable_tiers(r, [2, 3])
-        if prev_status not in ("defensive", "critical"):
+        if prev_status not in ("defensive", "critical", "daily_halt"):
             r.set(Keys.SYSTEM_STATUS, "defensive")
             drawdown_alert(dd, "50% position size. Only Tier 1 active.", attribution=attribution)
 
     elif dd >= config.DRAWDOWN_CAUTION:
         r.set(Keys.RISK_MULTIPLIER, "0.75")
-        if prev_status not in ("caution", "defensive", "critical"):
+        if prev_status not in ("caution", "defensive", "critical", "daily_halt"):
             r.set(Keys.SYSTEM_STATUS, "caution")
             drawdown_alert(dd, "Caution: Tier 3 at reduced size.", attribution=attribution)
 
     else:
-        if prev_status not in ("active", "paused"):
+        if prev_status not in ("active", "paused", "daily_halt"):
             r.set(Keys.SYSTEM_STATUS, "active")
             r.set(Keys.RISK_MULTIPLIER, "1.0")
-            enable_all_tiers(r)
             notify("✅ System back to normal — all tiers active, full position size.")
 
     daily_pnl = float(r.get(Keys.DAILY_PNL) or 0)
@@ -126,25 +124,21 @@ def run_circuit_breakers(r):
 
 
 def disable_tiers(r, tiers_to_disable):
-    """Disable instruments in specified tiers."""
-    universe = json.loads(r.get(Keys.UNIVERSE) or json.dumps(config.DEFAULT_UNIVERSE))
-    disabled = universe.get("disabled", [])
-
-    for tier_num in tiers_to_disable:
-        tier_key = f"tier{tier_num}"
-        for sym in universe.get(tier_key, []):
-            if sym not in disabled:
-                disabled.append(sym)
-
-    universe["disabled"] = disabled
-    r.set(Keys.UNIVERSE, json.dumps(universe))
+    """Temporarily gate specified tiers without changing permanent exclusions."""
+    r.set(Keys.DISABLED_TIERS, json.dumps(sorted(set(tiers_to_disable))))
 
 
 def enable_all_tiers(r):
-    """Re-enable all instruments."""
-    universe = json.loads(r.get(Keys.UNIVERSE) or json.dumps(config.DEFAULT_UNIVERSE))
-    universe["disabled"] = []
-    r.set(Keys.UNIVERSE, json.dumps(universe))
+    """Clear temporary tier gates without changing permanent exclusions."""
+    r.delete(Keys.DISABLED_TIERS)
+
+
+def _sync_temporary_tier_gate(r, drawdown):
+    """Store the gate implied by current drawdown, replacing stale state."""
+    if config.DRAWDOWN_DEFENSIVE <= drawdown < config.DRAWDOWN_HALT:
+        disable_tiers(r, [2, 3])
+    else:
+        enable_all_tiers(r)
 
 
 # ── Agent Restart Policy ────────────────────────────────────
@@ -454,17 +448,20 @@ def reset_daily(r):
     # falsely classified as round-trips by the executor PDT gate.
     r.delete(Keys.CLOSED_TODAY)
 
-    # Reset peak equity to current equity at session start so drawdown
-    # is measured within the current trading period, not against a stale peak
     equity = get_simulated_equity(r)
-    r.set(Keys.PEAK_EQUITY, str(round(equity, 2)))
-    r.set(Keys.PEAK_EQUITY_DATE, date.today().isoformat())
+    peak_raw = r.get(Keys.PEAK_EQUITY)
+    if not peak_raw:
+        peak_raw = str(round(equity, 2))
+        r.set(Keys.PEAK_EQUITY, peak_raw)
+    if not r.get(Keys.PEAK_EQUITY_DATE):
+        r.set(Keys.PEAK_EQUITY_DATE, date.today().isoformat())
 
-    print(f"[Supervisor] Daily counters reset. Peak equity set to ${equity:,.2f}.")
+    print(f"[Supervisor] Daily counters reset. Peak equity is ${float(peak_raw):,.2f}.")
 
     status = r.get(Keys.SYSTEM_STATUS)
     if status == "daily_halt":
         r.set(Keys.SYSTEM_STATUS, "active")
+        _sync_temporary_tier_gate(r, get_drawdown(r))
         status = "active"
         print("[Supervisor] System re-enabled after daily halt.")
 
