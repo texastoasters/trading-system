@@ -47,6 +47,24 @@ def make_redis(store=None):
     r.llen = MagicMock(return_value=0)
     r.rpush = MagicMock()
     r.expire = MagicMock()
+
+    class _Pipeline:
+        def __init__(self):
+            self.operations = []
+
+        def __getattr__(self, name):
+            def queue(*args, **kwargs):
+                self.operations.append((name, args, kwargs))
+                return self
+            return queue
+
+        def execute(self):
+            return [
+                getattr(r, name)(*args, **kwargs)
+                for name, args, kwargs in self.operations
+            ]
+
+    r.pipeline = MagicMock(side_effect=lambda **_: _Pipeline())
     return r
 
 
@@ -56,7 +74,7 @@ def make_position(symbol="SPY", entry_date=OLD_DATE, pnl=0.0):
         "entry_price": 490.0,
         "stop_price": 480.0,
         "entry_date": entry_date,
-        "quantity": 10,
+        "quantity": 1,
         "strategy": "RSI2",
         "primary_strategy": "RSI2",
         "unrealized_pnl_pct": pnl,
@@ -148,7 +166,7 @@ def make_signal(symbol="EIX", close=100.0, stop=95.0, tier=2, score=60.0, **kwar
 
 def _five_old_positions():
     return {s: make_position(s, entry_date=OLD_DATE, pnl=-0.5)
-            for s in ["SPY", "QQQ", "NVDA", "GOOGL", "TSLA"]}
+            for s in ["SPY", "QQQ", "BTC/USD", "ETH/USD", "TSLA"]}
 
 
 class TestEvaluateEntrySignalScoreGate:
@@ -188,8 +206,8 @@ class TestEvaluateEntrySignalScoreGate:
         positions = {
             "SPY": make_position("SPY", entry_date=OLD_DATE, pnl=-1.0),
             "QQQ": make_position("QQQ", entry_date=OLD_DATE, pnl=-0.5),
-            "NVDA": make_position("NVDA", entry_date=OLD_DATE, pnl=-2.0),
-            "GOOGL": make_position("GOOGL", entry_date=OLD_DATE, pnl=-0.8),
+            "BTC/USD": make_position("BTC/USD", entry_date=OLD_DATE, pnl=-2.0),
+            "ETH/USD": make_position("ETH/USD", entry_date=OLD_DATE, pnl=-0.8),
             "TSLA": make_position("TSLA", entry_date=OLD_DATE, pnl=-0.3),
         }
         r = make_redis({Keys.POSITIONS: make_positions_json(positions)})

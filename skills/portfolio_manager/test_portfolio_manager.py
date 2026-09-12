@@ -42,8 +42,39 @@ def make_redis(store: dict = None):
     r = MagicMock()
     r.get = lambda k: base.get(k)
     r.set = MagicMock()
-    r.publish = MagicMock()
+    r.publish = MagicMock(return_value=1)
     r.llen = MagicMock(return_value=0)
+
+    def _eval(_script, key_count, *args):
+        keys = args[:key_count]
+        displacement_id, payload, processed, _expected_pending = args[key_count:]
+        subscribers = r.publish(keys[3], payload)
+        if subscribers <= 0:
+            return subscribers
+        r.hset(keys[1], displacement_id, processed)
+        r.hdel(keys[0], displacement_id)
+        r.delete(keys[2])
+        return subscribers
+
+    r.eval = MagicMock(side_effect=_eval)
+
+    class _Pipeline:
+        def __init__(self):
+            self.operations = []
+
+        def __getattr__(self, name):
+            def queue(*args, **kwargs):
+                self.operations.append((name, args, kwargs))
+                return self
+            return queue
+
+        def execute(self):
+            return [
+                getattr(r, name)(*args, **kwargs)
+                for name, args, kwargs in self.operations
+            ]
+
+    r.pipeline = MagicMock(side_effect=lambda **_: _Pipeline())
     return r
 
 
@@ -168,7 +199,46 @@ class TestExistingPositionDedup:
         assert reason is not None
 
 
+# ── simulated cash ────────────────────────────────────────────
+
+class TestEffectiveCash:
+    def test_unrealized_loss_does_not_create_spendable_cash(self):
+        positions = {
+            "SPY": {
+                "symbol": "SPY",
+                "quantity": 10,
+                "entry_price": 200.0,
+                "value": 2000.0,
+                "current_value": 1200.0,
+            }
+        }
+        r = make_redis({Keys.POSITIONS: json.dumps(positions)})
+        from portfolio_manager import get_effective_cash
+
+        assert get_effective_cash(r) == pytest.approx(3000.0)
+
+
 # ── count_crypto_positions ────────────────────────────────────
+
+class TestPositionCounts:
+    def test_counts_open_positions(self):
+        positions = {
+            "BTC/USD": {"symbol": "BTC/USD"},
+            "SPY": {"symbol": "SPY"},
+        }
+        r = make_redis({Keys.POSITIONS: json.dumps(positions)})
+        from portfolio_manager import count_open_positions
+        assert count_open_positions(r) == 2
+
+    def test_counts_only_equities(self):
+        positions = {
+            "BTC/USD": {"symbol": "BTC/USD"},
+            "SPY": {"symbol": "SPY"},
+        }
+        r = make_redis({Keys.POSITIONS: json.dumps(positions)})
+        from portfolio_manager import count_equity_positions
+        assert count_equity_positions(r) == 1
+
 
 class TestCountCryptoPositions:
     def test_counts_only_crypto(self):
@@ -190,7 +260,7 @@ class TestCountCryptoPositions:
 
 # ── pick_displacement_target ──────────────────────────────────
 
-def _pos(symbol, pnl_pct=0.0, held_days=1, primary="RSI2", quantity=5, value=1000.0,
+def _pos(symbol, pnl_pct=0.0, held_days=1, primary="RSI2", quantity=5, value=500.0,
          entry_price=100.0):
     """Build a position dict with entry_date derived from held_days."""
     entry = (datetime.now() - timedelta(days=held_days)).strftime("%Y-%m-%d")
@@ -309,6 +379,16 @@ class TestPickDisplacementTarget:
         _, pos = pick_displacement_target(r)
         assert pos["symbol"] == "OLD"
 
+    def test_same_day_crypto_is_not_hidden_by_stock_day_trade_protection(self):
+        positions = {
+            "BTC/USD": _pos("BTC/USD", pnl_pct=5.0, held_days=0),
+            "SPY": _pos("SPY", pnl_pct=1.0, held_days=2),
+        }
+        r = make_redis({Keys.POSITIONS: json.dumps(positions)})
+        from portfolio_manager import pick_displacement_target
+        _, pos = pick_displacement_target(r)
+        assert pos["symbol"] == "BTC/USD"
+
 
 # ── Drawdown circuit breakers ─────────────────────────────────
 
@@ -366,7 +446,10 @@ class TestDisabledInstrument:
 class TestPositionLimits:
     def test_max_positions_displaces_highest_gainer(self):
         # Five full positions, one is the clear biggest gainer → displaced.
-        positions = {s: _pos(s, pnl_pct=1.0, held_days=2) for s in ["SPY", "QQQ", "NVDA", "XLK"]}
+        positions = {
+            symbol: _pos(symbol, pnl_pct=1.0, held_days=2)
+            for symbol in ("SPY", "QQQ", "BTC/USD", "ETH/USD")
+        }
         positions["XLY"] = _pos("XLY", pnl_pct=8.0, held_days=2)
         r = make_redis({Keys.POSITIONS: json.dumps(positions)})
         from portfolio_manager import evaluate_entry_signal
@@ -383,9 +466,9 @@ class TestPositionLimits:
         positions = {
             "SPY": _pos("SPY", pnl_pct=-3.0, held_days=2),
             "QQQ": _pos("QQQ", pnl_pct=-5.0, held_days=2),
-            "NVDA": _pos("NVDA", pnl_pct=-1.5, held_days=2),
+            "BTC/USD": _pos("BTC/USD", pnl_pct=-1.5, held_days=2),
             "XLK": _pos("XLK", pnl_pct=-0.8, held_days=2),
-            "XLY": _pos("XLY", pnl_pct=-2.0, held_days=2),
+            "ETH/USD": _pos("ETH/USD", pnl_pct=-2.0, held_days=2),
         }
         r = make_redis({Keys.POSITIONS: json.dumps(positions)})
         from portfolio_manager import evaluate_entry_signal
@@ -394,6 +477,53 @@ class TestPositionLimits:
         assert "displac" in reason.lower()
         published = json.loads(r.publish.call_args[0][1])
         assert published["symbol"] == "XLK"
+
+    def test_over_cap_candidate_does_not_publish_or_queue_displacement(self):
+        positions = {
+            "SPY": {**_pos("SPY", pnl_pct=1.0, held_days=2), "current_value": 1_600.0},
+            "QQQ": {**_pos("QQQ", pnl_pct=2.0, held_days=2), "current_value": 1_600.0},
+            "XLY": {**_pos("XLY", pnl_pct=9.0, held_days=2), "current_value": 100.0},
+            "BTC/USD": {**_pos("BTC/USD", pnl_pct=3.0, held_days=2), "current_value": 100.0},
+            "ETH/USD": {**_pos("ETH/USD", pnl_pct=4.0, held_days=2), "current_value": 100.0},
+        }
+        r = make_redis({Keys.POSITIONS: json.dumps(positions)})
+        from portfolio_manager import evaluate_entry_signal
+
+        order, reason = evaluate_entry_signal(
+            r, make_signal(symbol="XLI", close=100.0, stop=90.0, tier=1)
+        )
+
+        assert order is None
+        assert "allocation cap" in reason.lower()
+        r.publish.assert_not_called()
+        r.rpush.assert_not_called()
+
+    def test_losing_displacement_projects_realized_loss_before_publishing(self):
+        positions = {
+            "SPY": {**_pos("SPY", pnl_pct=-80.0, held_days=2, quantity=10,
+                           value=1_000.0), "current_value": 200.0},
+            "QQQ": {**_pos("QQQ", pnl_pct=-85.0, held_days=2, quantity=10,
+                           value=1_000.0), "current_value": 150.0},
+            "BTC/USD": {**_pos("BTC/USD", pnl_pct=-90.0, held_days=2, quantity=10,
+                               value=1_000.0), "current_value": 100.0},
+            "ETH/USD": {**_pos("ETH/USD", pnl_pct=-95.0, held_days=2, quantity=10,
+                               value=1_000.0), "current_value": 50.0},
+            # Smallest loser is the eligible target. Selling it realizes a $700
+            # loss: post-close equity is $4,300 and spendable cash is only $300.
+            "XLY": {**_pos("XLY", pnl_pct=-70.0, held_days=2, quantity=10,
+                           value=1_000.0), "current_value": 300.0},
+        }
+        r = make_redis({Keys.POSITIONS: json.dumps(positions)})
+        from portfolio_manager import evaluate_entry_signal
+
+        order, reason = evaluate_entry_signal(
+            r, make_signal(symbol="XLI", close=100.0, stop=95.0, tier=1)
+        )
+
+        assert order is None
+        assert "insufficient capital" in reason.lower()
+        r.publish.assert_not_called()
+        r.rpush.assert_not_called()
 
     def test_pdt_maxed_blocks_displacement_of_same_day_entry(self):
         # Target is profitable but was entered today — closing = day trade.
@@ -440,6 +570,56 @@ class TestPositionLimits:
         assert "equity" in reason.lower()
 
 
+# ── Asset-class allocation caps ───────────────────────────────
+
+
+class TestAssetClassAllocationCaps:
+    def test_rejects_equity_entry_using_current_value_despite_payload_claim(self):
+        positions = {
+            "SPY": {
+                "symbol": "SPY",
+                "quantity": 34,
+                "value": 100.0,
+                "current_value": 3400.0,
+            }
+        }
+        r = make_redis({Keys.POSITIONS: json.dumps(positions)})
+        from portfolio_manager import evaluate_entry_signal
+
+        order, reason = evaluate_entry_signal(
+            r,
+            make_signal(
+                symbol="XLK",
+                close=100.0,
+                stop=90.0,
+                asset_class="crypto",
+            ),
+        )
+
+        assert order is None
+        assert "equity allocation" in reason.lower()
+        r.publish.assert_not_called()
+
+    def test_invalid_current_value_falls_back_to_value(self):
+        positions = {
+            "SPY": {
+                "symbol": "SPY",
+                "quantity": 32,
+                "value": 3200.0,
+                "current_value": "not-a-number",
+            }
+        }
+        r = make_redis({Keys.POSITIONS: json.dumps(positions)})
+        from portfolio_manager import evaluate_entry_signal
+
+        order, reason = evaluate_entry_signal(
+            r, make_signal(symbol="XLK", close=100.0, stop=90.0)
+        )
+
+        assert order is None
+        assert "equity allocation" in reason.lower()
+
+
 # ── BTC fee check ─────────────────────────────────────────────
 
 class TestBtcFeeCheck:
@@ -454,11 +634,12 @@ class TestBtcFeeCheck:
         assert "fee" in reason.lower() or "gain" in reason.lower()
 
     def test_approves_when_net_gain_above_threshold(self):
-        # BTC at $100k, stop $98k → gain=2%, net=2-0.4=1.6% > 0.20%
+        # BTC at $100k, stop $96k → gain=4%, net=4-0.4=3.6% and
+        # risk sizing produces $1,250 notional, within the 30% crypto cap.
         r = make_redis()
         from portfolio_manager import evaluate_entry_signal
         order, _ = evaluate_entry_signal(r, make_signal(
-            symbol="BTC/USD", close=100000.0, stop=98000.0, tier=2, fee_adjusted=True
+            symbol="BTC/USD", close=100000.0, stop=96000.0, tier=2, fee_adjusted=True
         ))
         assert order is not None
 
@@ -569,6 +750,38 @@ class TestApprovedOrderStrategies:
         assert order["strategies"] == ["RSI2"]
         assert order["primary_strategy"] == "RSI2"
 
+    def test_crypto_order_is_fractional_gtc_limit_and_attributed_as_crypto(self):
+        r = make_redis()
+        from portfolio_manager import evaluate_entry_signal
+        order, reason = evaluate_entry_signal(r, make_signal(
+            symbol="BTC/USD", close=100_000.0, stop=96_000.0,
+            fee_adjusted=True,
+        ))
+
+        assert reason is None
+        assert order["quantity"] == pytest.approx(0.0125)
+        assert order["order_type"] == "limit"
+        assert order["limit_price"] == 100_100.0
+        assert order["order_value"] == pytest.approx(1_251.25)
+        assert order["asset_class"] == "crypto"
+
+    def test_crypto_limit_price_is_used_for_allocation_admission(self):
+        r = make_redis()
+        from portfolio_manager import evaluate_entry_signal
+
+        order, reason = evaluate_entry_signal(
+            r,
+            make_signal(
+                symbol="BTC/USD",
+                close=1_000.0,
+                stop=966.6444296197465,
+                tier=2,
+            ),
+        )
+
+        assert order is None
+        assert "crypto allocation cap" in reason.lower()
+
 
 # ── evaluate_exit_signal ──────────────────────────────────────
 
@@ -608,19 +821,72 @@ class TestEvaluateExitSignal:
         assert order is not None
         assert order["order_type"] == "market"
 
-    def test_blocks_day_trade_at_pdt_limit(self):
+    def test_blocks_discretionary_day_trade_at_brake_limit(self):
         positions = {"SPY": {"symbol": "SPY", "quantity": 10, "entry_price": 500.0}}
         r = make_redis({Keys.POSITIONS: json.dumps(positions), Keys.PDT_COUNT: "3"})
         from portfolio_manager import evaluate_exit_signal
-        order, reason = evaluate_exit_signal(r, self._make_exit(is_day_trade=True))
+        order, reason = evaluate_exit_signal(
+            r, self._make_exit(sig_type="take_profit", is_day_trade=True)
+        )
         assert order is None
         assert "pdt" in reason.lower()
 
-    def test_approves_day_trade_under_pdt_limit(self):
+    def test_approves_discretionary_day_trade_under_brake_limit(self):
         positions = {"SPY": {"symbol": "SPY", "quantity": 10, "entry_price": 500.0}}
         r = make_redis({Keys.POSITIONS: json.dumps(positions), Keys.PDT_COUNT: "2"})
         from portfolio_manager import evaluate_exit_signal
-        order, _ = evaluate_exit_signal(r, self._make_exit(is_day_trade=True))
+        order, _ = evaluate_exit_signal(
+            r, self._make_exit(sig_type="take_profit", is_day_trade=True)
+        )
+        assert order is not None
+
+    def test_crypto_protective_exit_never_blocked_by_stock_day_trade_brake(self):
+        positions = {
+            "BTC/USD": {
+                "symbol": "BTC/USD", "quantity": 0.05,
+                "entry_price": 100_000.0,
+            }
+        }
+        r = make_redis({Keys.POSITIONS: json.dumps(positions), Keys.PDT_COUNT: "3"})
+        from portfolio_manager import evaluate_exit_signal
+        order, reason = evaluate_exit_signal(
+            r,
+            self._make_exit(
+                symbol="BTC/USD", sig_type="stop_loss", is_day_trade=True,
+            ),
+        )
+
+        assert reason is None
+        assert order is not None
+        assert order["asset_class"] == "crypto"
+
+    def test_stock_protective_exit_never_blocked_by_day_trade_brake(self):
+        positions = {
+            "SPY": {
+                "symbol": "SPY", "quantity": 10,
+                "entry_price": 500.0,
+            }
+        }
+        r = make_redis({Keys.POSITIONS: json.dumps(positions), Keys.PDT_COUNT: "3"})
+        from portfolio_manager import evaluate_exit_signal
+
+        order, reason = evaluate_exit_signal(
+            r,
+            self._make_exit(sig_type="stop_loss", is_day_trade=True),
+        )
+
+        assert reason is None
+        assert order is not None
+        assert order["asset_class"] == "equity"
+
+    def test_disabled_stock_day_trade_brake_allows_stock_exit(self):
+        positions = {"SPY": {"symbol": "SPY", "quantity": 10, "entry_price": 500.0}}
+        r = make_redis({Keys.POSITIONS: json.dumps(positions), Keys.PDT_COUNT: "3"})
+        from portfolio_manager import evaluate_exit_signal
+        with patch.object(config, "STOCK_DAY_TRADE_BRAKE_ENABLED", False, create=True):
+            order, reason = evaluate_exit_signal(r, self._make_exit(is_day_trade=True))
+
+        assert reason is None
         assert order is not None
 
 
@@ -723,9 +989,138 @@ class TestProcessPendingSignals:
 
 # ── Displacement pending queue ────────────────────────────────
 
+def configure_durable_completion(r, pending, symbol="FIBK", displacement_id="disp-123"):
+    completion = {
+        "displacement_id": displacement_id,
+        "symbol": symbol,
+        "order_id": "sell-1",
+    }
+    r.hgetall.return_value = {
+        displacement_id: json.dumps(completion),
+    }
+    r.hexists.return_value = False
+    r.lindex.return_value = json.dumps(pending)
+    return {
+        **completion,
+        "signal_type": "displacement_complete",
+    }
+
 class TestDisplacementPendingQueue:
+    def _delivery_redis(self, publish_results):
+        displacement_id = "disp-123"
+        pending = make_signal(symbol="UNM", tier=1, signal_type="entry")
+        completion = {
+            "displacement_id": displacement_id,
+            "symbol": "FIBK",
+            "order_id": "sell-1",
+        }
+        state = {
+            "completions": {displacement_id: json.dumps(completion)},
+            "processed": {},
+            "pending": {displacement_id: [json.dumps(pending)]},
+        }
+        delivered = []
+        results = iter(publish_results)
+        r = make_redis({Keys.POSITIONS: "{}"})
+        r.hgetall.side_effect = lambda key: dict(state["completions"])
+        r.hexists.side_effect = (
+            lambda key, field: field in state["processed"]
+        )
+        r.lindex.side_effect = lambda key, index: (
+            state["pending"].get(key.rsplit(":", 1)[-1], [])[index]
+            if len(state["pending"].get(key.rsplit(":", 1)[-1], [])) > index
+            else None
+        )
+
+        def publish(channel, payload):
+            subscriber_count = next(results)
+            if subscriber_count > 0:
+                delivered.append(json.loads(payload))
+            return subscriber_count
+
+        r.publish.side_effect = publish
+
+        def eval_script(_script, _key_count, *args):
+            _, _, _, channel = args[:4]
+            disp_id, payload, processed, expected_pending = args[4:]
+            if disp_id in state["processed"]:
+                return -1
+            if disp_id not in state["completions"]:
+                return -2
+            pending_entries = state["pending"].get(disp_id, [])
+            if not pending_entries or pending_entries[0] != expected_pending:
+                return -3
+            subscriber_count = publish(channel, payload)
+            if subscriber_count <= 0:
+                return 0
+            state["processed"][disp_id] = processed
+            state["completions"].pop(disp_id, None)
+            state["pending"].pop(disp_id, None)
+            return subscriber_count
+
+        r.eval = MagicMock(side_effect=eval_script)
+        return r, state, delivered
+
+    def test_zero_subscriber_publish_keeps_completion_and_successor_pending(self, capsys):
+        r, state, delivered = self._delivery_redis([0])
+
+        from portfolio_manager import recover_displacement_completions
+        assert recover_displacement_completions(r) == 0
+
+        assert "disp-123" in state["completions"]
+        assert "disp-123" in state["pending"]
+        assert state["processed"] == {}
+        assert delivered == []
+        assert "successor approved" not in capsys.readouterr().out.lower()
+
+    def test_zero_subscriber_completion_dispatches_once_after_recovery(self):
+        r, state, delivered = self._delivery_redis([0, 1])
+
+        from portfolio_manager import recover_displacement_completions
+        assert recover_displacement_completions(r) == 0
+        assert recover_displacement_completions(r) == 1
+        assert recover_displacement_completions(r) == 0
+
+        assert [order["symbol"] for order in delivered] == ["UNM"]
+        assert "disp-123" in state["processed"]
+        assert state["completions"] == {}
+        assert state["pending"] == {}
+
+    def test_publish_error_keeps_completion_and_successor_pending(self):
+        r, state, delivered = self._delivery_redis([1])
+        r.eval.side_effect = RuntimeError("redis publish failed")
+
+        from portfolio_manager import recover_displacement_completions
+        assert recover_displacement_completions(r) == 0
+
+        assert "disp-123" in state["completions"]
+        assert "disp-123" in state["pending"]
+        assert state["processed"] == {}
+        assert delivered == []
+
+    def test_durable_completion_recovery_consumes_duplicate_successor_once(self):
+        r, state, delivered = self._delivery_redis([1])
+        duplicate = state["pending"]["disp-123"][0]
+        state["pending"]["disp-123"].append(duplicate)
+
+        from portfolio_manager import recover_displacement_completions, process_signal
+        assert recover_displacement_completions(r) == 1
+        assert recover_displacement_completions(r) == 0
+        process_signal(r, {
+            "displacement_id": "disp-123",
+            "symbol": "FIBK",
+            "signal_type": "displacement_complete",
+        })
+
+        assert [order["symbol"] for order in delivered] == ["UNM"]
+        assert "disp-123" in state["processed"]
+        assert state["pending"] == {}
+
     def _five_positions(self, **extras):
-        positions = {s: _pos(s, pnl_pct=1.0, held_days=2) for s in ["SPY", "QQQ", "NVDA", "XLK"]}
+        positions = {
+            symbol: _pos(symbol, pnl_pct=1.0, held_days=2)
+            for symbol in ("SPY", "QQQ", "BTC/USD", "ETH/USD")
+        }
         positions["XLY"] = _pos("XLY", pnl_pct=8.0, held_days=2)
         return positions
 
@@ -752,10 +1147,12 @@ class TestDisplacementPendingQueue:
         from portfolio_manager import evaluate_entry_signal
         evaluate_entry_signal(r, make_signal(symbol="UNM", tier=2, signal_type="entry"))
 
-        key = r.rpush.call_args[0][0]
-        assert key == Keys.displacement_pending("XLY")
+        pending_key = r.rpush.call_args[0][0]
+        published = json.loads(r.publish.call_args.args[1])
+        assert pending_key == Keys.displacement_pending(published["displacement_id"])
+        assert published["symbol"] == "XLY"
 
-    def test_pending_key_gets_one_hour_ttl(self):
+    def test_pending_key_has_no_ttl_while_durable_recovery_is_pending(self):
         positions = self._five_positions()
         r = make_redis({Keys.POSITIONS: json.dumps(positions)})
         r.llen = MagicMock(return_value=0)
@@ -763,64 +1160,17 @@ class TestDisplacementPendingQueue:
         from portfolio_manager import evaluate_entry_signal
         evaluate_entry_signal(r, make_signal(symbol="UNM", tier=2, signal_type="entry"))
 
-        r.expire.assert_called_once_with(Keys.displacement_pending("XLY"), 3600)
+        r.expire.assert_not_called()
 
-    def test_approved_displaced_exit_drains_pending_queue(self):
-        positions = {"FIBK": _pos("FIBK", held_days=2)}
-        unm_signal = make_signal(symbol="UNM", tier=1, signal_type="entry")
-        r = make_redis({Keys.POSITIONS: json.dumps(positions)})
-        r.llen = MagicMock(side_effect=[1, 0])
-        r.lpop = MagicMock(return_value=json.dumps(unm_signal))
-
-        displaced_signal = {
-            "symbol": "FIBK",
-            "signal_type": "displaced",
-            "reason": "Displaced to make room for UNM",
-            "direction": "close",
-            "exit_price": 35.0,
-        }
-        from portfolio_manager import process_signal
-        process_signal(r, displaced_signal)
-
-        r.llen.assert_called_with(Keys.displacement_pending("FIBK"))
-        r.lpop.assert_called_once_with(Keys.displacement_pending("FIBK"))
-
-    def test_approved_displaced_exit_reprocesses_pending_entry(self):
-        positions = {"FIBK": _pos("FIBK", held_days=2)}
-        unm_signal = make_signal(symbol="UNM", tier=1, signal_type="entry")
-        r = make_redis({Keys.POSITIONS: json.dumps(positions)})
-        r.llen = MagicMock(side_effect=[1, 0])
-        r.lpop = MagicMock(return_value=json.dumps(unm_signal))
-
-        displaced_signal = {
-            "symbol": "FIBK",
-            "signal_type": "displaced",
-            "reason": "Displaced to make room for UNM",
-            "direction": "close",
-            "exit_price": 35.0,
-        }
-        from portfolio_manager import process_signal
-        process_signal(r, displaced_signal)
-
-        # Two publishes: FIBK exit + UNM entry (only 1 position = FIBK, UNM fits)
-        assert r.publish.call_count == 2
-        symbols_published = {json.loads(c[0][1])["symbol"] for c in r.publish.call_args_list}
-        assert "FIBK" in symbols_published
-        assert "UNM" in symbols_published
-
-    def test_pending_entry_is_rejected_if_its_tier_becomes_gated(self):
+    def test_displaced_exit_waits_for_executor_completion_before_draining(self):
         positions = {"FIBK": _pos("FIBK", held_days=2)}
         pending = make_signal(symbol="UNM", tier=1, signal_type="entry")
-        tiers = {**config.DEFAULT_TIERS, "UNM": 2}
-        r = make_redis({
-            Keys.POSITIONS: json.dumps(positions),
-            Keys.TIERS: json.dumps(tiers),
-            Keys.DISABLED_TIERS: json.dumps([2]),
-        })
+        r = make_redis({Keys.POSITIONS: json.dumps(positions)})
         r.llen = MagicMock(side_effect=[1, 0])
         r.lpop = MagicMock(return_value=json.dumps(pending))
 
         displaced_signal = {
+            "displacement_id": "disp-123",
             "symbol": "FIBK",
             "signal_type": "displaced",
             "reason": "Displaced to make room for UNM",
@@ -829,13 +1179,207 @@ class TestDisplacementPendingQueue:
         }
         from portfolio_manager import process_signal
         process_signal(r, displaced_signal)
+
+        r.publish.assert_called_once_with(
+            Keys.APPROVED_ORDERS, r.publish.call_args.args[1]
+        )
+        approved_exit = json.loads(r.publish.call_args.args[1])
+        assert approved_exit["displacement_id"] == "disp-123"
+        r.llen.assert_not_called()
+        r.lpop.assert_not_called()
+
+    def test_unrelated_completion_signal_cannot_release_successor(self):
+        pending = make_signal(symbol="UNM", tier=1, signal_type="entry")
+        r = make_redis({Keys.POSITIONS: "{}"})
+        r.hgetall.return_value = {}
+        r.lindex.return_value = json.dumps(pending)
+
+        from portfolio_manager import process_signal
+        process_signal(r, {
+            "displacement_id": "unrelated-exit",
+            "symbol": "FIBK",
+            "signal_type": "displacement_complete",
+        })
+
+        r.lindex.assert_not_called()
+        r.publish.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("completion", "already_processed"),
+        [
+            ({"displacement_id": "other", "symbol": "FIBK"}, False),
+            ({"displacement_id": "disp-123"}, False),
+            ({"displacement_id": "disp-123", "symbol": "FIBK"}, True),
+        ],
+    )
+    def test_invalid_or_processed_durable_completion_is_not_consumed(
+        self, completion, already_processed
+    ):
+        r = make_redis({Keys.POSITIONS: "{}"})
+        r.hgetall.return_value = {"disp-123": json.dumps(completion)}
+        r.hexists.return_value = already_processed
+
+        from portfolio_manager import recover_displacement_completions
+        assert recover_displacement_completions(r) == 0
+        r.lindex.assert_not_called()
+        r.publish.assert_not_called()
+
+    def test_completion_without_successor_remains_durable_for_recovery(self):
+        r = make_redis({Keys.POSITIONS: "{}"})
+        completion = {
+            "displacement_id": "disp-123",
+            "symbol": "FIBK",
+            "order_id": "sell-1",
+        }
+        r.hgetall.return_value = {"disp-123": json.dumps(completion)}
+        r.hexists.return_value = False
+        r.lindex.return_value = None
+
+        from portfolio_manager import recover_displacement_completions
+        assert recover_displacement_completions(r) == 0
+        r.hdel.assert_not_called()
+        r.publish.assert_not_called()
+
+    def test_malformed_completion_is_left_for_next_recovery(self, capsys):
+        r = make_redis({Keys.POSITIONS: "{}"})
+        r.hgetall.return_value = {b"disp-123": b"not-json"}
+
+        from portfolio_manager import recover_displacement_completions
+        assert recover_displacement_completions(r) == 0
+        assert "could not recover displacement" in capsys.readouterr().out.lower()
+        r.hdel.assert_not_called()
+
+    def test_early_completion_signal_keeps_successor_queued_until_position_is_removed(self):
+        positions = {"FIBK": _pos("FIBK", held_days=2)}
+        pending = make_signal(symbol="UNM", tier=1, signal_type="entry")
+        r = make_redis({Keys.POSITIONS: json.dumps(positions)})
+        completion_signal = configure_durable_completion(r, pending)
+
+        from portfolio_manager import process_signal
+        result = process_signal(r, completion_signal)
+
+        assert result is None
+        r.lindex.assert_not_called()
+        r.publish.assert_not_called()
+
+    def test_losing_displacement_completion_sizes_successor_from_actual_equity(self):
+        # Executor has already sold the displaced loser, removed it from Redis,
+        # and written the actual post-sale equity before publishing completion.
+        positions = {
+            "SPY": {"symbol": "SPY", "quantity": 7, "entry_price": 125.0,
+                    "value": 875.0, "current_value": 875.0},
+            "QQQ": {"symbol": "QQQ", "quantity": 7, "entry_price": 125.0,
+                    "value": 875.0, "current_value": 875.0},
+            "BTC/USD": {"symbol": "BTC/USD", "quantity": 0.875,
+                        "entry_price": 1000.0, "value": 875.0,
+                        "current_value": 875.0},
+            "ETH/USD": {"symbol": "ETH/USD", "quantity": 0.875,
+                        "entry_price": 1000.0, "value": 875.0,
+                        "current_value": 875.0},
+        }
+        pending = make_signal(
+            symbol="XLI", close=100.0, stop=95.0, tier=1, signal_type="entry"
+        )
+        r = make_redis({
+            Keys.POSITIONS: json.dumps(positions),
+            Keys.SIMULATED_EQUITY: "4300.0",
+            Keys.PEAK_EQUITY: "5000.0",
+        })
+        completion_signal = configure_durable_completion(r, pending)
+
+        from portfolio_manager import process_signal
+        process_signal(r, completion_signal)
+
+        r.lindex.assert_called_once_with(Keys.displacement_pending("disp-123"), 0)
+        approved = [
+            json.loads(call.args[1])
+            for call in r.publish.call_args_list
+            if call.args[0] == Keys.APPROVED_ORDERS
+        ]
+        assert len(approved) == 1
+        assert approved[0]["symbol"] == "XLI"
+        assert approved[0]["quantity"] == 8
+        assert approved[0]["order_value"] == pytest.approx(800.0)
+
+    def test_profitable_displacement_completion_sizes_successor_from_actual_equity(self):
+        positions = {
+            "SPY": {"symbol": "SPY", "quantity": 7, "entry_price": 125.0,
+                    "value": 875.0, "current_value": 875.0},
+            "QQQ": {"symbol": "QQQ", "quantity": 7, "entry_price": 125.0,
+                    "value": 875.0, "current_value": 875.0},
+            "BTC/USD": {"symbol": "BTC/USD", "quantity": 0.875,
+                        "entry_price": 1000.0, "value": 875.0,
+                        "current_value": 875.0},
+            "ETH/USD": {"symbol": "ETH/USD", "quantity": 0.875,
+                        "entry_price": 1000.0, "value": 875.0,
+                        "current_value": 875.0},
+        }
+        pending = make_signal(
+            symbol="XLI", close=100.0, stop=96.0, tier=1, signal_type="entry"
+        )
+        r = make_redis({
+            Keys.POSITIONS: json.dumps(positions),
+            Keys.SIMULATED_EQUITY: "5300.0",
+            Keys.PEAK_EQUITY: "5300.0",
+        })
+        completion_signal = configure_durable_completion(r, pending)
+
+        from portfolio_manager import process_signal
+        process_signal(r, completion_signal)
 
         approved = [
             json.loads(call.args[1])
             for call in r.publish.call_args_list
             if call.args[0] == Keys.APPROVED_ORDERS
         ]
-        assert [order["symbol"] for order in approved] == ["FIBK"]
+        assert len(approved) == 1
+        assert approved[0]["symbol"] == "XLI"
+        assert approved[0]["quantity"] == 13
+        assert approved[0]["order_value"] == pytest.approx(1300.0)
+
+    def test_executor_completion_drains_pending_queue(self):
+        unm_signal = make_signal(symbol="UNM", tier=1, signal_type="entry")
+        r = make_redis({Keys.POSITIONS: "{}"})
+        completion_signal = configure_durable_completion(r, unm_signal)
+
+        from portfolio_manager import process_signal
+        process_signal(r, completion_signal)
+
+        pending_key = Keys.displacement_pending("disp-123")
+        r.lindex.assert_called_once_with(pending_key, 0)
+        r.delete.assert_called_once_with(pending_key)
+
+    def test_executor_completion_reprocesses_pending_entry(self):
+        unm_signal = make_signal(symbol="UNM", tier=1, signal_type="entry")
+        r = make_redis({Keys.POSITIONS: "{}"})
+        completion_signal = configure_durable_completion(r, unm_signal)
+
+        from portfolio_manager import process_signal
+        process_signal(r, completion_signal)
+
+        assert r.publish.call_count == 1
+        published = json.loads(r.publish.call_args.args[1])
+        assert published["symbol"] == "UNM"
+
+    def test_pending_entry_is_rejected_if_its_tier_becomes_gated(self):
+        pending = make_signal(symbol="UNM", tier=1, signal_type="entry")
+        tiers = {**config.DEFAULT_TIERS, "UNM": 2}
+        r = make_redis({
+            Keys.POSITIONS: "{}",
+            Keys.TIERS: json.dumps(tiers),
+            Keys.DISABLED_TIERS: json.dumps([2]),
+        })
+        completion_signal = configure_durable_completion(r, pending)
+
+        from portfolio_manager import process_signal
+        process_signal(r, completion_signal)
+
+        approved = [
+            json.loads(call.args[1])
+            for call in r.publish.call_args_list
+            if call.args[0] == Keys.APPROVED_ORDERS
+        ]
+        assert approved == []
         rejection = json.loads(r.rpush.call_args[0][1])
         assert rejection["symbol"] == "UNM"
         assert "temporarily disabled" in rejection["reason"].lower()
@@ -856,22 +1400,10 @@ class TestDisplacementPendingQueue:
 
         r.llen.assert_not_called()
 
-    def test_pending_entry_not_re_displaced_when_vacating_symbol_still_in_positions(self):
-        """
-        Bug: when the drain re-processes XLI after AG's exit is approved, AG is
-        still in trading:positions (executor hasn't filled yet).  evaluate_entry_signal
-        sees MAX positions → triggers another displacement → XLI never bought.
-        Fix: _displaced_symbol on the re-processed signal causes evaluate_entry_signal
-        to subtract 1 for the slot being vacated (both concurrent and asset-class checks),
-        so XLI is approved directly.
-
-        Realistic setup: 3 equity (SPY, QQQ, AG) + 2 crypto = 5 = MAX_CONCURRENT.
-        AG (equity) is displaced for XLI (equity).
-        """
+    def test_pending_entry_uses_slot_only_after_vacating_position_is_removed(self):
         positions = {
             "SPY": _pos("SPY", pnl_pct=1.0, held_days=2),
             "QQQ": _pos("QQQ", pnl_pct=1.0, held_days=2),
-            "AG": _pos("AG", pnl_pct=-1.61, held_days=2),
             "BTC/USD": _pos("BTC/USD", pnl_pct=0.5, held_days=2),
             "ETH/USD": _pos("ETH/USD", pnl_pct=0.3, held_days=2),
         }
@@ -881,25 +1413,19 @@ class TestDisplacementPendingQueue:
             Keys.SIMULATED_EQUITY: "10000.0",
             Keys.PEAK_EQUITY: "10000.0",
         })
-        r.llen = MagicMock(side_effect=[1, 0])
-        r.lpop = MagicMock(return_value=json.dumps(xli_signal))
+        completion_signal = configure_durable_completion(
+            r, xli_signal, symbol="AG", displacement_id="disp-ag"
+        )
 
-        displaced_signal = {
-            "symbol": "AG",
-            "signal_type": "displaced",
-            "reason": "Displaced to make room for XLI",
-            "direction": "close",
-            "exit_price": 20.80,
-        }
         from portfolio_manager import process_signal
-        process_signal(r, displaced_signal)
+        process_signal(r, completion_signal)
 
         approved = {
             json.loads(c[0][1])["symbol"]
             for c in r.publish.call_args_list
             if c[0][0] == Keys.APPROVED_ORDERS
         }
-        assert "XLI" in approved, f"XLI was not approved — published to APPROVED_ORDERS: {approved}"
+        assert approved == {"XLI"}
 
 
 # ── TSMOM signal handling (#169) ─────────────────────────────

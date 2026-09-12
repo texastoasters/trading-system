@@ -9,7 +9,10 @@ import os
 import sys
 import json
 import redis
+from collections.abc import Mapping
 from datetime import date, timedelta
+from types import MappingProxyType
+from typing import Any
 
 
 def _load_trading_env():
@@ -58,10 +61,9 @@ MAX_CONCURRENT_POSITIONS = 5  # HOT-RELOADABLE via trading:config
 MAX_EQUITY_POSITIONS = 3
 # Maximum open positions in crypto instruments (BTC/USD, etc.).
 MAX_CRYPTO_POSITIONS = 2
-# Fraction of INITIAL_CAPITAL allocated to equities. Portfolio Manager uses this
-# for per-asset-class exposure limits.
+# Fixed hard caps for new-buy asset-class exposure. These Rule 1 policy values
+# are source constants, deliberately excluded from Redis hot reload and Settings.
 EQUITY_ALLOCATION_PCT = 0.70
-# Fraction of INITIAL_CAPITAL allocated to crypto. Must sum to 1.0 with EQUITY_ALLOCATION_PCT.
 CRYPTO_ALLOCATION_PCT = 0.30
 
 # ── Risk ────────────────────────────────────────────────────
@@ -201,6 +203,11 @@ STRATEGY_MAX_CONCURRENT = {
 # displacement close when the target was entered today and this cap is hit.
 PDT_MAX_DAY_TRADES = 3
 
+# Voluntary stock-only anti-churn brake. This is not a regulatory PDT rule:
+# consumers may use it to block discretionary same-day stock round trips, but
+# must never block stop-losses or other protective exits. Crypto is excluded.
+STOCK_DAY_TRADE_BRAKE_ENABLED = True  # HOT-RELOADABLE via trading:config
+
 # ── Regime ──────────────────────────────────────────────────
 
 # ADX indicator lookback period (days). ADX measures trend strength regardless of
@@ -325,6 +332,14 @@ class Keys:
     CLOSED_TODAY = "trading:closed_today"
     RISK_MULTIPLIER = "trading:risk_multiplier"
     SYSTEM_STATUS = "trading:system_status"
+    # Durable fail-safe records for broker ambiguity or post-fill constraint
+    # violations. Entries have no TTL and require manual reconciliation.
+    MANUAL_RECONCILE = "trading:manual_reconcile"
+    # Durable displacement outbox. Executor writes one completion per unique
+    # displacement ID; PM removes it only while atomically acknowledging and
+    # dispatching one successor.
+    DISPLACEMENT_COMPLETIONS = "trading:displacement:completions"
+    DISPLACEMENT_PROCESSED = "trading:displacement:processed"
     # Temporary circuit-breaker gates. Permanent symbol exclusions remain in
     # universe["disabled"] / universe["blacklisted"]. Value is a JSON list.
     DISABLED_TIERS = "trading:disabled_tiers"
@@ -395,10 +410,12 @@ class Keys:
         return f"trading:age_alert:{symbol}"
 
     @staticmethod
-    def displacement_pending(symbol: str) -> str:
-        """List of entry signals queued while waiting for `symbol` to be displaced.
-        PM drains this list and re-evaluates each signal after the exit is approved."""
-        return f"trading:displacement_pending:{symbol}"
+    def displacement_pending(displacement_id: str) -> str:
+        """Successor signals waiting for one unique displacement to complete.
+
+        PM consumes at most one entry after Executor confirms the filled exit and
+        writes actual post-sale positions/equity plus a durable completion."""
+        return f"trading:displacement:pending:{displacement_id}"
 
 
 # ── Redis Connection ────────────────────────────────────────
@@ -568,178 +585,211 @@ def get_sector(symbol: str) -> str:
     return SECTOR_MAP.get(symbol, "unknown")
 
 
-def load_overrides(r: redis.Redis) -> None:
-    """
-    Read trading:config from Redis and apply valid overrides to module globals.
+def _trail_cast(value):
+    if not isinstance(value, dict):
+        raise ValueError("expected dict")
+    return {int(key): float(item) for key, item in value.items()}
 
-    Called at the top of each agent's main cycle. Missing key = no-op.
-    Invalid type or out-of-range value: log warning, skip that key.
-    This is the only supported mechanism for runtime parameter changes.
+
+def _trail_check(value):
+    return set(value) == {1, 2, 3} and all(0 < item <= 50 for item in value.values())
+
+
+def _daemon_cast(value):
+    if not isinstance(value, dict):
+        raise ValueError("expected dict")
+    return {str(key): int(item) for key, item in value.items()}
+
+
+def _daemon_check(value):
+    return (
+        set(value) == {"executor", "portfolio_manager", "watcher"}
+        and all(1 <= item <= 1440 for item in value.values())
+    )
+
+
+def _bool_cast(value):
+    if not isinstance(value, bool):
+        raise ValueError("expected boolean")
+    return value
+
+
+_HOT_RELOAD_SPEC = MappingProxyType({
+    "RSI2_ENTRY_CONSERVATIVE":       (float, lambda v: 0 < v <= 30),
+    "RSI2_ENTRY_AGGRESSIVE":         (float, lambda v: 0 < v <= 20),
+    "RSI2_EXIT":                     (float, lambda v: 50 <= v <= 95),
+    "RSI2_MAX_HOLD_DAYS":            (int,   lambda v: 1 <= v <= 30),
+    "RSI2_SMA_PERIOD":               (int,   lambda v: 20 <= v <= 500),
+    "RSI2_ATR_PERIOD":               (int,   lambda v: 2 <= v <= 60),
+    "HEATMAP_DAYS":                  (int,   lambda v: 1 <= v <= 120),
+    "DIVERGENCE_WINDOW":             (int,   lambda v: 2 <= v <= 60),
+    "MIN_VOLUME_RATIO":              (float, lambda v: 0 <= v <= 5.0),
+    "RISK_PER_TRADE_PCT":            (float, lambda v: 0 < v <= 0.05),
+    # Position caps may be reduced or disabled per asset class, never raised
+    # above the supported source policy of 5 total / 3 equity / 2 crypto.
+    "MAX_CONCURRENT_POSITIONS":      (int,   lambda v: 1 <= v <= 5),
+    "MAX_EQUITY_POSITIONS":          (int,   lambda v: 0 <= v <= 3),
+    "MAX_CRYPTO_POSITIONS":          (int,   lambda v: 0 <= v <= 2),
+    "ATR_STOP_MULTIPLIER":           (float, lambda v: 0.5 <= v <= 10.0),
+    "DAILY_LOSS_LIMIT_PCT":          (float, lambda v: 0 < v <= 0.20),
+    "MANUAL_EXIT_REENTRY_DROP_PCT":  (float, lambda v: 0 <= v <= 0.50),
+    "ATTRIBUTION_MAX_LOOKBACK_DAYS": (int,   lambda v: 7 <= v <= 365),
+    "IBS_ENTRY_THRESHOLD":           (float, lambda v: 0 < v < 1),
+    "IBS_MAX_HOLD_DAYS":             (int,   lambda v: 1 <= v <= 30),
+    "IBS_ATR_MULT":                  (float, lambda v: 0.5 <= v <= 10.0),
+    "STACKED_CONFIDENCE_BOOST":      (float, lambda v: 1.0 <= v <= 5.0),
+    "DONCHIAN_ENTRY_LEN":            (int,   lambda v: 5 <= v <= 120),
+    "DONCHIAN_EXIT_LEN":             (int,   lambda v: 3 <= v <= 120),
+    "DONCHIAN_MAX_HOLD_DAYS":        (int,   lambda v: 1 <= v <= 120),
+    "DONCHIAN_ATR_MULT":             (float, lambda v: 0.5 <= v <= 10.0),
+    "ADX_PERIOD":                    (int,   lambda v: 5 <= v <= 60),
+    "ADX_RANGING_THRESHOLD":         (int,   lambda v: 5 <= v <= 50),
+    "ADX_TREND_THRESHOLD":           (int,   lambda v: 10 <= v <= 60),
+    "BTC_FEE_RATE":                  (float, lambda v: 0 <= v <= 0.05),
+    "BTC_MIN_EXPECTED_GAIN":         (float, lambda v: 0 < v <= 0.10),
+    "EARNINGS_DAYS_BEFORE":          (int,   lambda v: 0 <= v <= 14),
+    "EARNINGS_DAYS_AFTER":           (int,   lambda v: 0 <= v <= 14),
+    "DRAWDOWN_CAUTION":              (float, lambda v: 0 < v < 100),
+    "DRAWDOWN_DEFENSIVE":            (float, lambda v: 0 < v < 100),
+    "DRAWDOWN_CRITICAL":             (float, lambda v: 0 < v < 100),
+    "DRAWDOWN_HALT":                 (float, lambda v: 0 < v < 100),
+    "TRAILING_TRIGGER_PCT":          (_trail_cast, _trail_check),
+    "TRAILING_TRAIL_PCT":            (_trail_cast, _trail_check),
+    "DAEMON_STALE_THRESHOLDS":       (_daemon_cast, _daemon_check),
+    "STOCK_DAY_TRADE_BRAKE_ENABLED": (_bool_cast, lambda _v: True),
+})
+
+
+def _freeze_config_value(value):
+    """Recursively freeze dict defaults so runtime mutation cannot rewrite policy."""
+    if isinstance(value, Mapping):
+        return MappingProxyType({
+            key: _freeze_config_value(item) for key, item in value.items()
+        })
+    return value
+
+
+def _copy_config_value(value):
+    if isinstance(value, Mapping):
+        return {key: _copy_config_value(item) for key, item in value.items()}
+    return value
+
+
+# Captured exactly once, before any agent cycle can mutate module globals.
+_SOURCE_DEFAULTS = MappingProxyType({
+    key: _freeze_config_value(globals()[key]) for key in _HOT_RELOAD_SPEC
+})
+
+
+def _source_snapshot() -> dict[str, Any]:
+    return {key: _copy_config_value(value) for key, value in _SOURCE_DEFAULTS.items()}
+
+
+def _apply_effective_config(effective: dict[str, Any]) -> None:
+    module = sys.modules[__name__]
+    for key, value in effective.items():
+        setattr(module, key, _copy_config_value(value))
+
+
+def load_overrides(r: redis.Redis) -> None:
+    """Atomically apply a Redis override snapshot over immutable source defaults.
+
+    A missing, blank, or empty-map snapshot restores every hot-reloadable value.
+    Redis errors, malformed JSON, and non-map JSON retain the last-known-good
+    effective configuration already installed in this process.
     """
     try:
         raw = r.get(Keys.CONFIG)
     except Exception:
-        return  # Redis unavailable — continue with module defaults
-    if not raw:
+        return
+
+    if raw is None or (isinstance(raw, (str, bytes)) and not raw.strip()):
+        _apply_effective_config(_source_snapshot())
         return
 
     try:
         overrides = json.loads(raw)
     except (json.JSONDecodeError, TypeError):
-        print("[config] WARNING: trading:config contains invalid JSON, skipping overrides")
+        print("[config] WARNING: trading:config contains invalid JSON, retaining last-known-good config")
         return
 
-    def _trail_cast(v):
-        if not isinstance(v, dict):
-            raise ValueError("expected dict")
-        return {int(k): float(x) for k, x in v.items()}
+    if not isinstance(overrides, dict):
+        print("[config] WARNING: trading:config must contain a JSON object, retaining last-known-good config")
+        return
 
-    def _trail_check(d):
-        return set(d.keys()) == {1, 2, 3} and all(0 < x <= 50 for x in d.values())
+    effective = _source_snapshot()
+    proposed = set(overrides)
 
-    def _daemon_cast(v):
-        if not isinstance(v, dict):
-            raise ValueError("expected dict")
-        return {str(k): int(x) for k, x in v.items()}
-
-    def _daemon_check(d):
-        return (set(d.keys()) == {"executor", "portfolio_manager", "watcher"}
-                and all(1 <= x <= 1440 for x in d.values()))
-
-    _SPEC = {
-        "RSI2_ENTRY_CONSERVATIVE":       (float, lambda v: 0 < v <= 30),
-        "RSI2_ENTRY_AGGRESSIVE":         (float, lambda v: 0 < v <= 20),
-        "RSI2_EXIT":                     (float, lambda v: 50 <= v <= 95),
-        "RSI2_MAX_HOLD_DAYS":            (int,   lambda v: 1 <= v <= 30),
-        "RSI2_SMA_PERIOD":               (int,   lambda v: 20 <= v <= 500),
-        "RSI2_ATR_PERIOD":               (int,   lambda v: 2 <= v <= 60),
-        "HEATMAP_DAYS":                  (int,   lambda v: 1 <= v <= 120),
-        "DIVERGENCE_WINDOW":             (int,   lambda v: 2 <= v <= 60),
-        "MIN_VOLUME_RATIO":              (float, lambda v: 0 <= v <= 5.0),
-        "RISK_PER_TRADE_PCT":            (float, lambda v: 0 < v <= 0.05),
-        "MAX_CONCURRENT_POSITIONS":      (int,   lambda v: 1 <= v <= 20),
-        "MAX_EQUITY_POSITIONS":          (int,   lambda v: 1 <= v <= 20),
-        "MAX_CRYPTO_POSITIONS":          (int,   lambda v: 0 <= v <= 10),
-        "EQUITY_ALLOCATION_PCT":         (float, lambda v: 0 < v <= 1.0),
-        "CRYPTO_ALLOCATION_PCT":         (float, lambda v: 0 <= v < 1.0),
-        "ATR_STOP_MULTIPLIER":           (float, lambda v: 0.5 <= v <= 10.0),
-        "DAILY_LOSS_LIMIT_PCT":          (float, lambda v: 0 < v <= 0.20),
-        "MANUAL_EXIT_REENTRY_DROP_PCT":  (float, lambda v: 0 <= v <= 0.50),
-        "ATTRIBUTION_MAX_LOOKBACK_DAYS": (int,   lambda v: 7 <= v <= 365),
-        "IBS_ENTRY_THRESHOLD":           (float, lambda v: 0 < v < 1),
-        "IBS_MAX_HOLD_DAYS":             (int,   lambda v: 1 <= v <= 30),
-        "IBS_ATR_MULT":                  (float, lambda v: 0.5 <= v <= 10.0),
-        "STACKED_CONFIDENCE_BOOST":      (float, lambda v: 1.0 <= v <= 5.0),
-        "DONCHIAN_ENTRY_LEN":            (int,   lambda v: 5 <= v <= 120),
-        "DONCHIAN_EXIT_LEN":             (int,   lambda v: 3 <= v <= 120),
-        "DONCHIAN_MAX_HOLD_DAYS":        (int,   lambda v: 1 <= v <= 120),
-        "DONCHIAN_ATR_MULT":             (float, lambda v: 0.5 <= v <= 10.0),
-        "ADX_PERIOD":                    (int,   lambda v: 5 <= v <= 60),
-        "ADX_RANGING_THRESHOLD":         (int,   lambda v: 5 <= v <= 50),
-        "ADX_TREND_THRESHOLD":           (int,   lambda v: 10 <= v <= 60),
-        "BTC_FEE_RATE":                  (float, lambda v: 0 <= v <= 0.05),
-        "BTC_MIN_EXPECTED_GAIN":         (float, lambda v: 0 < v <= 0.10),
-        "EARNINGS_DAYS_BEFORE":          (int,   lambda v: 0 <= v <= 14),
-        "EARNINGS_DAYS_AFTER":           (int,   lambda v: 0 <= v <= 14),
-        "DRAWDOWN_CAUTION":              (float, lambda v: 0 < v < 100),
-        "DRAWDOWN_DEFENSIVE":            (float, lambda v: 0 < v < 100),
-        "DRAWDOWN_CRITICAL":             (float, lambda v: 0 < v < 100),
-        "DRAWDOWN_HALT":                 (float, lambda v: 0 < v < 100),
-        "TRAILING_TRIGGER_PCT":          (_trail_cast,  _trail_check),
-        "TRAILING_TRAIL_PCT":            (_trail_cast,  _trail_check),
-        "DAEMON_STALE_THRESHOLDS":       (_daemon_cast, _daemon_check),
-    }
-
-    validated = {}
-    for key, (cast, check) in _SPEC.items():
+    for key, (cast, check) in _HOT_RELOAD_SPEC.items():
         if key not in overrides:
             continue
         try:
-            val = cast(overrides[key])
-            if not check(val):
-                raise ValueError(f"{val} out of range")
-        except (TypeError, ValueError) as e:
-            print(f"[config] WARNING: override {key}={overrides[key]!r} invalid ({e}), skipping")
+            value = cast(overrides[key])
+            if not check(value):
+                raise ValueError(f"{value} out of range")
+        except (TypeError, ValueError) as error:
+            print(f"[config] WARNING: override {key}={overrides[key]!r} invalid ({error}), using source default")
             continue
-        validated[key] = val
+        effective[key] = value
 
-    # Cross-check: AGGRESSIVE must be < CONSERVATIVE (use effective value after override)
-    if "RSI2_ENTRY_AGGRESSIVE" in validated:
-        effective_conservative = validated.get(
-            "RSI2_ENTRY_CONSERVATIVE", RSI2_ENTRY_CONSERVATIVE
-        )
-        if validated["RSI2_ENTRY_AGGRESSIVE"] >= effective_conservative:
+    def restore_defaults(keys):
+        for key in keys:
+            effective[key] = _copy_config_value(_SOURCE_DEFAULTS[key])
+
+    rsi_keys = ("RSI2_ENTRY_CONSERVATIVE", "RSI2_ENTRY_AGGRESSIVE")
+    if proposed.intersection(rsi_keys):
+        conservative = effective[rsi_keys[0]]
+        aggressive = effective[rsi_keys[1]]
+        if aggressive >= conservative:
             print(
-                f"[config] WARNING: RSI2_ENTRY_AGGRESSIVE="
-                f"{validated['RSI2_ENTRY_AGGRESSIVE']} >= "
-                f"RSI2_ENTRY_CONSERVATIVE={effective_conservative}, skipping aggressive override"
+                f"[config] WARNING: RSI2_ENTRY_AGGRESSIVE={aggressive} >= "
+                f"RSI2_ENTRY_CONSERVATIVE={conservative}, using source defaults"
             )
-            del validated["RSI2_ENTRY_AGGRESSIVE"]
+            restore_defaults(rsi_keys)
 
-    # Cross-check: drawdown thresholds must be strictly ascending
-    _dd_keys = ["DRAWDOWN_CAUTION", "DRAWDOWN_DEFENSIVE", "DRAWDOWN_CRITICAL", "DRAWDOWN_HALT"]
-    _mod = sys.modules[__name__]
-    _dd_vals = [validated.get(k, getattr(_mod, k)) for k in _dd_keys]
-    if any(a >= b for a, b in zip(_dd_vals, _dd_vals[1:])):
-        print(
-            "[config] WARNING: drawdown thresholds out of order after overrides, "
-            "skipping all drawdown overrides"
-        )
-        for k in _dd_keys:
-            validated.pop(k, None)
+    drawdown_keys = (
+        "DRAWDOWN_CAUTION", "DRAWDOWN_DEFENSIVE",
+        "DRAWDOWN_CRITICAL", "DRAWDOWN_HALT",
+    )
+    if proposed.intersection(drawdown_keys):
+        values = [effective[key] for key in drawdown_keys]
+        if any(left >= right for left, right in zip(values, values[1:])):
+            print("[config] WARNING: drawdown thresholds out of order, using source defaults")
+            restore_defaults(drawdown_keys)
 
-    # Cross-check: ADX_RANGING_THRESHOLD must be < ADX_TREND_THRESHOLD
-    if "ADX_RANGING_THRESHOLD" in validated or "ADX_TREND_THRESHOLD" in validated:
-        r_val = validated.get("ADX_RANGING_THRESHOLD", getattr(_mod, "ADX_RANGING_THRESHOLD"))
-        t_val = validated.get("ADX_TREND_THRESHOLD",   getattr(_mod, "ADX_TREND_THRESHOLD"))
-        if r_val >= t_val:
+    adx_keys = ("ADX_RANGING_THRESHOLD", "ADX_TREND_THRESHOLD")
+    if proposed.intersection(adx_keys):
+        ranging, trend = (effective[key] for key in adx_keys)
+        if ranging >= trend:
             print(
-                f"[config] WARNING: ADX_RANGING_THRESHOLD={r_val} >= "
-                f"ADX_TREND_THRESHOLD={t_val}, skipping both ADX threshold overrides"
+                f"[config] WARNING: ADX_RANGING_THRESHOLD={ranging} >= "
+                f"ADX_TREND_THRESHOLD={trend}, using source defaults"
             )
-            validated.pop("ADX_RANGING_THRESHOLD", None)
-            validated.pop("ADX_TREND_THRESHOLD", None)
+            restore_defaults(adx_keys)
 
-    # Cross-check: DONCHIAN_EXIT_LEN must be < DONCHIAN_ENTRY_LEN
-    if "DONCHIAN_ENTRY_LEN" in validated or "DONCHIAN_EXIT_LEN" in validated:
-        e_val = validated.get("DONCHIAN_ENTRY_LEN", getattr(_mod, "DONCHIAN_ENTRY_LEN"))
-        x_val = validated.get("DONCHIAN_EXIT_LEN",  getattr(_mod, "DONCHIAN_EXIT_LEN"))
-        if x_val >= e_val:
+    donchian_keys = ("DONCHIAN_ENTRY_LEN", "DONCHIAN_EXIT_LEN")
+    if proposed.intersection(donchian_keys):
+        entry, exit_ = (effective[key] for key in donchian_keys)
+        if exit_ >= entry:
             print(
-                f"[config] WARNING: DONCHIAN_EXIT_LEN={x_val} >= "
-                f"DONCHIAN_ENTRY_LEN={e_val}, skipping both Donchian length overrides"
+                f"[config] WARNING: DONCHIAN_EXIT_LEN={exit_} >= "
+                f"DONCHIAN_ENTRY_LEN={entry}, using source defaults"
             )
-            validated.pop("DONCHIAN_ENTRY_LEN", None)
-            validated.pop("DONCHIAN_EXIT_LEN", None)
+            restore_defaults(donchian_keys)
 
-    # Cross-check: EQUITY_ALLOCATION_PCT + CRYPTO_ALLOCATION_PCT must sum to 1.0
-    if "EQUITY_ALLOCATION_PCT" in validated or "CRYPTO_ALLOCATION_PCT" in validated:
-        eq = validated.get("EQUITY_ALLOCATION_PCT", getattr(_mod, "EQUITY_ALLOCATION_PCT"))
-        cr = validated.get("CRYPTO_ALLOCATION_PCT", getattr(_mod, "CRYPTO_ALLOCATION_PCT"))
-        if abs((eq + cr) - 1.0) > 1e-9:
-            print(
-                f"[config] WARNING: EQUITY_ALLOCATION_PCT={eq} + CRYPTO_ALLOCATION_PCT={cr} "
-                f"!= 1.0, skipping both allocation overrides"
-            )
-            validated.pop("EQUITY_ALLOCATION_PCT", None)
-            validated.pop("CRYPTO_ALLOCATION_PCT", None)
 
-    # Cross-check: TRAILING_TRAIL_PCT[tier] must be < TRAILING_TRIGGER_PCT[tier] per tier
-    if "TRAILING_TRIGGER_PCT" in validated or "TRAILING_TRAIL_PCT" in validated:
-        trig = validated.get("TRAILING_TRIGGER_PCT", getattr(_mod, "TRAILING_TRIGGER_PCT"))
-        trail = validated.get("TRAILING_TRAIL_PCT",  getattr(_mod, "TRAILING_TRAIL_PCT"))
-        bad = [t for t in (1, 2, 3) if trail[t] >= trig[t]]
+    trailing_keys = ("TRAILING_TRIGGER_PCT", "TRAILING_TRAIL_PCT")
+    if proposed.intersection(trailing_keys):
+        trigger, trail = (effective[key] for key in trailing_keys)
+        bad = [tier for tier in (1, 2, 3) if trail[tier] >= trigger[tier]]
         if bad:
             print(
-                f"[config] WARNING: TRAILING_TRAIL_PCT >= TRAILING_TRIGGER_PCT for tier(s) {bad}, "
-                f"skipping both trailing-stop overrides"
+                f"[config] WARNING: TRAILING_TRAIL_PCT >= TRAILING_TRIGGER_PCT "
+                f"for tier(s) {bad}, using source defaults"
             )
-            validated.pop("TRAILING_TRIGGER_PCT", None)
-            validated.pop("TRAILING_TRAIL_PCT", None)
+            restore_defaults(trailing_keys)
 
-    # Apply validated overrides to module globals
-    for key, val in validated.items():
-        setattr(_mod, key, val)
+    _apply_effective_config(effective)
 
 
 # v1.0.0

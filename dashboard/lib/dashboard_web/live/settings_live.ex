@@ -15,8 +15,6 @@ defmodule DashboardWeb.SettingsLive do
     "MAX_CONCURRENT_POSITIONS"      => "5",
     "MAX_EQUITY_POSITIONS"          => "3",
     "MAX_CRYPTO_POSITIONS"          => "2",
-    "EQUITY_ALLOCATION_PCT"         => "0.70",
-    "CRYPTO_ALLOCATION_PCT"         => "0.30",
     "ATR_STOP_MULTIPLIER"           => "2.0",
     "DAILY_LOSS_LIMIT_PCT"          => "0.03",
     "MANUAL_EXIT_REENTRY_DROP_PCT"  => "0.03",
@@ -39,7 +37,8 @@ defmodule DashboardWeb.SettingsLive do
     "DRAWDOWN_CAUTION"              => "5.0",
     "DRAWDOWN_DEFENSIVE"            => "10.0",
     "DRAWDOWN_CRITICAL"             => "15.0",
-    "DRAWDOWN_HALT"                 => "20.0"
+    "DRAWDOWN_HALT"                 => "20.0",
+    "STOCK_DAY_TRADE_BRAKE_ENABLED" => "true"
   }
 
   @dict_defaults %{
@@ -52,7 +51,6 @@ defmodule DashboardWeb.SettingsLive do
 
   @float_keys ~w(RSI2_ENTRY_CONSERVATIVE RSI2_ENTRY_AGGRESSIVE RSI2_EXIT
                  RISK_PER_TRADE_PCT MIN_VOLUME_RATIO
-                 EQUITY_ALLOCATION_PCT CRYPTO_ALLOCATION_PCT
                  ATR_STOP_MULTIPLIER DAILY_LOSS_LIMIT_PCT
                  MANUAL_EXIT_REENTRY_DROP_PCT
                  IBS_ENTRY_THRESHOLD IBS_ATR_MULT STACKED_CONFIDENCE_BOOST
@@ -69,6 +67,8 @@ defmodule DashboardWeb.SettingsLive do
                DONCHIAN_ENTRY_LEN DONCHIAN_EXIT_LEN DONCHIAN_MAX_HOLD_DAYS
                ADX_PERIOD ADX_RANGING_THRESHOLD ADX_TREND_THRESHOLD
                EARNINGS_DAYS_BEFORE EARNINGS_DAYS_AFTER)
+
+  @bool_keys ~w(STOCK_DAY_TRADE_BRAKE_ENABLED)
 
   @tiers ~w(1 2 3)
   @daemons ~w(executor portfolio_manager watcher)
@@ -123,9 +123,11 @@ defmodule DashboardWeb.SettingsLive do
     scalar_defaults_parsed =
       Map.new(@scalar_defaults, fn {k, v} ->
         parsed =
-          if k in @float_keys,
-            do: elem(Float.parse(v), 0),
-            else: elem(Integer.parse(v), 0)
+          cond do
+            k in @float_keys -> elem(Float.parse(v), 0)
+            k in @int_keys -> elem(Integer.parse(v), 0)
+            k in @bool_keys -> v == "true"
+          end
         {k, parsed}
       end)
 
@@ -159,6 +161,16 @@ defmodule DashboardWeb.SettingsLive do
     base =
       "w-full bg-gray-700 border rounded px-2 py-1.5 text-sm text-white " <>
       "focus:outline-none focus:border-blue-500"
+
+    if MapSet.member?(overridden, key) do
+      base <> " border-yellow-400"
+    else
+      base <> " border-gray-600"
+    end
+  end
+
+  def toggle_class(overridden, key) do
+    base = "mt-0.5 h-4 w-4 rounded border bg-gray-700 text-blue-500 focus:ring-blue-500"
 
     if MapSet.member?(overridden, key) do
       base <> " border-yellow-400"
@@ -225,7 +237,6 @@ defmodule DashboardWeb.SettingsLive do
          :ok <- validate_drawdown(scalars),
          :ok <- validate_adx(scalars),
          :ok <- validate_donchian(scalars),
-         :ok <- validate_allocations(scalars),
          :ok <- validate_trailing(trigger, trail) do
       merged =
         scalars
@@ -238,7 +249,7 @@ defmodule DashboardWeb.SettingsLive do
   end
 
   defp parse_scalars(params) do
-    Enum.reduce_while(@float_keys ++ @int_keys, %{}, fn key, acc ->
+    Enum.reduce_while(@float_keys ++ @int_keys ++ @bool_keys, %{}, fn key, acc ->
       val = Map.get(params, key, "")
 
       case parse_value(key, val) do
@@ -291,10 +302,35 @@ defmodule DashboardWeb.SettingsLive do
     end
   end
 
+  defp parse_value("MAX_CONCURRENT_POSITIONS" = key, val),
+    do: parse_bounded_integer(key, val, 1, 5)
+
+  defp parse_value("MAX_EQUITY_POSITIONS" = key, val),
+    do: parse_bounded_integer(key, val, 0, 3)
+
+  defp parse_value("MAX_CRYPTO_POSITIONS" = key, val),
+    do: parse_bounded_integer(key, val, 0, 2)
+
   defp parse_value(key, val) when key in @int_keys do
     case Integer.parse(String.trim(val)) do
       {i, ""} -> {:ok, i}
       _       -> {:error, "#{key}: expected an integer, got #{inspect(val)}"}
+    end
+  end
+
+  defp parse_value(key, val) when key in @bool_keys do
+    case String.trim(to_string(val)) do
+      "true" -> {:ok, true}
+      "false" -> {:ok, false}
+      _ -> {:error, "#{key}: expected true or false, got #{inspect(val)}"}
+    end
+  end
+
+  defp parse_bounded_integer(key, val, minimum, maximum) do
+    case Integer.parse(String.trim(to_string(val))) do
+      {integer, ""} when integer >= minimum and integer <= maximum -> {:ok, integer}
+      {_, ""} -> {:error, "#{key} must be between #{minimum} and #{maximum}"}
+      _ -> {:error, "#{key}: expected an integer, got #{inspect(val)}"}
     end
   end
 
@@ -321,15 +357,6 @@ defmodule DashboardWeb.SettingsLive do
       :ok
     else
       {:error, "Donchian: EXIT_LEN must be < ENTRY_LEN"}
-    end
-  end
-
-  defp validate_allocations(m) do
-    sum = m["EQUITY_ALLOCATION_PCT"] + m["CRYPTO_ALLOCATION_PCT"]
-    if abs(sum - 1.0) < 1.0e-6 do
-      :ok
-    else
-      {:error, "EQUITY_ALLOCATION_PCT + CRYPTO_ALLOCATION_PCT must sum to 1.0 (got #{sum})"}
     end
   end
 

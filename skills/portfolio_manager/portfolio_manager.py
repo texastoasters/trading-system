@@ -12,6 +12,7 @@ Usage (from repo root):
 
 import json
 import argparse
+import uuid
 from datetime import datetime
 
 import signal
@@ -20,6 +21,9 @@ import config
 from config import (
     Keys, get_redis, get_simulated_equity, get_drawdown,
     get_tier, get_sector, is_crypto, init_redis_state,
+)
+from entry_constraints import (
+    asset_class_exposure, invested_value, position_value, realized_exit_pnl,
 )
 from notify import notify
 
@@ -52,16 +56,9 @@ def count_crypto_positions(r):
     return sum(1 for p in positions.values() if is_crypto(p["symbol"]))
 
 
-def get_position_sectors(r):
-    """Return list of sectors currently held."""
-    positions = get_open_positions(r)
-    return [get_sector(p["symbol"]) for p in positions.values()]
-
-
 def get_invested_value(r):
     """Return total value of open positions."""
-    positions = get_open_positions(r)
-    return sum(p.get("value", 0) for p in positions.values())
+    return invested_value(get_open_positions(r))
 
 
 def get_effective_cash(r):
@@ -111,7 +108,10 @@ def pick_displacement_target(r):
 
     enriched = []
     for key, pos in positions.items():
-        if protection_on and pos.get("entry_date") == today:
+        if (config.STOCK_DAY_TRADE_BRAKE_ENABLED
+                and protection_on
+                and not is_crypto(pos["symbol"])
+                and pos.get("entry_date") == today):
             continue
         # TSMOM hold-protection: don't displace a young TSMOM position.
         primary = pos.get("primary_strategy", pos.get("strategy", "RSI2"))
@@ -140,13 +140,15 @@ def pick_displacement_target(r):
     return key, pos
 
 
-def evaluate_entry_signal(r, signal):
+def evaluate_entry_signal(r, signal, projected_equity=None):
     """
     Evaluate an entry signal and return an approved order or rejection reason.
     """
     symbol = signal["symbol"]
     entry_price = signal["indicators"]["close"]
     stop_price = signal["suggested_stop"]
+    crypto = is_crypto(symbol)
+    executable_price = round(entry_price * 1.001, 2) if crypto else entry_price
     signal_tier = signal.get("tier", 99)
     fee_adjusted = signal.get("fee_adjusted", False)
 
@@ -157,8 +159,9 @@ def evaluate_entry_signal(r, signal):
     if current_tier in disabled_tiers:
         return None, f"Tier {current_tier} is temporarily disabled for {symbol}"
 
-    equity = get_simulated_equity(r)
-    cash = get_effective_cash(r)
+    equity = (
+        get_simulated_equity(r) if projected_equity is None else projected_equity
+    )
     drawdown = get_drawdown(r)
     risk_mult = float(r.get(Keys.RISK_MULTIPLIER) or 1.0)
 
@@ -181,24 +184,29 @@ def evaluate_entry_signal(r, signal):
         existing_qty = existing_positions[symbol].get("quantity", 0)
         return None, f"Position already exists for {symbol} (qty={existing_qty})"
 
+    # A displacement exit is asynchronous: Redis still contains the vacating
+    # position when the queued entry is re-evaluated. Build the candidate
+    # post-displacement portfolio once and use it for every deterministic
+    # admission check (cash, counts, strategy, sector, and allocation).
+    vacating_symbol = signal.get("_displaced_symbol")
+    candidate_positions = {
+        key: position
+        for key, position in existing_positions.items()
+        if not vacating_symbol
+        or (key != vacating_symbol and position.get("symbol") != vacating_symbol)
+    }
+    cash = max(0, equity - invested_value(candidate_positions))
+
     # ── Disabled instrument check ──
     universe = json.loads(r.get(Keys.UNIVERSE) or json.dumps(config.DEFAULT_UNIVERSE))
     disabled = universe.get("disabled", [])
     if symbol in disabled:
         return None, f"{symbol} is currently disabled"
 
-    # When re-evaluating a pending entry after a displacement exit was approved,
-    # the displaced symbol is still in Redis (executor hasn't filled yet) but its
-    # slot is already spoken for — subtract 1 from the relevant limit checks.
-    _vacating = signal.get("_displaced_symbol")
-    _vacating_in_redis = _vacating is not None and _vacating in existing_positions
-    _vacating_is_crypto = _vacating_in_redis and is_crypto(_vacating)
-
     # ── Position limits (sell-to-make-room) ──
-    # Derive counts from already-loaded existing_positions to avoid extra Redis reads.
-    _crypto_count = sum(1 for p in existing_positions.values() if is_crypto(p["symbol"]))
-    _equity_count = len(existing_positions) - _crypto_count
-    num_positions = len(existing_positions) - int(_vacating_in_redis)
+    crypto_count = sum(1 for p in candidate_positions.values() if is_crypto(p["symbol"]))
+    equity_count = len(candidate_positions) - crypto_count
+    num_positions = len(candidate_positions)
     if num_positions >= config.MAX_CONCURRENT_POSITIONS:
         # Score gate: only displace for sufficiently strong incoming signals
         incoming_score = signal.get("signal_score", 0)
@@ -218,17 +226,37 @@ def evaluate_entry_signal(r, signal):
         # closing it counts as a day trade. Block when the PDT cap is already hit.
         today = datetime.now().strftime("%Y-%m-%d")
         pdt_count = int(r.get(Keys.PDT_COUNT) or 0)
-        if (target_pos.get("entry_date") == today
+        if (config.STOCK_DAY_TRADE_BRAKE_ENABLED
+                and not is_crypto(target_pos["symbol"])
+                and target_pos.get("entry_date") == today
                 and pdt_count >= config.PDT_MAX_DAY_TRADES):
             return None, (
                 f"PDT cap ({pdt_count}/{config.PDT_MAX_DAY_TRADES}) "
                 f"blocks displacement of {target_pos['symbol']}"
             )
 
+        # Preflight the exact candidate state before publishing an exit. The
+        # recursive evaluation cannot displace again because its candidate has
+        # one fewer position, and shares all downstream admission logic with
+        # the post-exit re-evaluation path.
+        target_exit_value = position_value(target_pos)
+        projected_equity = equity + realized_exit_pnl(target_pos, target_exit_value)
+        preflight_signal = {
+            **signal,
+            "_displaced_symbol": target_pos["symbol"],
+        }
+        preflight_order, preflight_rejection = evaluate_entry_signal(
+            r, preflight_signal, projected_equity
+        )
+        if preflight_order is None:
+            return None, f"Displacement preflight failed: {preflight_rejection}"
+
         target_primary = target_pos.get("primary_strategy",
                                          target_pos.get("strategy", "RSI2"))
+        displacement_id = uuid.uuid4().hex
         displace_signal = {
             "time": datetime.now().isoformat(),
+            "displacement_id": displacement_id,
             "symbol": target_pos["symbol"],
             "strategy": target_primary,
             "primary_strategy": target_primary,
@@ -237,13 +265,16 @@ def evaluate_entry_signal(r, signal):
             "direction": "close",
             "reason": f"Displaced to make room for {symbol}",
         }
-        r.publish(Keys.SIGNALS, json.dumps(displace_signal))
+        pending_key = Keys.displacement_pending(displacement_id)
+        pipe = r.pipeline(transaction=True)
+        # Queue first in the same Redis transaction that publishes the exit, so
+        # even an immediate fill can never race completion ahead of its successor.
+        pipe.rpush(pending_key, json.dumps(signal))
+        pipe.publish(Keys.SIGNALS, json.dumps(displace_signal))
+        pipe.execute()
         pnl_pct = target_pos.get("unrealized_pnl_pct", 0)
         print(f"  [PM] Displacing {target_pos['symbol']} "
               f"(pnl {pnl_pct:+.2f}%) for {symbol}")
-        pending_key = Keys.displacement_pending(target_pos["symbol"])
-        r.rpush(pending_key, json.dumps(signal))
-        r.expire(pending_key, 3600)
         return None, f"Displacement queued — {target_pos['symbol']} closing for {symbol}"
 
     # ── Per-strategy concurrent cap (#169) ──
@@ -257,17 +288,9 @@ def evaluate_entry_signal(r, signal):
     strategy_cap = config.STRATEGY_MAX_CONCURRENT.get(incoming_strategy)
     if strategy_cap is not None:
         same_strategy = sum(
-            1 for p in existing_positions.values()
+            1 for p in candidate_positions.values()
             if p.get("primary_strategy", p.get("strategy")) == incoming_strategy
         )
-        # Subtract the vacating displaced position when its strategy matches
-        # the incoming one (same logic as the global cap's vacating offset).
-        if _vacating_in_redis:
-            vacating_pos = existing_positions.get(_vacating, {})
-            vacating_strategy = vacating_pos.get(
-                "primary_strategy", vacating_pos.get("strategy"))
-            if vacating_strategy == incoming_strategy:
-                same_strategy -= 1
         if same_strategy >= strategy_cap:
             return None, (
                 f"{incoming_strategy} concurrent cap reached "
@@ -275,13 +298,13 @@ def evaluate_entry_signal(r, signal):
             )
 
     # Asset class limits
-    if is_crypto(symbol) and _crypto_count - int(_vacating_is_crypto) >= config.MAX_CRYPTO_POSITIONS:
+    if crypto and crypto_count >= config.MAX_CRYPTO_POSITIONS:
         return None, "Max crypto positions reached"
-    if not is_crypto(symbol) and _equity_count - int(_vacating_in_redis and not _vacating_is_crypto) >= config.MAX_EQUITY_POSITIONS:
+    if not crypto and equity_count >= config.MAX_EQUITY_POSITIONS:
         return None, "Max equity positions reached"
 
     # ── Sector correlation ──
-    held_sectors = get_position_sectors(r)
+    held_sectors = [get_sector(p["symbol"]) for p in candidate_positions.values()]
     new_sector = get_sector(symbol)
     sector_count = held_sectors.count(new_sector)
     sector_penalty = 0.5 if sector_count >= 2 else 1.0
@@ -304,22 +327,24 @@ def evaluate_entry_signal(r, signal):
 
     position_size = max_risk / stop_distance
 
-    # Rule 1: cap at available cash
-    order_value = position_size * entry_price
+    # Rule 1: cap at available cash using the worst executable price. Crypto
+    # limit orders may fill above the signal close, so their limit_price—not the
+    # stale close—is the admission notional.
+    order_value = position_size * executable_price
     if order_value > cash:
         # Try partial position (at least 50% of target)
-        achievable = cash / entry_price
+        achievable = cash / executable_price
         if achievable >= position_size * 0.5:
             position_size = achievable
-            order_value = position_size * entry_price
+            order_value = position_size * executable_price
         else:
             return None, f"Insufficient capital: need ${order_value:.0f}, have ${cash:.0f}"
 
-    if not is_crypto(symbol):
+    if not crypto:
         position_size = int(position_size)
         if position_size < 1:
             return None, "Position too small (< 1 share)"
-        order_value = position_size * entry_price
+        order_value = position_size * executable_price
 
     actual_risk = position_size * stop_distance
     actual_risk_pct = actual_risk / equity * 100
@@ -328,13 +353,27 @@ def evaluate_entry_signal(r, signal):
     regime_raw = r.get(Keys.REGIME)
     regime_info = json.loads(regime_raw) if regime_raw else {"regime": "RANGING"}
 
-    if regime_info.get("regime") == "DOWNTREND" and not is_crypto(symbol):
+    if regime_info.get("regime") == "DOWNTREND" and not crypto:
         position_size = int(position_size * 0.5)
         if position_size < 1:
             return None, "Position too small after DOWNTREND halving (< 1 share)"
-        order_value = position_size * entry_price
+        order_value = position_size * executable_price
         actual_risk = position_size * stop_distance
         actual_risk_pct = actual_risk / equity * 100
+
+    # Hard cap for new exposure only. Existing over-cap positions are
+    # grandfathered; this check never emits an exit or changes a holding.
+    asset_label = "crypto" if crypto else "equity"
+    allocation_pct = (
+        config.CRYPTO_ALLOCATION_PCT if crypto else config.EQUITY_ALLOCATION_PCT
+    )
+    current_exposure = asset_class_exposure(candidate_positions, symbol)
+    allocation_cap = equity * allocation_pct
+    if current_exposure + order_value > allocation_cap:
+        return None, (
+            f"{asset_label.capitalize()} allocation cap exceeded: "
+            f"${current_exposure + order_value:.2f} > ${allocation_cap:.2f}"
+        )
 
     # ── Build approved order ──
     primary_strategy = signal.get("primary_strategy") or signal.get("strategy")
@@ -367,8 +406,9 @@ def evaluate_entry_signal(r, signal):
         "symbol": symbol,
         "side": "buy",
         "quantity": position_size if is_crypto(symbol) else int(position_size),
-        "order_type": "limit" if is_crypto(symbol) else "market",
-        "limit_price": round(entry_price * 1.001, 2) if is_crypto(symbol) else None,
+        "order_type": "limit" if crypto else "market",
+        "limit_price": executable_price if crypto else None,
+        "asset_class": "crypto" if crypto else "equity",
         "strategies": strategies,
         "primary_strategy": primary_strategy,
         "strategy": primary_strategy,
@@ -412,6 +452,7 @@ def evaluate_exit_signal(r, signal):
         "side": "sell",
         "quantity": positions[pos_key]["quantity"],
         "order_type": "market",
+        "asset_class": "crypto" if is_crypto(symbol) else "equity",
         "strategy": "RSI2",
         "signal_type": signal["signal_type"],
         "exit_price": signal.get("exit_price", 0),
@@ -419,8 +460,13 @@ def evaluate_exit_signal(r, signal):
         "is_day_trade": signal.get("is_day_trade", False),
         "reason": signal.get("reason", ""),
     }
+    if signal.get("displacement_id"):
+        order["displacement_id"] = signal["displacement_id"]
 
-    if signal.get("is_day_trade", False):
+    if (config.STOCK_DAY_TRADE_BRAKE_ENABLED
+            and not is_crypto(symbol)
+            and signal.get("is_day_trade", False)
+            and signal.get("signal_type") != "stop_loss"):
         pdt_count = int(r.get(Keys.PDT_COUNT) or 0)
         if pdt_count >= 3:
             return None, "PDT limit reached — holding overnight (server-side stop protects)"
@@ -428,11 +474,149 @@ def evaluate_exit_signal(r, signal):
     return order, None
 
 
+def _decode_redis(value):
+    return value.decode() if isinstance(value, bytes) else value
+
+
+_DISPATCH_DISPLACEMENT_SUCCESSOR = """
+if redis.call('HEXISTS', KEYS[2], ARGV[1]) == 1 then
+    return -1
+end
+if redis.call('HEXISTS', KEYS[1], ARGV[1]) == 0 then
+    return -2
+end
+if redis.call('LINDEX', KEYS[3], 0) ~= ARGV[4] then
+    return -3
+end
+local subscribers = redis.call('PUBLISH', KEYS[4], ARGV[2])
+if subscribers == 0 then
+    return 0
+end
+redis.call('HSET', KEYS[2], ARGV[1], ARGV[3])
+redis.call('HDEL', KEYS[1], ARGV[1])
+redis.call('DEL', KEYS[3])
+return subscribers
+"""
+
+
+def _consume_displacement_completion(r, displacement_id, completion):
+    """Atomically acknowledge a completion and dispatch at most one successor."""
+    displacement_id = _decode_redis(displacement_id)
+    if completion.get("displacement_id") != displacement_id:
+        return False
+    symbol = completion.get("symbol")
+    if not symbol or r.hexists(Keys.DISPLACEMENT_PROCESSED, displacement_id):
+        return False
+    if any(
+        key == symbol or position.get("symbol") == symbol
+        for key, position in get_open_positions(r).items()
+    ):
+        print(
+            f"  ⚠️  [PM] Durable displacement {displacement_id} for {symbol} "
+            "is waiting for the position to leave Redis"
+        )
+        return False
+
+    pending_key = Keys.displacement_pending(displacement_id)
+    raw = r.lindex(pending_key, 0)
+    if not raw:
+        print(
+            f"  ⚠️  [PM] Durable displacement {displacement_id} for {symbol} "
+            "has no queued successor; completion remains pending"
+        )
+        return False
+
+    successor = json.loads(_decode_redis(raw))
+    order, rejection = evaluate_entry_signal(r, successor)
+    if order:
+        processed = {
+            **completion,
+            "processed_at": datetime.now().isoformat(),
+        }
+        subscribers = r.eval(
+            _DISPATCH_DISPLACEMENT_SUCCESSOR,
+            4,
+            Keys.DISPLACEMENT_COMPLETIONS,
+            Keys.DISPLACEMENT_PROCESSED,
+            pending_key,
+            Keys.APPROVED_ORDERS,
+            displacement_id,
+            json.dumps(order),
+            json.dumps(processed),
+            _decode_redis(raw),
+        )
+        if subscribers <= 0:
+            print(
+                f"  ⚠️  [PM] Durable displacement {displacement_id} for {symbol} "
+                "has no Executor subscriber; completion remains pending"
+            )
+            return False
+    else:
+        pipe = r.pipeline(transaction=True)
+        pipe.rpush("trading:rejected_signals", json.dumps({
+            "time": datetime.now().isoformat(),
+            "symbol": successor.get("symbol", ""),
+            "reason": rejection,
+            "signal": successor,
+        }))
+        processed = {
+            **completion,
+            "processed_at": datetime.now().isoformat(),
+        }
+        pipe.hset(
+            Keys.DISPLACEMENT_PROCESSED,
+            displacement_id,
+            json.dumps(processed),
+        )
+        pipe.hdel(Keys.DISPLACEMENT_COMPLETIONS, displacement_id)
+        # Delete the entire per-ID list: duplicate queue deliveries must never
+        # approve a second order for the same displacement.
+        pipe.delete(pending_key)
+        pipe.execute()
+
+    if order:
+        print(
+            f"  ✅ [PM] DISPLACEMENT SUCCESSOR APPROVED: {order['symbol']} "
+            f"after {symbol} ({displacement_id})"
+        )
+    else:
+        print(
+            f"  ❌ [PM] DISPLACEMENT SUCCESSOR REJECTED: "
+            f"{successor.get('symbol', '?')} — {rejection}"
+        )
+    return True
+
+
+def recover_displacement_completions(r):
+    """Recover every durable, unacknowledged executor completion."""
+    recovered = 0
+    completions = r.hgetall(Keys.DISPLACEMENT_COMPLETIONS) or {}
+    for raw_id, raw_completion in completions.items():
+        displacement_id = _decode_redis(raw_id)
+        try:
+            completion = json.loads(_decode_redis(raw_completion))
+            if _consume_displacement_completion(r, displacement_id, completion):
+                recovered += 1
+        except Exception as exc:
+            # Leave completion + pending successor untouched for the next loop.
+            print(
+                f"  ⚠️  [PM] Could not recover displacement "
+                f"{displacement_id}: {exc}"
+            )
+    return recovered
+
+
 def process_signal(r, signal):
     """Process a single signal — entry or exit."""
     config.load_overrides(r)   # apply any runtime config overrides
     sig_type = signal.get("signal_type", "")
     symbol = signal.get("symbol", "")
+
+    if sig_type == "displacement_complete":
+        # Pub/Sub is only a wake-up. Trust and consume durable executor records,
+        # never the signal payload itself; unrelated exits cannot release queues.
+        recover_displacement_completions(r)
+        return None
 
     if sig_type == "entry":
         order, rejection = evaluate_entry_signal(r, signal)
@@ -457,13 +641,6 @@ def process_signal(r, signal):
             r.publish(Keys.APPROVED_ORDERS, json.dumps(order))
             pnl = signal.get("pnl_pct", 0)
             print(f"  ✅ [PM] EXIT APPROVED: {symbol} ({sig_type}, P&L {pnl:+.2f}%)")
-            pending_key = Keys.displacement_pending(symbol)
-            while r.llen(pending_key):
-                raw = r.lpop(pending_key)
-                if raw:
-                    pending_signal = json.loads(raw)
-                    pending_signal["_displaced_symbol"] = symbol
-                    process_signal(r, pending_signal)
             return order
         else:
             print(f"  ⚠️  [PM] EXIT BLOCKED: {symbol} — {rejection}")
@@ -472,6 +649,7 @@ def process_signal(r, signal):
 
 def process_pending_signals(r):
     """Process any signals that arrived since last check."""
+    recover_displacement_completions(r)
     pubsub = r.pubsub()
     pubsub.subscribe(Keys.SIGNALS)
     pubsub.get_message(timeout=1)  # drain subscription confirmation
@@ -506,6 +684,7 @@ def daemon_loop():  # pragma: no cover
     while not _shutdown:
         # Update heartbeat on every iteration (fires every ~60s when idle)
         r.set(Keys.heartbeat("portfolio_manager"), datetime.now().isoformat())
+        recover_displacement_completions(r)
         msg = pubsub.get_message(timeout=60)
         if msg is None or msg['type'] != 'message':
             continue

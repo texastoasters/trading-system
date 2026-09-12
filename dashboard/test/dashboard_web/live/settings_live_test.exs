@@ -38,11 +38,28 @@ defmodule DashboardWeb.SettingsLiveTest do
       assert html =~ "Active overrides"
     end
 
+    test "ignores legacy allocation overrides because policy is fixed", %{conn: conn} do
+      Redix.command(:redix, ["SET", "trading:config",
+        Jason.encode!(%{"EQUITY_ALLOCATION_PCT" => 0.80, "CRYPTO_ALLOCATION_PCT" => 0.20})])
+
+      {:ok, _view, html} = live(conn, "/settings")
+
+      assert html =~ "No active overrides"
+      refute html =~ ~s(name="config[EQUITY_ALLOCATION_PCT]")
+      refute html =~ ~s(name="config[CRYPTO_ALLOCATION_PCT]")
+    end
+
     test "falls back to defaults when trading:config contains malformed JSON", %{conn: conn} do
       Redix.command(:redix, ["SET", "trading:config", "not valid json {{{"])
       {:ok, _view, html} = live(conn, "/settings")
       assert html =~ ~s(value="10.0")   # RSI2_ENTRY_CONSERVATIVE default
       assert html =~ "No active overrides"
+    end
+
+    test "stock day-trade brake toggle is default-on", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/settings")
+
+      assert html =~ ~r/name="config\[STOCK_DAY_TRADE_BRAKE_ENABLED\]"[^>]*checked/
     end
   end
 
@@ -87,6 +104,20 @@ defmodule DashboardWeb.SettingsLiveTest do
       assert decoded["ADX_PERIOD"] == 20
       refute Map.has_key?(decoded, "RSI2_ENTRY_CONSERVATIVE")
       refute Map.has_key?(decoded, "DRAWDOWN_HALT")
+    end
+
+    test "saving editable settings removes legacy allocation overrides", %{conn: conn} do
+      Redix.command(:redix, ["SET", "trading:config",
+        Jason.encode!(%{"EQUITY_ALLOCATION_PCT" => 0.80, "CRYPTO_ALLOCATION_PCT" => 0.20})])
+      {:ok, view, _} = live(conn, "/settings")
+
+      html = view |> form("#settings-form", config: full_params()) |> render_submit()
+      assert html =~ "saved"
+
+      {:ok, raw} = Redix.command(:redix, ["GET", "trading:config"])
+      decoded = Jason.decode!(raw)
+      refute Map.has_key?(decoded, "EQUITY_ALLOCATION_PCT")
+      refute Map.has_key?(decoded, "CRYPTO_ALLOCATION_PCT")
     end
 
     test "shows error flash on non-numeric input", %{conn: conn} do
@@ -140,6 +171,67 @@ defmodule DashboardWeb.SettingsLiveTest do
       html = view |> form("#settings-form", config: full_params()) |> render_submit()
       assert html =~ "Failed to save"
     end
+
+    test "stores false when the voluntary stock day-trade brake is disabled", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/settings")
+      params = Map.put(full_params(), "STOCK_DAY_TRADE_BRAKE_ENABLED", "false")
+
+      _ = view |> form("#settings-form", config: params) |> render_submit()
+
+      {:ok, raw} = Redix.command(:redix, ["GET", "trading:config"])
+      assert Jason.decode!(raw)["STOCK_DAY_TRADE_BRAKE_ENABLED"] == false
+    end
+
+    test "position limits accept reductions through 1 total / 0 equity / 0 crypto", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/settings")
+      params =
+        full_params()
+        |> Map.put("MAX_CONCURRENT_POSITIONS", "1")
+        |> Map.put("MAX_EQUITY_POSITIONS", "0")
+        |> Map.put("MAX_CRYPTO_POSITIONS", "0")
+
+      html = view |> form("#settings-form", config: params) |> render_submit()
+      assert html =~ "saved"
+
+      {:ok, raw} = Redix.command(:redix, ["GET", "trading:config"])
+      decoded = Jason.decode!(raw)
+      assert decoded["MAX_CONCURRENT_POSITIONS"] == 1
+      assert decoded["MAX_EQUITY_POSITIONS"] == 0
+      assert decoded["MAX_CRYPTO_POSITIONS"] == 0
+    end
+
+    test "position limits reject increases above source policy 5 total / 3 equity / 2 crypto", %{conn: conn} do
+      for {key, unsupported, expected} <- [
+            {"MAX_CONCURRENT_POSITIONS", "6", "1 and 5"},
+            {"MAX_EQUITY_POSITIONS", "4", "0 and 3"},
+            {"MAX_CRYPTO_POSITIONS", "3", "0 and 2"}
+          ] do
+        {:ok, view, _} = live(conn, "/settings")
+        params = Map.put(full_params(), key, unsupported)
+
+        html = view |> form("#settings-form", config: params) |> render_submit()
+        assert html =~ "#{key} must be between #{expected}"
+
+        {:ok, raw} = Redix.command(:redix, ["GET", "trading:config"])
+        assert raw == nil
+      end
+    end
+
+    test "position limits reject non-integer input", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/settings")
+      params = Map.put(full_params(), "MAX_CONCURRENT_POSITIONS", "not-an-integer")
+
+      html = view |> form("#settings-form", config: params) |> render_submit()
+      assert html =~ "MAX_CONCURRENT_POSITIONS: expected an integer"
+    end
+
+    test "stock day-trade brake rejects non-boolean input", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/settings")
+      params = Map.put(full_params(), "STOCK_DAY_TRADE_BRAKE_ENABLED", "sometimes")
+
+      html = render_hook(view, "save", %{"config" => params})
+      assert html =~ "STOCK_DAY_TRADE_BRAKE_ENABLED: expected true or false"
+    end
   end
 
   describe "reset event" do
@@ -176,6 +268,15 @@ defmodule DashboardWeb.SettingsLiveTest do
       {:ok, _view, html} = live(conn, "/settings")
       assert html =~ "Equity fraction risked, sized via ATR stop"
       assert html =~ "Cap on simultaneously open positions"
+    end
+
+    test "stock brake is described as voluntary rather than a regulatory PDT rule", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/settings")
+
+      assert html =~ "Voluntary stock anti-churn brake"
+      assert html =~ "not a regulatory PDT requirement"
+      assert html =~ "Stops and protective exits are never blocked"
+      assert html =~ "Crypto is excluded"
     end
 
     test "drawdown threshold fields have descriptions", %{conn: conn} do
@@ -229,12 +330,20 @@ defmodule DashboardWeb.SettingsLiveTest do
       assert html =~ ~s(name="config[ADX_TREND_THRESHOLD]")
     end
 
-    test "position limit extension inputs render", %{conn: conn} do
+    test "position limits render but fixed allocation policy is not editable", %{conn: conn} do
       {:ok, _view, html} = live(conn, "/settings")
       assert html =~ ~s(name="config[MAX_EQUITY_POSITIONS]")
       assert html =~ ~s(name="config[MAX_CRYPTO_POSITIONS]")
-      assert html =~ ~s(name="config[EQUITY_ALLOCATION_PCT]")
-      assert html =~ ~s(name="config[CRYPTO_ALLOCATION_PCT]")
+      refute html =~ ~s(name="config[EQUITY_ALLOCATION_PCT]")
+      refute html =~ ~s(name="config[CRYPTO_ALLOCATION_PCT]")
+    end
+
+    test "position limit controls expose Python's conservative bounds", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/settings")
+
+      assert html =~ ~r/name="config\[MAX_CONCURRENT_POSITIONS\]"[^>]*min="1"[^>]*max="5"/
+      assert html =~ ~r/name="config\[MAX_EQUITY_POSITIONS\]"[^>]*min="0"[^>]*max="3"/
+      assert html =~ ~r/name="config\[MAX_CRYPTO_POSITIONS\]"[^>]*min="0"[^>]*max="2"/
     end
 
     test "risk extension inputs render", %{conn: conn} do
@@ -303,8 +412,6 @@ defmodule DashboardWeb.SettingsLiveTest do
       # Positions extension
       assert html =~ "Max open equity positions"
       assert html =~ "Max open crypto positions"
-      assert html =~ "Fraction of capital allocated to equities"
-      assert html =~ "Fraction of capital allocated to crypto"
       # Risk extension
       assert html =~ "Daily loss cap (fraction of equity)"
       assert html =~ "ATR multiple for initial stop-loss"
@@ -345,6 +452,13 @@ defmodule DashboardWeb.SettingsLiveTest do
         Jason.encode!(%{"TRAILING_TRIGGER_PCT" => %{"1" => 6.0, "2" => 6.0, "3" => 5.0}})])
       {:ok, _view, html} = live(conn, "/settings")
       assert html =~ ~r/name="config\[TRAILING_TRIGGER_PCT\]\[1\]"[^>]*border-yellow-400/
+    end
+
+    test "overridden stock brake toggle carries yellow border class", %{conn: conn} do
+      Redix.command(:redix, ["SET", "trading:config",
+        Jason.encode!(%{"STOCK_DAY_TRADE_BRAKE_ENABLED" => false})])
+      {:ok, _view, html} = live(conn, "/settings")
+      assert html =~ ~r/type="checkbox"[^>]*name="config\[STOCK_DAY_TRADE_BRAKE_ENABLED\]"[^>]*border-yellow-400/
     end
 
     test "no overrides means no yellow border anywhere", %{conn: conn} do
@@ -409,15 +523,6 @@ defmodule DashboardWeb.SettingsLiveTest do
 
       {:ok, raw} = Redix.command(:redix, ["GET", "trading:config"])
       assert raw == nil
-    end
-
-    test "rejects allocation sum not equal to 1.0", %{conn: conn, params: params} do
-      bad = params
-        |> Map.put("EQUITY_ALLOCATION_PCT", "0.80")
-        |> Map.put("CRYPTO_ALLOCATION_PCT", "0.30")
-      {:ok, view, _} = live(conn, "/settings")
-      html = view |> form("#settings-form", config: bad) |> render_submit()
-      assert html =~ "sum to 1.0"
     end
 
     test "rejects ADX ranging >= trend", %{conn: conn, params: params} do
@@ -491,8 +596,6 @@ defmodule DashboardWeb.SettingsLiveTest do
       "MAX_CONCURRENT_POSITIONS" => "5",
       "MAX_EQUITY_POSITIONS" => "3",
       "MAX_CRYPTO_POSITIONS" => "2",
-      "EQUITY_ALLOCATION_PCT" => "0.70",
-      "CRYPTO_ALLOCATION_PCT" => "0.30",
       "ATR_STOP_MULTIPLIER" => "2.0",
       "DAILY_LOSS_LIMIT_PCT" => "0.03",
       "MANUAL_EXIT_REENTRY_DROP_PCT" => "0.03",
@@ -516,6 +619,7 @@ defmodule DashboardWeb.SettingsLiveTest do
       "DRAWDOWN_DEFENSIVE" => "10.0",
       "DRAWDOWN_CRITICAL" => "15.0",
       "DRAWDOWN_HALT" => "20.0",
+      "STOCK_DAY_TRADE_BRAKE_ENABLED" => "true",
       "TRAILING_TRIGGER_PCT" => %{"1" => "5.0", "2" => "5.0", "3" => "4.0"},
       "TRAILING_TRAIL_PCT"   => %{"1" => "2.0", "2" => "2.5", "3" => "3.0"},
       "DAEMON_STALE_THRESHOLDS" => %{

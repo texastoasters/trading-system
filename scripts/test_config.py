@@ -7,6 +7,7 @@ Run from repo root:
 import json
 import sys
 import os
+from copy import deepcopy
 from datetime import date, timedelta
 from unittest.mock import MagicMock, patch, mock_open
 
@@ -30,6 +31,72 @@ from config import (
     DEFAULT_UNIVERSE, DEFAULT_TIERS, INITIAL_CAPITAL,
     RSI2_ENTRY_CONSERVATIVE, RSI2_ENTRY_AGGRESSIVE, RSI2_MAX_HOLD_DAYS,
 )
+
+
+HOT_RELOAD_SOURCE_DEFAULTS = {
+    "RSI2_ENTRY_CONSERVATIVE": 10.0,
+    "RSI2_ENTRY_AGGRESSIVE": 5.0,
+    "RSI2_EXIT": 60.0,
+    "RSI2_MAX_HOLD_DAYS": 5,
+    "RSI2_SMA_PERIOD": 200,
+    "RSI2_ATR_PERIOD": 14,
+    "HEATMAP_DAYS": 14,
+    "DIVERGENCE_WINDOW": 10,
+    "MIN_VOLUME_RATIO": 0.5,
+    "RISK_PER_TRADE_PCT": 0.01,
+    "MAX_CONCURRENT_POSITIONS": 5,
+    "MAX_EQUITY_POSITIONS": 3,
+    "MAX_CRYPTO_POSITIONS": 2,
+    "ATR_STOP_MULTIPLIER": 2.0,
+    "DAILY_LOSS_LIMIT_PCT": 0.03,
+    "MANUAL_EXIT_REENTRY_DROP_PCT": 0.03,
+    "ATTRIBUTION_MAX_LOOKBACK_DAYS": 90,
+    "IBS_ENTRY_THRESHOLD": 0.15,
+    "IBS_MAX_HOLD_DAYS": 3,
+    "IBS_ATR_MULT": 2.0,
+    "STACKED_CONFIDENCE_BOOST": 1.25,
+    "DONCHIAN_ENTRY_LEN": 20,
+    "DONCHIAN_EXIT_LEN": 10,
+    "DONCHIAN_MAX_HOLD_DAYS": 30,
+    "DONCHIAN_ATR_MULT": 3.0,
+    "ADX_PERIOD": 14,
+    "ADX_RANGING_THRESHOLD": 20,
+    "ADX_TREND_THRESHOLD": 25,
+    "BTC_FEE_RATE": 0.004,
+    "BTC_MIN_EXPECTED_GAIN": 0.006,
+    "EARNINGS_DAYS_BEFORE": 2,
+    "EARNINGS_DAYS_AFTER": 1,
+    "DRAWDOWN_CAUTION": 5.0,
+    "DRAWDOWN_DEFENSIVE": 10.0,
+    "DRAWDOWN_CRITICAL": 15.0,
+    "DRAWDOWN_HALT": 20.0,
+    "TRAILING_TRIGGER_PCT": {1: 5.0, 2: 5.0, 3: 4.0},
+    "TRAILING_TRAIL_PCT": {1: 2.0, 2: 2.5, 3: 3.0},
+    "DAEMON_STALE_THRESHOLDS": {
+        "executor": 5, "portfolio_manager": 5, "watcher": 35,
+    },
+    "STOCK_DAY_TRADE_BRAKE_ENABLED": True,
+}
+
+
+@pytest.fixture(autouse=True)
+def restore_hot_reload_source_defaults():
+    """Keep tests isolated from load_overrides' intentional module mutations."""
+    defaults = getattr(config, "_SOURCE_DEFAULTS", HOT_RELOAD_SOURCE_DEFAULTS)
+
+    def restore():
+        config.EQUITY_ALLOCATION_PCT = 0.70
+        config.CRYPTO_ALLOCATION_PCT = 0.30
+        for key, value in defaults.items():
+            if hasattr(config, "_copy_config_value"):
+                value = config._copy_config_value(value)
+            else:
+                value = deepcopy(value)
+            setattr(config, key, value)
+
+    restore()
+    yield
+    restore()
 
 
 # ── Helpers ──────────────────────────────────────────────────
@@ -680,6 +747,127 @@ class TestLoadOverrides:
         load_overrides(r)
         assert config.RSI2_ENTRY_CONSERVATIVE == 10.0  # unchanged
 
+    @pytest.mark.parametrize("raw", [None, "", "   ", "{}"])
+    def test_empty_snapshot_restores_every_hot_reloadable_source_default(self, raw):
+        """Deletion, blank values, and {} clear stale globals in a live process."""
+        for key, default in HOT_RELOAD_SOURCE_DEFAULTS.items():
+            stale = False if isinstance(default, bool) else (
+                {"stale": 1} if isinstance(default, dict) else default + 1
+            )
+            setattr(config, key, stale)
+
+        store = {} if raw is None else {Keys.CONFIG: raw}
+        load_overrides(make_r(store=store))
+
+        for key, default in HOT_RELOAD_SOURCE_DEFAULTS.items():
+            assert getattr(config, key) == default, key
+
+    def test_removed_override_field_returns_to_source_default(self):
+        load_overrides(make_r(store={Keys.CONFIG: json.dumps({
+            "RSI2_EXIT": 70.0,
+            "RISK_PER_TRADE_PCT": 0.02,
+        })}))
+        assert config.RSI2_EXIT == 70.0
+
+        load_overrides(make_r(store={Keys.CONFIG: json.dumps({
+            "RISK_PER_TRADE_PCT": 0.015,
+        })}))
+
+        assert config.RSI2_EXIT == 60.0
+        assert config.RISK_PER_TRADE_PCT == 0.015
+
+    def test_malformed_json_retains_last_known_good_effective_config(self):
+        load_overrides(make_r(store={Keys.CONFIG: json.dumps({"RSI2_EXIT": 70.0})}))
+
+        load_overrides(make_r(store={Keys.CONFIG: "{not valid json"}))
+
+        assert config.RSI2_EXIT == 70.0
+
+    def test_non_object_json_retains_last_known_good_effective_config(self):
+        load_overrides(make_r(store={Keys.CONFIG: json.dumps({
+            "STOCK_DAY_TRADE_BRAKE_ENABLED": False,
+        })}))
+
+        load_overrides(make_r(store={Keys.CONFIG: "[]"}))
+
+        assert config.STOCK_DAY_TRADE_BRAKE_ENABLED is False
+
+    def test_redis_error_retains_last_known_good_effective_config(self):
+        load_overrides(make_r(store={Keys.CONFIG: json.dumps({"RSI2_EXIT": 70.0})}))
+        r = MagicMock()
+        r.get.side_effect = Exception("connection refused")
+
+        load_overrides(r)
+
+        assert config.RSI2_EXIT == 70.0
+
+    def test_cross_field_validation_uses_defaults_plus_proposed_snapshot(self):
+        """A removed conservative override cannot legitimize a new aggressive value."""
+        load_overrides(make_r(store={Keys.CONFIG: json.dumps({
+            "RSI2_ENTRY_CONSERVATIVE": 15.0,
+            "RSI2_ENTRY_AGGRESSIVE": 8.0,
+        })}))
+
+        load_overrides(make_r(store={Keys.CONFIG: json.dumps({
+            "RSI2_ENTRY_AGGRESSIVE": 12.0,
+        })}))
+
+        assert config.RSI2_ENTRY_CONSERVATIVE == 10.0
+        assert config.RSI2_ENTRY_AGGRESSIVE == 5.0
+
+    def test_fixed_allocations_are_absent_from_hot_reload_spec(self):
+        assert "EQUITY_ALLOCATION_PCT" not in config._HOT_RELOAD_SPEC
+        assert "CRYPTO_ALLOCATION_PCT" not in config._HOT_RELOAD_SPEC
+        load_overrides(make_r(store={Keys.CONFIG: json.dumps({
+            "EQUITY_ALLOCATION_PCT": 0.80,
+            "CRYPTO_ALLOCATION_PCT": 0.20,
+        })}))
+
+        assert config.EQUITY_ALLOCATION_PCT == 0.70
+        assert config.CRYPTO_ALLOCATION_PCT == 0.30
+
+    @pytest.mark.parametrize("key,allowed", [
+        ("MAX_CONCURRENT_POSITIONS", 5),
+        ("MAX_EQUITY_POSITIONS", 3),
+        ("MAX_CRYPTO_POSITIONS", 2),
+        ("MAX_CONCURRENT_POSITIONS", 1),
+        ("MAX_EQUITY_POSITIONS", 0),
+        ("MAX_CRYPTO_POSITIONS", 0),
+    ])
+    def test_position_limit_conservative_bounds_accept_only_supported_range(self, key, allowed):
+        load_overrides(make_r(store={Keys.CONFIG: json.dumps({key: allowed})}))
+        assert getattr(config, key) == allowed
+
+    @pytest.mark.parametrize("key,unsupported", [
+        ("MAX_CONCURRENT_POSITIONS", 6),
+        ("MAX_EQUITY_POSITIONS", 4),
+        ("MAX_CRYPTO_POSITIONS", 3),
+        ("MAX_CONCURRENT_POSITIONS", 0),
+        ("MAX_EQUITY_POSITIONS", -1),
+        ("MAX_CRYPTO_POSITIONS", -1),
+    ])
+    def test_position_limit_conservative_bounds_reject_unsupported_values(self, key, unsupported):
+        load_overrides(make_r(store={Keys.CONFIG: json.dumps({key: unsupported})}))
+        assert getattr(config, key) == HOT_RELOAD_SOURCE_DEFAULTS[key]
+
+    def test_stock_day_trade_brake_defaults_on_and_hot_reloads(self):
+        assert config.STOCK_DAY_TRADE_BRAKE_ENABLED is True
+
+        load_overrides(make_r(store={Keys.CONFIG: json.dumps({
+            "STOCK_DAY_TRADE_BRAKE_ENABLED": False,
+        })}))
+        assert config.STOCK_DAY_TRADE_BRAKE_ENABLED is False
+
+        load_overrides(make_r(store={Keys.CONFIG: "{}"}))
+        assert config.STOCK_DAY_TRADE_BRAKE_ENABLED is True
+
+    def test_stock_day_trade_brake_rejects_non_boolean_values(self):
+        load_overrides(make_r(store={Keys.CONFIG: json.dumps({
+            "STOCK_DAY_TRADE_BRAKE_ENABLED": "false",
+        })}))
+
+        assert config.STOCK_DAY_TRADE_BRAKE_ENABLED is True
+
 
 class TestLoadOverridesExpandedScalars:
     """Expanded hot-reload surface: RSI sub-params, IBS, Donchian, ADX,
@@ -708,8 +896,7 @@ class TestLoadOverridesExpandedScalars:
         "ADX_TREND_THRESHOLD": 25,
         "MAX_EQUITY_POSITIONS": 3,
         "MAX_CRYPTO_POSITIONS": 2,
-        "EQUITY_ALLOCATION_PCT": 0.70,
-        "CRYPTO_ALLOCATION_PCT": 0.30,
+
         "BTC_FEE_RATE": 0.004,
         "BTC_MIN_EXPECTED_GAIN": 0.006,
         "EARNINGS_DAYS_BEFORE": 2,
@@ -743,9 +930,8 @@ class TestLoadOverridesExpandedScalars:
         ("ADX_PERIOD", 10, 10),
         ("ADX_RANGING_THRESHOLD", 15, 15),
         ("ADX_TREND_THRESHOLD", 30, 30),
-        ("MAX_EQUITY_POSITIONS", 4, 4),
+        ("MAX_EQUITY_POSITIONS", 2, 2),
         ("MAX_CRYPTO_POSITIONS", 1, 1),
-        # Allocations tested jointly in test_allocations_apply_when_sum_one
         ("BTC_FEE_RATE", 0.005, 0.005),
         ("BTC_MIN_EXPECTED_GAIN", 0.008, 0.008),
         ("EARNINGS_DAYS_BEFORE", 3, 3),
@@ -794,14 +980,10 @@ class TestLoadOverridesExpandedScalars:
         ("ADX_RANGING_THRESHOLD", 60, 20),
         ("ADX_TREND_THRESHOLD", 0, 25),
         ("ADX_TREND_THRESHOLD", 100, 25),
-        ("MAX_EQUITY_POSITIONS", 0, 3),
+        ("MAX_EQUITY_POSITIONS", -1, 3),
         ("MAX_EQUITY_POSITIONS", 50, 3),
         ("MAX_CRYPTO_POSITIONS", -1, 2),
         ("MAX_CRYPTO_POSITIONS", 50, 2),
-        ("EQUITY_ALLOCATION_PCT", 0.0, 0.70),
-        ("EQUITY_ALLOCATION_PCT", 1.5, 0.70),
-        ("CRYPTO_ALLOCATION_PCT", -0.1, 0.30),
-        ("CRYPTO_ALLOCATION_PCT", 1.5, 0.30),
         ("BTC_FEE_RATE", -0.001, 0.004),
         ("BTC_FEE_RATE", 0.10, 0.004),
         ("BTC_MIN_EXPECTED_GAIN", 0.0, 0.006),
@@ -845,24 +1027,15 @@ class TestLoadOverridesExpandedScalars:
         assert config.DONCHIAN_ENTRY_LEN == 20  # unchanged
         assert config.DONCHIAN_EXIT_LEN == 10   # unchanged
 
-    # ── cross-check: equity + crypto allocation must sum to 1.0 ──
-    def test_allocations_skipped_when_sum_not_one(self):
-        r = make_r(store={Keys.CONFIG: json.dumps({
-            "EQUITY_ALLOCATION_PCT": 0.80,
-            "CRYPTO_ALLOCATION_PCT": 0.30,  # sum = 1.10 ≠ 1.0
-        })})
-        load_overrides(r)
-        assert config.EQUITY_ALLOCATION_PCT == 0.70
-        assert config.CRYPTO_ALLOCATION_PCT == 0.30
 
-    def test_allocations_apply_when_sum_one(self):
+    def test_allocations_are_fixed_and_ignore_80_20_override(self):
         r = make_r(store={Keys.CONFIG: json.dumps({
             "EQUITY_ALLOCATION_PCT": 0.80,
             "CRYPTO_ALLOCATION_PCT": 0.20,
         })})
         load_overrides(r)
-        assert config.EQUITY_ALLOCATION_PCT == 0.80
-        assert config.CRYPTO_ALLOCATION_PCT == 0.20
+        assert config.EQUITY_ALLOCATION_PCT == 0.70
+        assert config.CRYPTO_ALLOCATION_PCT == 0.30
 
 
 class TestLoadOverridesDicts:

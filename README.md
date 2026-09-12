@@ -153,7 +153,7 @@ file /etc/cron.d/trading-system
 See `cron/install-trading-cron.sh` for the full step-by-step, including how to verify the first run and how to remove any legacy OpenClaw cron jobs that may conflict.
 
 The cron schedule runs in ET year-round (cronie handles DST automatically):
-- **Screener**: 4:15 PM ET weekdays (post-market scan) + every 4 hours for BTC/USD
+- **Screener**: Full-universe scan at 4:15 PM ET weekdays; crypto-only scan of every active slash-delimited crypto symbol every 4 hours, all seven days (preserves equity watchlist rows, regime, and heatmap)
 - **Supervisor health check**: Every 15 minutes during market hours (9:30 AM – 4:00 PM ET weekdays)
 - **Supervisor EOD review**: 4:30 PM ET weekdays
 - **Supervisor daily reset**: 9:25 AM ET weekdays

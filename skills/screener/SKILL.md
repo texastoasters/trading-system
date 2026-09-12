@@ -22,8 +22,8 @@ The Supervisor Agent manages this list via monthly re-validation and discovery s
 - Tier 3: V, XLE, XLV, IWM
 
 ## Schedule
-- **End-of-day scan**: 4:15 PM ET daily — compute RSI-2 for all active instruments
-- **Crypto check**: Every 4 hours (BTC trades 24/7, daily bar closes at midnight UTC)
+- **End-of-day scan**: 4:15 PM ET weekdays — compute indicators for all active instruments and refresh equity regime/heatmap
+- **Crypto-only scan**: Every 4 hours, all seven days — refresh every active slash-delimited crypto symbol while preserving equity watchlist rows, regime, and heatmap
 - **News monitoring**: Continuous during market hours via Alpaca news WebSocket
 
 ## Your Responsibilities

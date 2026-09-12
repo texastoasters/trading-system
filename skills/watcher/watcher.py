@@ -299,7 +299,9 @@ def generate_entry_signals(r, stock_client, crypto_client):
         if not (rsi2_qualifies or ibs_qualifies or donchian_qualifies):
             continue
 
-        if check_exited_today(r, symbol):
+        if (config.STOCK_DAY_TRADE_BRAKE_ENABLED
+                and not is_crypto(symbol)
+                and check_exited_today(r, symbol)):
             print(f"  [Watcher] {symbol}: skipped (exited today — no same-day rebuy)")
             continue
 

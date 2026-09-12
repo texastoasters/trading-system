@@ -97,7 +97,34 @@ def make_redis(positions: dict, extra: dict = None):
     r.hexists = _hexists
     r.hdel = _hdel
     r.hkeys = lambda k: list(_hash(k).keys())
+
+    class _Pipeline:
+        def __init__(self):
+            self.operations = []
+
+        def __getattr__(self, name):
+            def queue(*args, **kwargs):
+                self.operations.append((name, args, kwargs))
+                return self
+            return queue
+
+        def execute(self):
+            return [
+                getattr(r, name)(*args, **kwargs)
+                for name, args, kwargs in self.operations
+            ]
+
+    r.pipeline = MagicMock(side_effect=lambda **_: _Pipeline())
     return r, store
+
+
+@pytest.fixture(autouse=True)
+def reset_executor_buy_fail_closed():
+    import executor
+
+    executor._buy_fail_closed = False
+    yield
+    executor._buy_fail_closed = False
 
 
 def make_order(alpaca_id="sell-789", status="accepted"):
@@ -119,6 +146,8 @@ def make_buy_signal(symbol="SPY", qty=10, entry=500.0, stop=490.0, **kwargs):
         "entry_price": entry, "stop_price": stop,
         "strategy": "RSI2", "tier": 1, "risk_pct": 1.0,
     }
+    if "/" in symbol:
+        d.update({"order_type": "limit", "limit_price": entry})
     d.update(kwargs)
     return d
 
@@ -182,6 +211,14 @@ class TestGetSimulatedCash:
         from executor import get_simulated_cash
         assert get_simulated_cash(r) == pytest.approx(3000.0)
 
+    def test_unrealized_loss_does_not_create_spendable_cash(self):
+        pos = make_position(qty=10, entry=200.0)
+        pos.update({"value": 2000.0, "current_value": 1200.0})
+        r, _ = make_redis({"SPY": pos})
+        from executor import get_simulated_cash
+
+        assert get_simulated_cash(r) == pytest.approx(3000.0)
+
     def test_clamps_at_zero(self):
         pos = make_position(qty=10, entry=600.0)
         pos["value"] = 6000.0  # more than equity
@@ -240,7 +277,8 @@ class TestValidateOrder:
     def test_rule1_cash_exceeded(self):
         from executor import validate_order
         r = self._r()  # equity=5000, no positions → cash=5000
-        order = {"side": "buy", "quantity": 20, "entry_price": 300.0, "order_value": 6000.0}
+        order = {"side": "buy", "symbol": "SPY", "quantity": 20,
+                 "entry_price": 300.0, "order_value": 6000.0}
         ok, reason = validate_order(r, order, make_account())
         assert not ok
         assert "Rule 1" in reason
@@ -258,7 +296,8 @@ class TestValidateOrder:
         import config as cfg
         # equity=5000, limit=2% → threshold=-100; daily_pnl=-200
         r = self._r(daily_pnl="-200.0")
-        order = {"side": "buy", "quantity": 1, "entry_price": 10.0, "order_value": 10.0}
+        order = {"side": "buy", "symbol": "SPY", "quantity": 1,
+                 "entry_price": 10.0, "order_value": 10.0}
         ok, reason = validate_order(r, order, make_account())
         assert not ok
         assert "Daily loss" in reason
@@ -266,7 +305,7 @@ class TestValidateOrder:
     def test_force_skips_daily_loss_limit(self):
         from executor import validate_order
         r = self._r(daily_pnl="-200.0")
-        order = {"side": "buy", "quantity": 1, "entry_price": 10.0, "order_value": 10.0, "force": True}
+        order = make_buy_signal(qty=1, entry=10.0, stop=9.0, force=True)
         ok, _ = validate_order(r, order, make_account())
         assert ok
 
@@ -314,22 +353,236 @@ class TestValidateOrder:
     def test_max_positions_blocks(self):
         from executor import validate_order
         import config as cfg
-        # value=0 so simulated_cash stays at 5000 → cash check passes → reaches max positions check
-        def _zero_pos(sym):
-            p = make_position(sym)
-            p["value"] = 0.0
-            return p
-        positions = {f"SYM{i}": _zero_pos(f"SYM{i}") for i in range(cfg.MAX_CONCURRENT_POSITIONS)}
-        r, _ = make_redis(positions)
-        order = {"side": "buy", "quantity": 1, "entry_price": 10.0, "order_value": 10.0}
+        positions = {
+            f"SYM{i}": make_position(f"SYM{i}")
+            for i in range(cfg.MAX_CONCURRENT_POSITIONS)
+        }
+        # Keep Rule 1 cash positive so this test reaches the position-count guard.
+        r, _ = make_redis(
+            positions, extra={"trading:simulated_equity": "100000.0"}
+        )
+        order = make_buy_signal(symbol="NEW", qty=1, entry=10.0, stop=9.0)
         ok, reason = validate_order(r, order, make_account())
         assert not ok
         assert "Max positions" in reason
 
+    def test_recomputes_notional_instead_of_trusting_order_value(self):
+        from executor import validate_order
+        r = self._r()
+        order = make_buy_signal(
+            qty=20, entry=300.0, stop=299.0, order_value=1.0
+        )
+
+        ok, reason = validate_order(r, order, make_account())
+
+        assert not ok
+        assert "Rule 1" in reason
+
+    @pytest.mark.parametrize("updates", [
+        {"quantity": "bad"},
+        {"entry_price": None},
+    ])
+    def test_invalid_buy_quantity_or_entry_price_is_rejected(self, updates):
+        from executor import validate_order
+        order = make_buy_signal(qty=1, entry=10.0, stop=9.0)
+        order.update(updates)
+
+        ok, reason = validate_order(self._r(), order, make_account())
+
+        assert not ok
+        assert "quantity or entry price" in reason
+
+    def test_buy_requires_symbol(self):
+        from executor import validate_order
+        order = make_buy_signal(qty=1, entry=10.0, stop=9.0)
+        del order["symbol"]
+
+        ok, reason = validate_order(self._r(), order, make_account())
+
+        assert not ok
+        assert "symbol is required" in reason
+
+    @pytest.mark.parametrize("updates,expected", [
+        ({"stop_price": "bad"}, "stop price is required"),
+        ({"stop_price": float("nan")}, "must be finite"),
+        ({"stop_price": 10.0}, "stop >= entry"),
+    ])
+    def test_invalid_stop_inputs_are_rejected(self, updates, expected):
+        from executor import validate_order
+        order = make_buy_signal(qty=1, entry=10.0, stop=9.0)
+        order.update(updates)
+
+        ok, reason = validate_order(self._r(), order, make_account())
+
+        assert not ok
+        assert expected in reason
+
+    @pytest.mark.parametrize("risk_multiplier", ["bad", "nan", "-1"])
+    def test_invalid_risk_multiplier_is_rejected(self, risk_multiplier):
+        from executor import validate_order
+        r, _ = make_redis({}, extra={"trading:risk_multiplier": risk_multiplier})
+
+        ok, reason = validate_order(
+            r, make_buy_signal(qty=1, entry=10.0, stop=9.0), make_account()
+        )
+
+        assert not ok
+        assert "Invalid risk multiplier" in reason
+
+    def test_duplicate_symbol_blocks_buy(self):
+        from executor import validate_order
+        position = make_position(symbol="SPY", qty=1, entry=100.0, stop=90.0)
+        r = self._r(positions={"SPY": position})
+
+        ok, reason = validate_order(
+            r, make_buy_signal(symbol="SPY", qty=1, entry=100.0, stop=90.0), make_account()
+        )
+
+        assert not ok
+        assert "already exists" in reason
+
+    def test_max_equity_positions_blocks_buy(self):
+        from executor import validate_order
+        positions = {
+            symbol: {**make_position(symbol=symbol, qty=1, entry=1.0, stop=0.5), "value": 0.0}
+            for symbol in ("SPY", "QQQ", "NVDA")
+        }
+        r = self._r(positions=positions)
+
+        ok, reason = validate_order(
+            r, make_buy_signal(symbol="XLK", qty=1, entry=10.0, stop=9.0), make_account()
+        )
+
+        assert not ok
+        assert "Max equity" in reason
+
+    def test_max_crypto_positions_blocks_buy(self):
+        from executor import validate_order
+        positions = {
+            symbol: {**make_position(symbol=symbol, qty=1, entry=1.0, stop=0.5), "value": 0.0}
+            for symbol in ("BTC/USD", "ETH/USD")
+        }
+        r = self._r(positions=positions)
+
+        ok, reason = validate_order(
+            r, make_buy_signal(symbol="SOL/USD", qty=1, entry=10.0, stop=9.0), make_account()
+        )
+
+        assert not ok
+        assert "Max crypto" in reason
+
+    def test_equity_allocation_uses_current_value_and_symbol_classification(self):
+        from executor import validate_order
+        position = make_position(symbol="SPY", qty=1, entry=100.0, stop=90.0)
+        position.update({"value": 100.0, "current_value": 3400.0})
+        r = self._r(positions={"SPY": position})
+        order = make_buy_signal(
+            symbol="XLK",
+            qty=5,
+            entry=100.0,
+            stop=90.0,
+            order_value=1.0,
+            asset_class="crypto",
+        )
+
+        ok, reason = validate_order(r, order, make_account())
+
+        assert not ok
+        assert "Equity allocation" in reason
+
+    def test_crypto_allocation_ignores_equity_payload_claim(self):
+        from executor import validate_order
+        position = make_position(symbol="BTC/USD", qty=1, entry=100.0, stop=90.0)
+        position.update({"value": 100.0, "current_value": 1400.0})
+        r = self._r(positions={"BTC/USD": position})
+        order = make_buy_signal(
+            symbol="SOL/USD",
+            qty=2,
+            entry=100.0,
+            stop=90.0,
+            asset_class="equity",
+        )
+
+        ok, reason = validate_order(r, order, make_account())
+
+        assert not ok
+        assert "Crypto allocation" in reason
+
+    def test_crypto_limit_price_is_worst_case_notional_for_admission(self):
+        from executor import validate_order
+        order = make_buy_signal(
+            symbol="BTC/USD",
+            qty=1.5,
+            entry=1_000.0,
+            stop=990.0,
+            order_type="limit",
+            limit_price=1_001.0,
+            order_value=1.0,
+        )
+
+        ok, reason = validate_order(self._r(), order, make_account())
+
+        assert not ok
+        assert "Crypto allocation" in reason
+
+    def test_crypto_buy_rejects_non_limit_order(self):
+        from executor import validate_order
+        order = make_buy_signal(
+            symbol="BTC/USD", qty=0.01, entry=1_000.0, stop=900.0,
+            order_type="market",
+        )
+
+        ok, reason = validate_order(self._r(), order, make_account())
+
+        assert not ok
+        assert "GTC limit" in reason
+
+    @pytest.mark.parametrize("limit_price", [None, float("nan"), float("inf"), 0])
+    def test_crypto_limit_buy_requires_positive_finite_limit_price(self, limit_price):
+        from executor import validate_order
+        order = make_buy_signal(
+            symbol="BTC/USD",
+            qty=0.01,
+            entry=1_000.0,
+            stop=900.0,
+            order_type="limit",
+            limit_price=limit_price,
+        )
+
+        ok, reason = validate_order(self._r(), order, make_account())
+
+        assert not ok
+        assert "limit price" in reason.lower()
+
+    def test_stop_risk_respects_current_risk_multiplier(self):
+        from executor import validate_order
+        r, _ = make_redis({}, extra={"trading:risk_multiplier": "0.5"})
+        order = make_buy_signal(symbol="SPY", qty=3, entry=100.0, stop=90.0)
+
+        ok, reason = validate_order(r, order, make_account())
+
+        assert not ok
+        assert "Stop risk" in reason
+
+    def test_new_buy_constraints_do_not_block_exit_from_over_cap_portfolio(self):
+        from executor import validate_order
+        positions = {
+            symbol: make_position(symbol=symbol, qty=10, entry=100.0, stop=90.0)
+            for symbol in ("SPY", "QQQ", "NVDA", "XLK", "XLY")
+        }
+        positions["SPY"]["current_value"] = 4000.0
+        r = self._r(positions=positions)
+
+        ok, reason = validate_order(
+            r, {"side": "sell", "symbol": "SPY"}, make_account()
+        )
+
+        assert ok, reason
+
     def test_trading_blocked_account(self):
         from executor import validate_order
         r = self._r()
-        order = {"side": "buy", "quantity": 1, "entry_price": 10.0, "order_value": 10.0}
+        order = make_buy_signal(qty=1, entry=10.0, stop=9.0)
         ok, reason = validate_order(r, order, make_account(blocked=True))
         assert not ok
         assert "blocked" in reason
@@ -340,8 +593,7 @@ class TestValidateOrder:
         alone must not reject orders."""
         from executor import validate_order
         r = self._r()
-        order = {"symbol": "SPY", "side": "buy", "quantity": 1,
-                 "entry_price": 10.0, "order_value": 10.0}
+        order = make_buy_signal(symbol="SPY", qty=1, entry=10.0, stop=9.0)
         ok, _ = validate_order(r, order, make_account(pdt=True))
         assert ok
 
@@ -372,6 +624,31 @@ class TestValidateOrder:
         assert "PDT" in reason
         assert "4th day trade" in reason
 
+    @pytest.mark.parametrize("protective_fields", [
+        {"signal_type": "stop_loss"},
+        {"signal_type": "blacklist_liquidation", "force": True},
+    ])
+    def test_stock_protective_exit_is_never_blocked_by_brake(self, protective_fields):
+        from executor import validate_order
+        pos = make_position(symbol="WMB", entry=70.0)
+        r, _ = make_redis({"WMB": pos}, extra={"trading:pdt:count": "3"})
+        order = {"symbol": "WMB", "side": "sell", "quantity": 5, **protective_fields}
+
+        ok, reason = validate_order(r, order, make_account(pdt=True))
+
+        assert ok, reason
+
+    def test_voluntary_stock_brake_does_not_require_broker_pdt_flag(self):
+        from executor import validate_order
+        pos = make_position(symbol="WMB", entry=70.0)
+        r, _ = make_redis({"WMB": pos}, extra={"trading:pdt:count": "3"})
+        order = {"symbol": "WMB", "side": "sell", "quantity": 5}
+        import config as cfg
+        with patch.object(cfg, "STOCK_DAY_TRADE_BRAKE_ENABLED", True, create=True):
+            ok, reason = validate_order(r, order, make_account(pdt=False))
+        assert not ok
+        assert "4th day trade" in reason
+
     def test_pdt_allows_sell_of_todays_entry_when_count_below_ceiling(self):
         """Count 2/3 means one day-trade slot is free. Sell of today's
         entry becomes the 3rd day trade — still allowed."""
@@ -390,8 +667,7 @@ class TestValidateOrder:
         from executor import validate_order
         r, _ = make_redis({}, extra={"trading:pdt:count": "3"})
         r.hset("trading:closed_today", "WMB", "14:00:00")
-        order = {"symbol": "WMB", "side": "buy", "quantity": 1,
-                 "entry_price": 70.0, "order_value": 70.0}
+        order = make_buy_signal(symbol="WMB", qty=1, entry=70.0, stop=69.0)
         ok, reason = validate_order(r, order, make_account(pdt=True))
         assert not ok
         assert "PDT" in reason
@@ -402,8 +678,7 @@ class TestValidateOrder:
         risk. Allow even at 3/3."""
         from executor import validate_order
         r, _ = make_redis({}, extra={"trading:pdt:count": "3"})
-        order = {"symbol": "NVDA", "side": "buy", "quantity": 1,
-                 "entry_price": 500.0, "order_value": 500.0}
+        order = make_buy_signal(symbol="NVDA", qty=1, entry=500.0, stop=490.0)
         ok, _ = validate_order(r, order, make_account(pdt=True))
         assert ok
 
@@ -413,15 +688,46 @@ class TestValidateOrder:
         from executor import validate_order
         r, _ = make_redis({}, extra={"trading:pdt:count": "2"})
         r.hset("trading:closed_today", "WMB", "14:00:00")
-        order = {"symbol": "WMB", "side": "buy", "quantity": 1,
-                 "entry_price": 70.0, "order_value": 70.0}
+        order = make_buy_signal(symbol="WMB", qty=1, entry=70.0, stop=69.0)
         ok, _ = validate_order(r, order, make_account(pdt=True))
         assert ok
+
+    def test_crypto_sell_ignores_stock_day_trade_brake_at_limit(self):
+        from executor import validate_order
+        pos = make_position(symbol="BTC/USD", qty=1, entry=100_000.0)
+        pos["quantity"] = 0.05
+        r, _ = make_redis({"BTC/USD": pos}, extra={"trading:pdt:count": "3"})
+        order = {"symbol": "BTC/USD", "side": "sell", "quantity": 0.05}
+        ok, reason = validate_order(r, order, make_account(pdt=True))
+        assert ok, reason
+
+    def test_crypto_buy_ignores_stock_closed_today_brake_at_limit(self):
+        from executor import validate_order
+        r, _ = make_redis({}, extra={"trading:pdt:count": "3"})
+        r.hset("trading:closed_today", "BTC/USD", "14:00:00")
+        order = {
+            "symbol": "BTC/USD", "side": "buy", "quantity": 0.01,
+            "entry_price": 100_000.0, "stop_price": 99_000.0,
+            "order_type": "limit", "limit_price": 100_000.0,
+            "order_value": 1_000.0,
+        }
+        ok, reason = validate_order(r, order, make_account(pdt=True))
+        assert ok, reason
+
+    def test_disabled_stock_day_trade_brake_allows_same_day_stock_sell(self):
+        from executor import validate_order
+        pos = make_position(symbol="WMB", entry=70.0)
+        r, _ = make_redis({"WMB": pos}, extra={"trading:pdt:count": "3"})
+        order = {"symbol": "WMB", "side": "sell", "quantity": 5}
+        import config as cfg
+        with patch.object(cfg, "STOCK_DAY_TRADE_BRAKE_ENABLED", False, create=True):
+            ok, reason = validate_order(r, order, make_account(pdt=True))
+        assert ok, reason
 
     def test_all_clear_returns_ok(self):
         from executor import validate_order
         r = self._r()
-        order = {"side": "buy", "quantity": 1, "entry_price": 10.0, "order_value": 10.0}
+        order = make_buy_signal(qty=1, entry=10.0, stop=9.0)
         ok, _ = validate_order(r, order, make_account())
         assert ok
 
@@ -498,74 +804,780 @@ class TestExecuteBuy:
         positions = json.loads(store["trading:positions"])
         assert "SPY" in positions
 
-    def test_partial_fill_records_position(self):
-        """Not-filled-after-10s but has partial qty → records partial fill."""
+    def test_known_fill_and_stop_position_persistence_failure_latches_buys_closed(self):
+        import executor
+
         r, store = make_redis({})
-        partial = MagicMock()
-        partial.status = "partially_filled"
-        partial.filled_avg_price = "500.0"
-        partial.filled_qty = "5"
-        submitted = MagicMock()
-        submitted.id = "ord-1"
-        submitted.status = "accepted"
-        stop_order = MagicMock()
-        stop_order.id = "stop-1"
+        original_set = r.set
+
+        def fail_position_write(key, value, **kwargs):
+            if key == "trading:positions":
+                raise RuntimeError("position persistence unavailable")
+            return original_set(key, value, **kwargs)
+
+        r.set = MagicMock(side_effect=fail_position_write)
+        filled = MagicMock(
+            status="filled", filled_avg_price="500.0", filled_qty="1.0"
+        )
+        submitted = MagicMock(id="ord-1", status="accepted")
+        tc = MagicMock()
+        tc.get_orders.return_value = []
+        tc.submit_order.return_value = submitted
+        tc.get_order_by_id.return_value = filled
+
+        with patch("time.sleep"), \
+             patch("executor.submit_stop_loss", return_value="stop-1"), \
+             patch("executor.critical_alert") as alert:
+            assert executor.execute_buy(
+                r,
+                tc,
+                make_buy_signal(
+                    symbol="BTC/USD", qty=1, entry=500.0, stop=450.0,
+                    order_type="limit", limit_price=500.0,
+                ),
+            ) is False
+
+        assert json.loads(store["trading:positions"]) == {}
+        assert store["trading:system_status"] == "halted"
+        record = json.loads(r.rpush.call_args.args[1])
+        assert record["type"] == "known_fill_processing_failed"
+        assert record["known_filled_qty"] == pytest.approx(1.0)
+        assert record["known_fill_price"] == pytest.approx(500.0)
+        assert "before durable protected position commit" in record["reason"]
+        alert.assert_called_once()
+
+        ok, reason = executor.validate_order(
+            r,
+            make_buy_signal(symbol="ETH/USD", qty=1, entry=100.0, stop=90.0),
+            make_account(),
+        )
+        assert not ok
+        assert "fail-closed" in reason.lower()
+
+    def test_known_fill_alert_failure_after_durable_position_latches_buys_closed(self):
+        import executor
+
+        r, store = make_redis({})
+        filled = MagicMock(
+            status="filled", filled_avg_price="500.0", filled_qty="1.0"
+        )
+        submitted = MagicMock(id="ord-1", status="accepted")
+        tc = MagicMock()
+        tc.get_orders.return_value = []
+        tc.submit_order.return_value = submitted
+        tc.get_order_by_id.return_value = filled
+
+        with patch("time.sleep"), \
+             patch("executor.submit_stop_loss", return_value="stop-1"), \
+             patch("executor.trade_alert", side_effect=RuntimeError("alert unavailable")), \
+             patch("executor.critical_alert") as alert:
+            assert executor.execute_buy(
+                r,
+                tc,
+                make_buy_signal(
+                    symbol="BTC/USD", qty=1, entry=500.0, stop=450.0,
+                    order_type="limit", limit_price=500.0,
+                ),
+            ) is False
+
+        position = json.loads(store["trading:positions"])["BTC/USD"]
+        assert position["stop_order_id"] == "stop-1"
+        assert store["trading:system_status"] == "halted"
+        record = json.loads(r.rpush.call_args.args[1])
+        assert record["type"] == "known_fill_processing_failed"
+        assert record["known_filled_qty"] == pytest.approx(1.0)
+        assert record["known_fill_price"] == pytest.approx(500.0)
+        assert "after durable protected position commit" in record["reason"]
+        alert.assert_called_once()
+
+        ok, reason = executor.validate_order(
+            r,
+            make_buy_signal(symbol="ETH/USD", qty=1, entry=100.0, stop=90.0),
+            make_account(),
+        )
+        assert not ok
+        assert "fail-closed" in reason.lower()
+
+    def test_known_fill_persistence_failure_latches_new_buys_closed(self, capsys):
+        import executor
+
+        r, store = make_redis({})
+        failed_pipeline = MagicMock()
+        failed_pipeline.execute.side_effect = RuntimeError("redis unavailable")
+        r.pipeline.side_effect = None
+        r.pipeline.return_value = failed_pipeline
+        r.rpush.side_effect = RuntimeError("redis unavailable")
+        filled = MagicMock(
+            status="filled", filled_avg_price="500.0", filled_qty="1.0"
+        )
+        submitted = MagicMock(id="ord-1", status="accepted")
+        tc = MagicMock()
+        tc.get_orders.return_value = []
+        tc.submit_order.return_value = submitted
+        tc.get_order_by_id.return_value = filled
+
+        executor._buy_fail_closed = False
+        try:
+            with patch("time.sleep"), \
+                 patch("executor.submit_stop_loss", return_value=None), \
+                 patch(
+                     "executor.critical_alert",
+                     side_effect=RuntimeError("alerts unavailable"),
+                 ):
+                assert executor.execute_buy(
+                    r,
+                    tc,
+                    make_buy_signal(
+                        symbol="BTC/USD", qty=1, entry=500.0, stop=450.0,
+                        order_type="limit", limit_price=500.0,
+                    ),
+                ) is False
+
+            assert store["trading:system_status"] == "active"
+            ok, reason = executor.validate_order(
+                r,
+                make_buy_signal(symbol="ETH/USD", qty=1, entry=100.0, stop=90.0),
+                make_account(),
+            )
+            assert not ok
+            assert "fail-closed" in reason.lower()
+            assert "could not send reconciliation alert" in capsys.readouterr().out.lower()
+        finally:
+            executor._buy_fail_closed = False
+
+    def test_known_fill_without_protective_stop_halts_and_reconciles(self):
+        r, store = make_redis({})
+        filled = MagicMock(
+            status="filled", filled_avg_price="500.0", filled_qty="1.0"
+        )
+        submitted = MagicMock(id="ord-1", status="accepted")
+        tc = MagicMock()
+        tc.get_orders.return_value = []
+        tc.submit_order.return_value = submitted
+        tc.get_order_by_id.return_value = filled
+
+        with patch("time.sleep"), \
+             patch("executor.submit_stop_loss", return_value=None), \
+             patch("executor.critical_alert") as alert, \
+             patch("executor.trade_alert") as trade_alert:
+            from executor import execute_buy
+            result = execute_buy(
+                r,
+                tc,
+                make_buy_signal(
+                    symbol="BTC/USD", qty=1, entry=500.0, stop=450.0,
+                    order_type="limit", limit_price=500.0,
+                ),
+            )
+
+        assert result is False
+        assert json.loads(store["trading:positions"]) == {}
+        assert store["trading:system_status"] == "halted"
+        r.rpush.assert_called_once()
+        record = json.loads(r.rpush.call_args.args[1])
+        assert record["type"] == "buy_protection_failed"
+        assert record["symbol"] == "BTC/USD"
+        assert record["order_id"] == "ord-1"
+        assert record["known_filled_qty"] == pytest.approx(1.0)
+        assert record["known_fill_price"] == pytest.approx(500.0)
+        assert "protective stop submission failed" in record["reason"]
+        r.pipeline.assert_called_once_with(transaction=True)
+        alert.assert_called_once()
+        trade_alert.assert_not_called()
+
+    @pytest.mark.parametrize("symbol", ["SPY", "BTC/USD"])
+    def test_filled_order_without_avg_price_halts_for_reconciliation(self, symbol):
+        r, store = make_redis({})
+        filled = MagicMock(status="filled", filled_avg_price=None, filled_qty="1")
+        submitted = MagicMock(id="ord-1", status="accepted")
+        tc = MagicMock()
+        tc.get_clock.return_value = make_clock(is_open=True)
+        tc.get_orders.return_value = []
+        tc.submit_order.return_value = submitted
+        tc.get_order_by_id.return_value = filled
+
+        with patch("time.sleep"), patch("executor.critical_alert") as alert:
+            import executor
+            result = executor.execute_buy(
+                r, tc, make_buy_signal(symbol=symbol, qty=1, entry=500.0)
+            )
+
+        assert result is False
+        assert executor._buy_fail_closed is True
+        assert json.loads(store["trading:positions"]) == {}
+        assert tc.submit_order.call_count == 1
+        assert store["trading:system_status"] == "halted"
+        record = json.loads(r.rpush.call_args.args[1])
+        assert record["type"] == "buy_fill_missing_price"
+        assert record["symbol"] == symbol
+        assert record["order_id"] == "ord-1"
+        assert record["known_filled_qty"] == pytest.approx(1.0)
+        assert record["known_fill_price"] is None
+        assert "no authoritative fill price" in record["reason"]
+        alert.assert_called_once()
+
+    def test_equity_partial_fill_records_position_after_terminal_cancel(self):
+        r, store = make_redis({})
+        partial = MagicMock(
+            status="partially_filled", filled_avg_price="500.0", filled_qty="5"
+        )
+        canceled = MagicMock(
+            status="canceled", filled_avg_price="500.0", filled_qty="5"
+        )
+        submitted = MagicMock(id="ord-1", status="accepted")
+        stop_order = MagicMock(id="stop-1")
 
         tc = MagicMock()
         tc.get_clock.return_value = make_clock(is_open=True)
         tc.get_orders.return_value = []
         tc.submit_order.side_effect = [submitted, stop_order]
-        tc.get_order_by_id.return_value = partial
+        tc.get_order_by_id.side_effect = [partial] * 5 + [canceled]
 
         with patch("time.sleep"), patch("notify.trade_alert"):
             from executor import execute_buy
             result = execute_buy(r, tc, make_buy_signal())
-        # partial fill with qty>0 proceeds to record position
+
         assert result is True
+        tc.cancel_order_by_id.assert_called_once_with("ord-1")
+        position = json.loads(store["trading:positions"])["SPY"]
+        assert position["quantity"] == 5
+        assert position["stop_order_id"] == "stop-1"
 
-    def test_no_fill_zero_qty_bails(self):
-        """Not filled, filled_qty=0 → cancel and return False."""
+    def test_crypto_gtc_partial_fill_cancels_remainder_before_booking_final_qty(self):
+        r, store = make_redis({})
+        partial = MagicMock(
+            status="partially_filled", filled_avg_price="500.0", filled_qty="5"
+        )
+        cancelled = MagicMock(
+            status="canceled", filled_avg_price="501.0", filled_qty="6"
+        )
+        submitted = MagicMock(id="ord-1", status="accepted")
+        stop_order = MagicMock(id="stop-1")
+        tc = MagicMock()
+        tc.get_orders.return_value = []
+        tc.submit_order.side_effect = [submitted, stop_order]
+        tc.get_order_by_id.side_effect = [partial] * 5 + [cancelled]
+
+        import executor
+        executor.StopOrderRequest.reset_mock()
+        with patch("time.sleep"), patch("notify.trade_alert"):
+            result = executor.execute_buy(
+                r,
+                tc,
+                make_buy_signal(
+                    symbol="BTC/USD", qty=10, order_type="limit", limit_price=499.0
+                ),
+            )
+
+        assert result is True
+        tc.cancel_order_by_id.assert_called_once_with("ord-1")
+        assert executor.StopOrderRequest.call_args.kwargs["qty"] == pytest.approx(6.0)
+        positions = json.loads(store["trading:positions"])
+        assert positions["BTC/USD"]["quantity"] == pytest.approx(6.0)
+        assert positions["BTC/USD"]["entry_price"] == pytest.approx(501.0)
+
+    @pytest.mark.parametrize("terminal_qty", ["0", None])
+    def test_crypto_terminal_cancel_does_not_erase_observed_partial_fill(
+        self, terminal_qty
+    ):
+        r, store = make_redis({})
+        partial = MagicMock(
+            status="partially_filled", filled_avg_price="500.0", filled_qty="0.5"
+        )
+        cleared = MagicMock(
+            status="accepted", filled_avg_price=None, filled_qty="0"
+        )
+        canceled = MagicMock(
+            status="canceled", filled_avg_price=None, filled_qty=terminal_qty
+        )
+        submitted = MagicMock(id="ord-1", status="accepted")
+        stop_order = MagicMock(id="stop-1")
+        tc = MagicMock()
+        tc.get_orders.return_value = []
+        tc.submit_order.side_effect = [submitted, stop_order]
+        tc.get_order_by_id.side_effect = [partial] + [cleared] * 4 + [canceled]
+
+        import executor
+        executor.StopOrderRequest.reset_mock()
+        with patch("time.sleep"), patch("executor.critical_alert") as alert:
+            result = executor.execute_buy(
+                r,
+                tc,
+                make_buy_signal(
+                    symbol="BTC/USD", qty=1, entry=500.0, stop=450.0,
+                    order_type="limit", limit_price=500.0,
+                ),
+            )
+
+        assert result is True
+        assert executor.StopOrderRequest.call_args.kwargs["qty"] == pytest.approx(0.5)
+        position = json.loads(store["trading:positions"])["BTC/USD"]
+        assert position["quantity"] == pytest.approx(0.5)
+        assert position["entry_price"] == pytest.approx(500.0)
+        assert position["stop_order_id"] == "stop-1"
+        assert store["trading:system_status"] == "active"
+        alert.assert_not_called()
+        r.rpush.assert_not_called()
+
+    def test_crypto_partial_fill_then_poll_exception_is_durably_reconciled(self):
+        r, store = make_redis({})
+        partial = MagicMock(
+            status="partially_filled", filled_avg_price="500.0", filled_qty="0.5"
+        )
+        submitted = MagicMock(id="ord-1", status="accepted")
+        tc = MagicMock()
+        tc.get_orders.return_value = []
+        tc.submit_order.return_value = submitted
+        tc.get_order_by_id.side_effect = [
+            partial,
+            Exception("poll unavailable"),
+            Exception("confirm unavailable 1"),
+            Exception("confirm unavailable 2"),
+            Exception("confirm unavailable 3"),
+        ]
+
+        with patch("time.sleep"), patch("executor.critical_alert") as alert:
+            from executor import execute_buy
+            result = execute_buy(
+                r,
+                tc,
+                make_buy_signal(
+                    symbol="BTC/USD", qty=1, entry=500.0, stop=450.0,
+                    order_type="limit", limit_price=500.0,
+                ),
+            )
+
+        assert result is False
+        tc.cancel_order_by_id.assert_called_once_with("ord-1")
+        assert json.loads(store["trading:positions"]) == {}
+        assert store["trading:system_status"] == "halted"
+        r.rpush.assert_called_once()
+        record = json.loads(r.rpush.call_args.args[1])
+        assert record["type"] == "unconfirmed_buy_order"
+        assert record["symbol"] == "BTC/USD"
+        assert record["order_id"] == "ord-1"
+        assert record["known_filled_qty"] == pytest.approx(0.5)
+        assert record["known_fill_price"] == pytest.approx(500.0)
+        alert.assert_called_once()
+
+    def test_equity_partial_fill_then_poll_exception_is_durably_reconciled(self):
+        r, store = make_redis({})
+        partial = MagicMock(
+            status="partially_filled", filled_avg_price="500.0", filled_qty="5"
+        )
+        submitted = MagicMock(id="ord-1", status="accepted")
+        stop_order = MagicMock(id="stop-1")
+        tc = MagicMock()
+        tc.get_clock.return_value = make_clock(is_open=True)
+        tc.get_orders.return_value = []
+        tc.submit_order.side_effect = [submitted, stop_order]
+        tc.get_order_by_id.side_effect = [
+            partial,
+            Exception("poll unavailable"),
+            Exception("confirm unavailable 1"),
+            Exception("confirm unavailable 2"),
+            Exception("confirm unavailable 3"),
+        ]
+
+        with patch("time.sleep"), patch("executor.critical_alert") as alert:
+            from executor import execute_buy
+            result = execute_buy(r, tc, make_buy_signal(qty=10))
+
+        assert result is False
+        tc.cancel_order_by_id.assert_called_once_with("ord-1")
+        assert json.loads(store["trading:positions"]) == {}
+        assert store["trading:system_status"] == "halted"
+        r.rpush.assert_called_once()
+        record = json.loads(r.rpush.call_args.args[1])
+        assert record["type"] == "unconfirmed_buy_order"
+        assert record["symbol"] == "SPY"
+        assert record["order_id"] == "ord-1"
+        assert record["known_filled_qty"] == pytest.approx(5.0)
+        assert record["known_fill_price"] == pytest.approx(500.0)
+        alert.assert_called_once()
+
+    def test_crypto_first_poll_exception_recovers_accepted_order_or_fails_closed(self):
+        r, store = make_redis({})
+        submitted = MagicMock(id="ord-1", status="accepted")
+        tc = MagicMock()
+        tc.get_orders.return_value = []
+        tc.submit_order.return_value = submitted
+        tc.get_order_by_id.side_effect = [
+            Exception("initial poll unavailable"),
+            Exception("confirm unavailable 1"),
+            Exception("confirm unavailable 2"),
+            Exception("confirm unavailable 3"),
+        ]
+
+        with patch("time.sleep"), patch("executor.critical_alert") as alert:
+            from executor import execute_buy
+            result = execute_buy(
+                r,
+                tc,
+                make_buy_signal(
+                    symbol="BTC/USD", qty=1, entry=500.0, stop=450.0,
+                    order_type="limit", limit_price=500.0,
+                ),
+            )
+
+        assert result is False
+        tc.cancel_order_by_id.assert_called_once_with("ord-1")
+        assert json.loads(store["trading:positions"]) == {}
+        assert store["trading:system_status"] == "halted"
+        record = json.loads(r.rpush.call_args.args[1])
+        assert record["type"] == "unconfirmed_buy_order"
+        assert record["symbol"] == "BTC/USD"
+        assert record["order_id"] == "ord-1"
+        assert record["known_filled_qty"] == pytest.approx(0.0)
+        assert record["known_fill_price"] is None
+        alert.assert_called_once()
+
+    def test_equity_first_poll_and_cancel_errors_fail_closed_for_manual_reconcile(self):
+        import executor
+
+        r, store = make_redis({})
+        submitted = MagicMock(id="ord-1", status="accepted")
+        tc = MagicMock()
+        tc.get_clock.return_value = make_clock(is_open=True)
+        tc.get_orders.return_value = []
+        tc.submit_order.return_value = submitted
+        tc.get_order_by_id.side_effect = [
+            Exception("initial poll unavailable"),
+            Exception("confirm unavailable 1"),
+            Exception("confirm unavailable 2"),
+            Exception("confirm unavailable 3"),
+        ]
+        tc.cancel_order_by_id.side_effect = RuntimeError("cancel outcome unknown")
+
+        with patch("time.sleep"), patch("executor.critical_alert") as alert:
+            result = executor.execute_buy(r, tc, make_buy_signal())
+
+        assert result is False
+        tc.cancel_order_by_id.assert_called_once_with("ord-1")
+        assert json.loads(store["trading:positions"]) == {}
+        assert store["trading:system_status"] == "halted"
+        record = json.loads(r.rpush.call_args.args[1])
+        assert record["type"] == "unconfirmed_buy_order"
+        assert record["symbol"] == "SPY"
+        assert record["order_id"] == "ord-1"
+        assert record["known_filled_qty"] == pytest.approx(0.0)
+        assert record["known_fill_price"] is None
+        alert.assert_called_once()
+
+        ok, reason = executor.validate_order(
+            r,
+            make_buy_signal(symbol="ETH/USD", qty=1, entry=100.0, stop=90.0),
+            make_account(),
+        )
+        assert not ok
+        assert "fail-closed" in reason.lower()
+
+    def test_accepted_order_recovery_retains_fill_found_after_processing_error(self):
+        import executor
+
+        class MalformedOrderSnapshot:
+            filled_qty = "0"
+            filled_avg_price = None
+
+            @property
+            def status(self):
+                raise RuntimeError("malformed poll status")
+
+        r, store = make_redis({})
+        submitted = MagicMock(id="ord-1", status="accepted")
+        recovered_fill = MagicMock(
+            status="canceled", filled_avg_price="500.0", filled_qty="0.5"
+        )
+        tc = MagicMock()
+        tc.get_orders.return_value = []
+        tc.submit_order.return_value = submitted
+        tc.get_order_by_id.side_effect = [MalformedOrderSnapshot(), recovered_fill]
+
+        with patch("time.sleep"), patch("executor.critical_alert") as alert:
+            assert executor.execute_buy(
+                r,
+                tc,
+                make_buy_signal(
+                    symbol="BTC/USD", qty=1, entry=500.0, stop=450.0,
+                    order_type="limit", limit_price=500.0,
+                ),
+            ) is False
+
+        tc.cancel_order_by_id.assert_called_once_with("ord-1")
+        assert json.loads(store["trading:positions"]) == {}
+        assert store["trading:system_status"] == "halted"
+        record = json.loads(r.rpush.call_args.args[1])
+        assert record["type"] == "accepted_buy_recovery_found_fill"
+        assert record["known_filled_qty"] == pytest.approx(0.5)
+        assert record["known_fill_price"] == pytest.approx(500.0)
+        alert.assert_called_once()
+
+    def test_pre_acceptance_failure_alert_is_best_effort(self, capsys):
         r, _ = make_redis({})
-        pending = MagicMock()
-        pending.status = "accepted"
-        pending.filled_avg_price = None
-        pending.filled_qty = "0"
-        submitted = MagicMock()
-        submitted.id = "ord-1"
-        submitted.status = "accepted"
+        tc = MagicMock()
+        tc.get_orders.return_value = []
+        tc.submit_order.side_effect = RuntimeError("submit unavailable")
 
+        with patch("time.sleep"), patch(
+            "executor.critical_alert", side_effect=RuntimeError("alerts unavailable")
+        ):
+            from executor import execute_buy
+            assert execute_buy(
+                r,
+                tc,
+                make_buy_signal(
+                    symbol="BTC/USD", qty=1, entry=500.0, stop=450.0,
+                    order_type="limit", limit_price=500.0,
+                ),
+            ) is False
+
+        assert "could not send order failure alert" in capsys.readouterr().out.lower()
+
+    def test_crypto_terminal_partial_fill_without_price_halts_for_reconciliation(self):
+        r, store = make_redis({})
+        partial = MagicMock(
+            status="partially_filled", filled_avg_price=None, filled_qty="0.5"
+        )
+        canceled = MagicMock(
+            status="canceled", filled_avg_price=None, filled_qty="0"
+        )
+        submitted = MagicMock(id="ord-1", status="accepted")
+        tc = MagicMock()
+        tc.get_orders.return_value = []
+        tc.submit_order.return_value = submitted
+        tc.get_order_by_id.side_effect = [partial] * 5 + [canceled]
+
+        with patch("time.sleep"), patch("executor.critical_alert") as alert:
+            from executor import execute_buy
+            result = execute_buy(
+                r,
+                tc,
+                make_buy_signal(
+                    symbol="BTC/USD", qty=1, entry=500.0, stop=450.0,
+                    order_type="limit", limit_price=500.0,
+                ),
+            )
+
+        assert result is False
+        assert json.loads(store["trading:positions"]) == {}
+        assert tc.submit_order.call_count == 1
+        assert store["trading:system_status"] == "halted"
+        record = json.loads(r.rpush.call_args.args[1])
+        assert record["type"] == "buy_fill_missing_price"
+        assert record["symbol"] == "BTC/USD"
+        assert record["order_id"] == "ord-1"
+        assert record["known_filled_qty"] == pytest.approx(0.5)
+        assert record["known_fill_price"] is None
+        alert.assert_called_once()
+
+    def test_post_fill_cap_violation_is_tracked_protected_and_halted(self):
+        r, store = make_redis({})
+        filled = MagicMock(
+            status="filled", filled_avg_price="1002.0", filled_qty="1.5"
+        )
+        submitted = MagicMock(id="ord-1", status="accepted")
+        stop_order = MagicMock(id="stop-1")
+        tc = MagicMock()
+        tc.get_orders.return_value = []
+        tc.submit_order.side_effect = [submitted, stop_order]
+        tc.get_order_by_id.return_value = filled
+
+        with patch("time.sleep"), patch("executor.critical_alert") as alert:
+            from executor import execute_buy
+            result = execute_buy(
+                r,
+                tc,
+                make_buy_signal(
+                    symbol="BTC/USD", qty=1.5, entry=1_000.0, stop=900.0,
+                    order_type="limit", limit_price=1_001.0,
+                ),
+            )
+
+        assert result is True
+        position = json.loads(store["trading:positions"])["BTC/USD"]
+        assert position["quantity"] == pytest.approx(1.5)
+        assert position["stop_order_id"] == "stop-1"
+        assert store["trading:system_status"] == "halted"
+        r.rpush.assert_called_once()
+        record = json.loads(r.rpush.call_args.args[1])
+        assert record["type"] == "post_fill_constraint_violation"
+        assert "allocation" in record["reason"].lower()
+        alert.assert_called_once()
+
+    def test_crypto_gtc_partial_fill_without_terminal_cancel_is_durably_reconciled(self):
+        r, store = make_redis({})
+        partial = MagicMock(
+            status="partially_filled", filled_avg_price="500.0", filled_qty="5"
+        )
+        submitted = MagicMock(id="ord-1", status="accepted")
+        tc = MagicMock()
+        tc.get_orders.return_value = []
+        tc.submit_order.return_value = submitted
+        tc.get_order_by_id.return_value = partial
+
+        with patch("time.sleep"), patch("executor.critical_alert") as alert:
+            from executor import execute_buy
+            result = execute_buy(
+                r,
+                tc,
+                make_buy_signal(
+                    symbol="BTC/USD", qty=10, order_type="limit", limit_price=499.0
+                ),
+            )
+
+        assert result is False
+        tc.cancel_order_by_id.assert_called_once_with("ord-1")
+        assert json.loads(store["trading:positions"]) == {}
+        assert tc.submit_order.call_count == 1
+        assert store["trading:system_status"] == "halted"
+        r.rpush.assert_called_once()
+        record = json.loads(r.rpush.call_args.args[1])
+        assert record["symbol"] == "BTC/USD"
+        assert record["order_id"] == "ord-1"
+        assert record["known_filled_qty"] == pytest.approx(5.0)
+        assert record["known_fill_price"] == pytest.approx(500.0)
+        alert.assert_called_once()
+        assert "manual broker reconciliation" in alert.call_args.args[0].lower()
+
+    @pytest.mark.parametrize("failure_step", ["cancel", "refetch"])
+    def test_crypto_gtc_partial_fill_api_failure_requires_manual_reconciliation(
+        self, failure_step
+    ):
+        r, store = make_redis({})
+        partial = MagicMock(
+            status="partially_filled", filled_avg_price="500.0", filled_qty="5"
+        )
+        submitted = MagicMock(id="ord-1", status="accepted")
+        tc = MagicMock()
+        tc.get_orders.return_value = []
+        tc.submit_order.return_value = submitted
+        tc.get_order_by_id.side_effect = [partial] * 5 + [Exception("broker unavailable")]
+        if failure_step == "cancel":
+            tc.cancel_order_by_id.side_effect = Exception("cancel unavailable")
+
+        with patch("time.sleep"), patch("executor.critical_alert") as alert:
+            from executor import execute_buy
+            result = execute_buy(
+                r,
+                tc,
+                make_buy_signal(
+                    symbol="BTC/USD", qty=10, order_type="limit", limit_price=499.0
+                ),
+            )
+
+        assert result is False
+        assert json.loads(store["trading:positions"]) == {}
+        assert tc.submit_order.call_count == 1
+        alert.assert_called_once()
+
+    @pytest.mark.parametrize("cancel_error", [None, Exception("cancel failed")])
+    def test_equity_zero_fill_cancels_and_returns_false(self, cancel_error):
+        r, _ = make_redis({})
+        pending = MagicMock(status="accepted", filled_avg_price=None, filled_qty="0")
+        submitted = MagicMock(id="ord-1", status="accepted")
         tc = MagicMock()
         tc.get_clock.return_value = make_clock(is_open=True)
         tc.get_orders.return_value = []
         tc.submit_order.return_value = submitted
         tc.get_order_by_id.return_value = pending
+        if cancel_error:
+            tc.cancel_order_by_id.side_effect = cancel_error
 
         with patch("time.sleep"):
             from executor import execute_buy
             result = execute_buy(r, tc, make_buy_signal())
+
         assert result is False
+        tc.cancel_order_by_id.assert_called_once_with("ord-1")
 
-    def test_no_fill_cancel_raises_swallowed(self):
-        """cancel_order_by_id raising in no-fill path is swallowed (bare except)."""
-        r, _ = make_redis({})
-        pending = MagicMock()
-        pending.status = "accepted"
-        pending.filled_avg_price = None
-        pending.filled_qty = "0"
-        submitted = MagicMock()
-        submitted.id = "ord-1"
-
+    def test_crypto_zero_fill_cancel_is_refetched_until_confirmed_terminal(self):
+        r, store = make_redis({})
+        pending = MagicMock(status="accepted", filled_avg_price=None, filled_qty="0")
+        canceled = MagicMock(status="canceled", filled_avg_price=None, filled_qty="0")
+        submitted = MagicMock(id="ord-1", status="accepted")
         tc = MagicMock()
-        tc.get_clock.return_value = make_clock(is_open=True)
         tc.get_orders.return_value = []
         tc.submit_order.return_value = submitted
-        tc.get_order_by_id.return_value = pending
+        tc.get_order_by_id.side_effect = [pending] * 5 + [canceled]
+
+        with patch("time.sleep"), patch("executor.critical_alert") as alert:
+            from executor import execute_buy
+            result = execute_buy(
+                r,
+                tc,
+                make_buy_signal(
+                    symbol="BTC/USD", qty=1, entry=1_000.0, stop=900.0,
+                    order_type="limit", limit_price=1_001.0,
+                ),
+            )
+
+        assert result is False
+        tc.cancel_order_by_id.assert_called_once_with("ord-1")
+        assert tc.get_order_by_id.call_count == 6
+        assert json.loads(store["trading:positions"]) == {}
+        assert store["trading:system_status"] == "active"
+        alert.assert_not_called()
+        r.rpush.assert_not_called()
+
+    def test_crypto_cancel_exception_refetches_terminal_fill_and_protects_it(self):
+        r, store = make_redis({})
+        pending = MagicMock(status="accepted", filled_avg_price=None, filled_qty="0")
+        filled = MagicMock(status="filled", filled_avg_price="1_000.0", filled_qty="0.5")
+        submitted = MagicMock(id="ord-1", status="accepted")
+        stop_order = MagicMock(id="stop-1")
+        tc = MagicMock()
+        tc.get_orders.return_value = []
+        tc.submit_order.side_effect = [submitted, stop_order]
+        tc.get_order_by_id.side_effect = [pending] * 5 + [filled]
         tc.cancel_order_by_id.side_effect = Exception("cancel failed")
 
-        with patch("time.sleep"):
+        with patch("time.sleep"), patch("executor.critical_alert") as alert:
             from executor import execute_buy
-            result = execute_buy(r, tc, make_buy_signal())
+            result = execute_buy(
+                r,
+                tc,
+                make_buy_signal(
+                    symbol="BTC/USD", qty=1, entry=1_000.0, stop=900.0,
+                    order_type="limit", limit_price=1_001.0,
+                ),
+            )
+
+        assert result is True
+        assert tc.get_order_by_id.call_count == 6
+        position = json.loads(store["trading:positions"])["BTC/USD"]
+        assert position["quantity"] == pytest.approx(0.5)
+        assert position["stop_order_id"] == "stop-1"
+        alert.assert_not_called()
+        r.rpush.assert_not_called()
+
+    def test_crypto_unconfirmed_cancel_halts_and_records_manual_reconcile(self):
+        r, store = make_redis({})
+        pending = MagicMock(status="accepted", filled_avg_price=None, filled_qty="0")
+        submitted = MagicMock(id="ord-1", status="accepted")
+        tc = MagicMock()
+        tc.get_orders.return_value = []
+        tc.submit_order.return_value = submitted
+        tc.get_order_by_id.return_value = pending
+
+        with patch("time.sleep"), patch("executor.critical_alert") as alert:
+            from executor import execute_buy
+            result = execute_buy(
+                r,
+                tc,
+                make_buy_signal(
+                    symbol="BTC/USD", qty=1, entry=1_000.0, stop=900.0,
+                    order_type="limit", limit_price=1_001.0,
+                ),
+            )
+
         assert result is False
+        assert tc.get_order_by_id.call_count == 8
+        assert store["trading:system_status"] == "halted"
+        r.rpush.assert_called_once()
+        record = json.loads(r.rpush.call_args.args[1])
+        assert record["symbol"] == "BTC/USD"
+        assert record["order_id"] == "ord-1"
+        alert.assert_called_once()
 
     def test_403_exception_skips_quietly(self):
         r, _ = make_redis({})
@@ -636,6 +1648,34 @@ class TestExecuteBuy:
         assert result is True
         # No clock check for crypto
         tc.get_clock.assert_not_called()
+
+    def test_crypto_limit_buy_is_fractional_gtc_and_logged_as_crypto(self):
+        r, _ = make_redis({})
+        filled = MagicMock(status="filled", filled_avg_price="50000.0", filled_qty="0.123")
+        submitted = MagicMock(id="ord-btc", status="accepted")
+        stop_order = MagicMock(id="stop-btc")
+        tc = MagicMock()
+        tc.get_orders.return_value = []
+        tc.submit_order.side_effect = [submitted, stop_order]
+        tc.get_order_by_id.return_value = filled
+        order = make_buy_signal(
+            symbol="BTC/USD", qty=1, entry=50_000.0, stop=48_000.0,
+            order_type="limit", limit_price=50_050.0,
+        )
+        order["quantity"] = 0.123
+
+        with patch("time.sleep"), patch("notify.trade_alert"), \
+             patch("executor.LimitOrderRequest") as mock_limit, \
+             patch("executor._log_trade") as mock_log:
+            from executor import execute_buy
+            result = execute_buy(r, tc, order)
+
+        assert result is True
+        assert mock_limit.call_args.kwargs["qty"] == pytest.approx(0.123)
+        import executor
+        assert mock_limit.call_args.kwargs["time_in_force"] == executor.TimeInForce.GTC
+        assert mock_limit.call_args.kwargs["limit_price"] == 50_050.0
+        assert mock_log.call_args.kwargs["asset_class"] == "crypto"
 
 
 # ── TestExecuteSell (additional branches) ────────────────────
@@ -785,8 +1825,9 @@ class TestExecuteSell:
         result = execute_sell(r, MagicMock(), signal)
         assert result is True
 
-    def test_crypto_sell_deducts_fees(self):
-        pos = make_position(symbol="BTC/USD", qty=0.1, entry=50000.0, stop=48000.0)
+    def test_crypto_sell_deducts_fees_without_stock_day_trade_bookkeeping(self):
+        pos = make_position(symbol="BTC/USD", qty=1, entry=50000.0, stop=48000.0)
+        pos["quantity"] = 0.1
         pos["value"] = 5000.0
         r, store = make_redis({"BTC/USD": pos})
 
@@ -807,8 +1848,126 @@ class TestExecuteSell:
             from executor import execute_sell
             result = execute_sell(r, tc, make_sell_signal(symbol="BTC/USD"))
         assert result is True
-        # No clock check for crypto
+        # No clock check or stock day-trade bookkeeping for crypto.
         tc.get_clock.assert_not_called()
+        assert store["trading:pdt:count"] == "0"
+        assert "trading:exited_today:BTC/USD" not in store
+        assert not r.hexists("trading:closed_today", "BTC/USD")
+
+    def test_displaced_crypto_sell_publishes_completion_after_fee_adjusted_equity(self):
+        pos = make_position(symbol="BTC/USD", qty=1, entry=50000.0, stop=48000.0)
+        pos["quantity"] = 0.1
+        pos["value"] = 5000.0
+        r, store = make_redis({"BTC/USD": pos})
+
+        filled = MagicMock(
+            status="filled", filled_avg_price="51000.0", filled_qty="0.1"
+        )
+        submitted = MagicMock(id="ord-1")
+        tc = MagicMock()
+        tc.submit_order.return_value = submitted
+        tc.get_order_by_id.return_value = filled
+
+        equity_when_published = []
+        r.publish.side_effect = lambda *_: equity_when_published.append(
+            float(store["trading:simulated_equity"])
+        )
+
+        with patch("time.sleep"), patch("notify.exit_alert"), \
+             patch("executor._wait_for_order_cancelled", return_value=True), \
+             patch("executor._seconds_until_midnight_et", return_value=3600):
+            from executor import execute_sell
+            displaced = make_sell_signal(symbol="BTC/USD", signal_type="displaced")
+            displaced["displacement_id"] = "disp-123"
+            result = execute_sell(r, tc, displaced)
+
+        assert result is True
+        assert float(store["trading:simulated_equity"]) == pytest.approx(5079.8)
+        r.publish.assert_called_once()
+        channel, raw = r.publish.call_args.args
+        completion_notice = json.loads(raw)
+        assert channel == "trading:signals"
+        assert completion_notice["displacement_id"] == "disp-123"
+        assert completion_notice["symbol"] == "BTC/USD"
+        assert completion_notice["signal_type"] == "displacement_complete"
+        durable = json.loads(
+            json.loads(store["trading:displacement:completions"])["disp-123"]
+        )
+        assert durable["order_id"] == "ord-1"
+        assert durable["filled_qty"] == pytest.approx(0.1)
+        assert durable["fill_price"] == pytest.approx(51000.0)
+        assert equity_when_published == [pytest.approx(5079.8)]
+        assert "BTC/USD" not in json.loads(store["trading:positions"])
+
+    def test_displacement_completion_publish_failure_keeps_sale_successful(self):
+        pos = make_position(symbol="BTC/USD", qty=1, entry=50000.0, stop=48000.0)
+        pos["quantity"] = 0.1
+        pos["value"] = 5000.0
+        r, store = make_redis({"BTC/USD": pos})
+
+        filled = MagicMock(
+            status="filled", filled_avg_price="51000.0", filled_qty="0.1"
+        )
+        tc = MagicMock()
+        tc.submit_order.return_value = MagicMock(id="ord-1")
+        tc.get_order_by_id.return_value = filled
+        r.publish.side_effect = Exception("redis pubsub unavailable")
+
+        with patch("time.sleep"), patch("notify.exit_alert"), \
+             patch("executor._wait_for_order_cancelled", return_value=True), \
+             patch("executor._seconds_until_midnight_et", return_value=3600), \
+             patch("executor.critical_alert") as alert:
+            from executor import execute_sell
+            displaced = make_sell_signal(symbol="BTC/USD", signal_type="displaced")
+            displaced["displacement_id"] = "disp-123"
+            result = execute_sell(r, tc, displaced)
+
+        assert result is True
+        assert float(store["trading:simulated_equity"]) == pytest.approx(5079.8)
+        assert "BTC/USD" not in json.loads(store["trading:positions"])
+        completion = json.loads(
+            json.loads(store["trading:displacement:completions"])["disp-123"]
+        )
+        assert completion["symbol"] == "BTC/USD"
+        assert completion["order_id"] == "ord-1"
+        alert.assert_called_once()
+        assert "pending entry remains queued" in alert.call_args.args[0].lower()
+
+    @pytest.mark.parametrize(
+        ("displacement_id", "alert_fragment"),
+        [(None, "no displacement id"), ("disp-123", "persistence failed")],
+    )
+    def test_displacement_without_durable_completion_never_notifies_successor(
+        self, displacement_id, alert_fragment
+    ):
+        pos = make_position(symbol="BTC/USD", qty=1, entry=50000.0, stop=48000.0)
+        pos["quantity"] = 0.1
+        pos["value"] = 5000.0
+        r, store = make_redis({"BTC/USD": pos})
+        if displacement_id:
+            r.hset = MagicMock(side_effect=RuntimeError("redis unavailable"))
+
+        filled = MagicMock(
+            status="filled", filled_avg_price="51000.0", filled_qty="0.1"
+        )
+        tc = MagicMock()
+        tc.submit_order.return_value = MagicMock(id="ord-1")
+        tc.get_order_by_id.return_value = filled
+        displaced = make_sell_signal(symbol="BTC/USD", signal_type="displaced")
+        if displacement_id:
+            displaced["displacement_id"] = displacement_id
+
+        with patch("time.sleep"), patch("notify.exit_alert"), \
+             patch("executor._wait_for_order_cancelled", return_value=True), \
+             patch("executor._seconds_until_midnight_et", return_value=3600), \
+             patch("executor.critical_alert") as alert:
+            from executor import execute_sell
+            result = execute_sell(r, tc, displaced)
+
+        assert result is True
+        assert "BTC/USD" not in json.loads(store["trading:positions"])
+        r.publish.assert_not_called()
+        assert alert_fragment in alert.call_args.args[0].lower()
 
     def test_manual_liquidation_sets_reentry_gate(self):
         pos = make_position()
@@ -1399,7 +2558,7 @@ class TestProcessOrder:
         tc.get_clock.return_value = make_clock(is_open=False)
 
         from executor import process_order
-        order = make_buy_signal(order_value=10.0)
+        order = make_buy_signal(qty=5, order_value=10.0)
         result = process_order(r, tc, order)
         # Market closed → False, but we confirmed buy routing happened
         assert result is False
@@ -2500,8 +3659,8 @@ class TestExecuteBuyLogsTrade:
         assert kwargs.get("realized_pnl") is None
         assert kwargs.get("exit_reason") is None
 
-    def test_log_trade_buy_asset_class_defaults_to_equity_when_missing(self):
-        """order without 'asset_class' key → defaults to 'equity'."""
+    def test_log_trade_buy_asset_class_is_derived_from_symbol(self):
+        """A payload claim cannot override symbol-derived classification."""
         r, _ = make_redis({})
         filled = MagicMock()
         filled.status = "filled"
@@ -2518,8 +3677,7 @@ class TestExecuteBuyLogsTrade:
         tc.submit_order.side_effect = [submitted, stop_order]
         tc.get_order_by_id.return_value = filled
 
-        # No 'asset_class' in order
-        order = make_buy_signal(strategy="rsi2")
+        order = make_buy_signal(strategy="rsi2", asset_class="crypto")
 
         with patch("time.sleep"), patch("notify.trade_alert"), \
              patch("executor._log_trade") as mock_log:
