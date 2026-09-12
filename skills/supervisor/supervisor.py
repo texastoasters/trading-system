@@ -73,6 +73,15 @@ def run_circuit_breakers(r):
     prev_status = r.get(Keys.SYSTEM_STATUS)
     _sync_temporary_tier_gate(r, dd)
 
+    # Manual broker reconciliation is an operator-cleared safety gate, not a
+    # drawdown state. Never let normal circuit-breaker recovery reopen entries
+    # while any durable reconciliation record remains unresolved.
+    if r.llen(Keys.MANUAL_RECONCILE) > 0:
+        if prev_status != "halted":
+            r.set(Keys.SYSTEM_STATUS, "halted")
+        r.set(Keys.RISK_MULTIPLIER, "0")
+        return False
+
     if dd >= config.DRAWDOWN_HALT:
         if prev_status != "halted":
             r.set(Keys.SYSTEM_STATUS, "halted")
@@ -460,10 +469,16 @@ def reset_daily(r):
 
     status = r.get(Keys.SYSTEM_STATUS)
     if status == "daily_halt":
-        r.set(Keys.SYSTEM_STATUS, "active")
-        _sync_temporary_tier_gate(r, get_drawdown(r))
-        status = "active"
-        print("[Supervisor] System re-enabled after daily halt.")
+        if r.llen(Keys.MANUAL_RECONCILE) > 0:
+            r.set(Keys.SYSTEM_STATUS, "halted")
+            r.set(Keys.RISK_MULTIPLIER, "0")
+            status = "halted"
+            print("[Supervisor] Manual reconciliation unresolved; system remains halted.")
+        else:
+            r.set(Keys.SYSTEM_STATUS, "active")
+            _sync_temporary_tier_gate(r, get_drawdown(r))
+            status = "active"
+            print("[Supervisor] System re-enabled after daily halt.")
 
     rejected = r.lrange("trading:rejected_signals", 0, -1)
     cutoff = (datetime.now() - timedelta(days=7)).isoformat()
@@ -946,8 +961,8 @@ def run_morning_briefing(r):
 
 
 def run_reconcile(r):
-    """Run reconcile.py --fix as a subprocess. Called at 9:15 AM ET via cron."""
-    print("[Supervisor] Running scheduled reconcile...")
+    """Run reconcile.py --fix only when explicitly requested by an operator."""
+    print("[Supervisor] Running operator-requested reconcile --fix...")
     try:
         result = subprocess.run(
             ["python3", "scripts/reconcile.py", "--fix"],
@@ -956,12 +971,15 @@ def run_reconcile(r):
             env={**os.environ, "PYTHONPATH": "scripts"},
         )
         if result.returncode != 0:
-            stderr = result.stderr.decode("utf-8", errors="replace")
+            stdout = result.stdout.decode("utf-8", errors="replace").strip()
+            stderr = result.stderr.decode("utf-8", errors="replace").strip()
+            details = "\n".join(part for part in (stdout, stderr) if part)
             critical_alert(
-                f"Scheduled reconcile failed (exit {result.returncode})\n{stderr[:500]}"
+                f"Reconcile --fix left unresolved issues "
+                f"(exit {result.returncode})\n{details[:1000]}"
             )
     except Exception as exc:
-        critical_alert(f"Scheduled reconcile error: {exc}")
+        critical_alert(f"Reconcile --fix error: {exc}")
 
 
 # ── Main ────────────────────────────────────────────────────
@@ -975,7 +993,10 @@ def main():  # pragma: no cover
     parser.add_argument("--reset-daily", action="store_true", help="Reset daily counters")
     parser.add_argument("--briefing", action="store_true", help="Send morning briefing (9:20 AM ET)")
     parser.add_argument("--weekly", action="store_true", help="Send weekly summary (Friday 4:35 PM ET)")
-    parser.add_argument("--reconcile", action="store_true", help="Run reconcile --fix (9:15 AM ET)")
+    parser.add_argument(
+        "--reconcile", action="store_true",
+        help="Run reconcile --fix explicitly (manual only; not scheduled)",
+    )
     parser.add_argument("--refit-thresholds", action="store_true",
                         help="Refit per-symbol RSI-2 thresholds (quarterly)")
     args = parser.parse_args()

@@ -225,7 +225,7 @@
           <label class="block text-xs text-gray-400 mb-1">Max Concurrent Positions</label>
           <input type="number" name="config[MAX_CONCURRENT_POSITIONS]"
             value={@form_params["MAX_CONCURRENT_POSITIONS"]}
-            step="1" min="1" max="20"
+            step="1" min="1" max="5"
             class={DashboardWeb.SettingsLive.input_class(@overridden, "MAX_CONCURRENT_POSITIONS")}>
           <p class="text-xs text-gray-500 mt-1">Cap on simultaneously open positions</p>
         </div>
@@ -233,7 +233,7 @@
           <label class="block text-xs text-gray-400 mb-1">Max Equity Positions</label>
           <input type="number" name="config[MAX_EQUITY_POSITIONS]"
             value={@form_params["MAX_EQUITY_POSITIONS"]}
-            step="1" min="0" max="20"
+            step="1" min="0" max="3"
             class={DashboardWeb.SettingsLive.input_class(@overridden, "MAX_EQUITY_POSITIONS")}>
           <p class="text-xs text-gray-500 mt-1">Max open equity positions</p>
         </div>
@@ -241,27 +241,29 @@
           <label class="block text-xs text-gray-400 mb-1">Max Crypto Positions</label>
           <input type="number" name="config[MAX_CRYPTO_POSITIONS]"
             value={@form_params["MAX_CRYPTO_POSITIONS"]}
-            step="1" min="0" max="20"
+            step="1" min="0" max="2"
             class={DashboardWeb.SettingsLive.input_class(@overridden, "MAX_CRYPTO_POSITIONS")}>
           <p class="text-xs text-gray-500 mt-1">Max open crypto positions</p>
         </div>
-        <div>
-          <label class="block text-xs text-gray-400 mb-1">Equity Allocation</label>
-          <input type="number" name="config[EQUITY_ALLOCATION_PCT]"
-            value={@form_params["EQUITY_ALLOCATION_PCT"]}
-            step="0.01" min="0" max="1"
-            class={DashboardWeb.SettingsLive.input_class(@overridden, "EQUITY_ALLOCATION_PCT")}>
-          <p class="text-xs text-gray-500 mt-1">Fraction of capital allocated to equities</p>
-        </div>
-        <div>
-          <label class="block text-xs text-gray-400 mb-1">Crypto Allocation</label>
-          <input type="number" name="config[CRYPTO_ALLOCATION_PCT]"
-            value={@form_params["CRYPTO_ALLOCATION_PCT"]}
-            step="0.01" min="0" max="1"
-            class={DashboardWeb.SettingsLive.input_class(@overridden, "CRYPTO_ALLOCATION_PCT")}>
-          <p class="text-xs text-gray-500 mt-1">Fraction of capital allocated to crypto</p>
-        </div>
       </div>
+    </div>
+
+    <%!-- Stock Trading Controls --%>
+    <div class="bg-gray-800 rounded-lg border border-gray-700 p-4 space-y-3">
+      <h2 class="text-sm font-semibold text-gray-200">Stock Trading Controls</h2>
+      <label class="flex items-start gap-3 cursor-pointer">
+        <input type="hidden" name="config[STOCK_DAY_TRADE_BRAKE_ENABLED]" value="false">
+        <input type="checkbox" name="config[STOCK_DAY_TRADE_BRAKE_ENABLED]" value="true"
+          checked={@form_params["STOCK_DAY_TRADE_BRAKE_ENABLED"] == "true"}
+          class={DashboardWeb.SettingsLive.toggle_class(@overridden, "STOCK_DAY_TRADE_BRAKE_ENABLED")}>
+        <span>
+          <span class="block text-sm text-gray-200">Enable stock day-trade brake</span>
+          <span class="block text-xs text-gray-500 mt-1">
+            Voluntary stock anti-churn brake; not a regulatory PDT requirement.
+            Stops and protective exits are never blocked. Crypto is excluded.
+          </span>
+        </span>
+      </label>
     </div>
 
     <%!-- Risk Management --%>

@@ -17,15 +17,21 @@ Usage (from repo root, after source ~/.trading_env):
 import json
 import sys
 import argparse
+from decimal import Decimal
 
 from alpaca.trading.client import TradingClient
-from alpaca.trading.requests import StopOrderRequest
-from alpaca.trading.enums import OrderSide, TimeInForce
+from alpaca.trading.requests import GetOrdersRequest, StopOrderRequest
+from alpaca.trading.enums import OrderSide, QueryOrderStatus, TimeInForce
 
 import config
 from config import Keys, get_redis, is_crypto
 
 _ACTIVE_STOP_STATUSES = {"new", "accepted", "pending_new"}
+
+
+def _enum_value(value):
+    """Return Alpaca enum values and plain strings in one comparable form."""
+    return getattr(value, "value", value)
 
 
 # ── Data Loading ─────────────────────────────────────────────
@@ -57,8 +63,8 @@ def reconcile_positions(redis_pos: dict, alpaca_pos: dict) -> list:
         if symbol not in alpaca_pos:
             issues.append({"type": "phantom", "symbol": symbol, "pos": pos})
         else:
-            redis_qty = int(pos["quantity"]) if not is_crypto(symbol) else float(pos["quantity"])
-            alpaca_qty = int(float(alpaca_pos[symbol].qty))
+            redis_qty = Decimal(str(pos["quantity"]))
+            alpaca_qty = Decimal(str(alpaca_pos[symbol].qty))
             if redis_qty != alpaca_qty:
                 issues.append({
                     "type": "qty_mismatch",
@@ -75,14 +81,82 @@ def reconcile_positions(redis_pos: dict, alpaca_pos: dict) -> list:
     return issues
 
 
-def check_stop_losses(trading_client, redis_pos: dict) -> list:
-    """
-    For each Redis position, verify an active GTC stop-loss exists on Alpaca.
-    Returns list of missing_stop issue dicts.
-    """
+def _decimal(value):
+    """Return a finite Decimal, or None for missing/invalid broker data."""
+    try:
+        number = Decimal(str(value))
+    except (TypeError, ValueError, ArithmeticError):
+        return None
+    return number if number.is_finite() else None
+
+
+def _stop_mismatch(symbol, pos, reason):
+    """Describe active but conflicting protection that requires manual review."""
+    return {
+        "type": "stop_mismatch",
+        "symbol": symbol,
+        "pos": pos,
+        "reason": reason,
+        "manual_review": True,
+    }
+
+
+def _stop_order_mismatch_reason(stop_order, symbol, pos, broker_position):
+    """Return why an order is not the position's expected protection, or None."""
+    if _enum_value(stop_order.status) not in _ACTIVE_STOP_STATUSES:
+        return f"stop status={stop_order.status}"
+
+    order_type = _enum_value(stop_order.type)
+    if order_type not in {"stop", "stop_limit", "trailing_stop"}:
+        return f"stop type={stop_order.type}"
+    if _enum_value(stop_order.side) != "sell":
+        return f"stop side={stop_order.side}"
+    if _enum_value(stop_order.time_in_force) != "gtc":
+        return f"stop time_in_force={stop_order.time_in_force}"
+    if stop_order.symbol != symbol:
+        return f"stop symbol={stop_order.symbol}"
+    if _decimal(stop_order.qty) != _decimal(broker_position.qty):
+        return f"stop quantity={stop_order.qty}, broker quantity={broker_position.qty}"
+
+    if order_type == "trailing_stop":
+        stored_trail = _decimal(pos.get("trail_percent"))
+        broker_trail = _decimal(getattr(stop_order, "trail_percent", None))
+        if not pos.get("trailing"):
+            return "stop type=trailing_stop but Redis position is fixed-stop"
+        if stored_trail is None or broker_trail is None or broker_trail != stored_trail:
+            return (f"stop trail_percent={getattr(stop_order, 'trail_percent', None)}, "
+                    f"Redis trail_percent={pos.get('trail_percent')}")
+        return None
+
+    if pos.get("trailing"):
+        return f"stop type={stop_order.type}, Redis position expects trailing_stop"
+
+    stored_stop = _decimal(pos.get("stop_price"))
+    broker_stop = _decimal(getattr(stop_order, "stop_price", None))
+    if stored_stop is None or broker_stop is None or broker_stop != stored_stop:
+        return (f"stop price={getattr(stop_order, 'stop_price', None)}, "
+                f"Redis stop_price={pos.get('stop_price')}")
+
+    if order_type == "stop_limit":
+        broker_limit = _decimal(getattr(stop_order, "limit_price", None))
+        if broker_limit is None or broker_limit <= 0:
+            return f"stop_limit limit_price={getattr(stop_order, 'limit_price', None)} must be finite and positive"
+        if broker_limit > broker_stop:
+            return (f"stop_limit limit_price={broker_limit} must be <= "
+                    f"sell stop_price={broker_stop}")
+
+    return None
+
+
+def check_stop_losses(trading_client, redis_pos: dict, alpaca_pos: dict) -> list:
+    """Verify each broker-confirmed position's active protection and parameters."""
     issues = []
 
     for symbol, pos in redis_pos.items():
+        broker_position = alpaca_pos.get(symbol)
+        if broker_position is None:
+            continue
+
         stop_order_id = pos.get("stop_order_id")
         if not stop_order_id:
             issues.append({"type": "missing_stop", "symbol": symbol, "pos": pos,
@@ -91,12 +165,22 @@ def check_stop_losses(trading_client, redis_pos: dict) -> list:
 
         try:
             stop_order = trading_client.get_order_by_id(stop_order_id)
-            if stop_order.status not in _ACTIVE_STOP_STATUSES:
-                issues.append({"type": "missing_stop", "symbol": symbol, "pos": pos,
-                               "reason": f"stop status={stop_order.status}"})
         except Exception as e:
             issues.append({"type": "missing_stop", "symbol": symbol, "pos": pos,
                            "reason": f"order not found: {e}"})
+            continue
+
+        reason = _stop_order_mismatch_reason(
+            stop_order, symbol, pos, broker_position
+        )
+        if reason:
+            if _enum_value(stop_order.status) not in _ACTIVE_STOP_STATUSES:
+                issues.append({
+                    "type": "missing_stop", "symbol": symbol, "pos": pos,
+                    "reason": reason,
+                })
+            else:
+                issues.append(_stop_mismatch(symbol, pos, reason))
 
     return issues
 
@@ -109,17 +193,67 @@ def fix_missing_stops(trading_client, r, stop_issues: list):
         return
 
     positions = load_redis_positions(r)
+    broker_positions = load_alpaca_positions(trading_client)
 
     for issue in stop_issues:
         symbol = issue["symbol"]
-        pos = issue["pos"]
-        qty = pos["quantity"]
+        if issue.get("manual_review"):
+            print(f"  ⚠️  Skipping {symbol}: active protection mismatch requires manual review")
+            continue
+        if symbol not in positions:
+            print(f"  ⚠️  Skipping {symbol}: no current Redis position")
+            continue
+        if symbol not in broker_positions:
+            print(f"  ⚠️  Skipping {symbol}: no broker-confirmed open position")
+            continue
+
+        pos = positions[symbol]
+        broker_position = broker_positions[symbol]
+        broker_qty = broker_position.qty
         stop_price = pos["stop_price"]
+
+        # Redis stop IDs can be absent or stale while a valid manually placed
+        # broker stop already protects the position. Discover open orders before
+        # any replacement; if discovery fails, fail closed rather than risk a
+        # duplicate sell order.
+        try:
+            open_req = GetOrdersRequest(
+                status=QueryOrderStatus.OPEN, symbols=[symbol]
+            )
+            open_orders = trading_client.get_orders(open_req)
+        except Exception as e:
+            print(f"  ❌ Could not discover open orders for {symbol}: {e}; skipping repair")
+            continue
+
+        adopted = None
+        conflicting_protection = None
+        for open_order in open_orders:
+            order_type = _enum_value(getattr(open_order, "type", None))
+            side = _enum_value(getattr(open_order, "side", None))
+            if order_type not in {"stop", "stop_limit", "trailing_stop"} or side != "sell":
+                continue
+            reason = _stop_order_mismatch_reason(
+                open_order, symbol, pos, broker_position
+            )
+            if reason is None:
+                adopted = open_order
+                break
+            conflicting_protection = reason
+
+        if adopted is not None:
+            positions[symbol]["stop_order_id"] = str(adopted.id)
+            r.set(Keys.POSITIONS, json.dumps(positions))
+            print(f"  ✅ Existing broker stop adopted for {symbol}: {adopted.id}")
+            continue
+        if conflicting_protection is not None:
+            print(f"  ⚠️  Skipping {symbol}: open protective order requires manual review: "
+                  f"{conflicting_protection}")
+            continue
 
         try:
             req = StopOrderRequest(
                 symbol=symbol,
-                qty=int(qty) if not is_crypto(symbol) else qty,
+                qty=int(Decimal(str(broker_qty))) if not is_crypto(symbol) else broker_qty,
                 side=OrderSide.SELL,
                 stop_price=round(float(stop_price), 2),
                 time_in_force=TimeInForce.GTC,
@@ -199,20 +333,26 @@ def main():  # pragma: no cover
     print(f"  Alpaca: {len(alpaca_pos)} position(s)")
 
     pos_issues = reconcile_positions(redis_pos, alpaca_pos)
-    stop_issues = check_stop_losses(trading_client, redis_pos)
+    stop_issues = check_stop_losses(trading_client, redis_pos, alpaca_pos)
 
     print_report(pos_issues, stop_issues)
 
     if args.fix and stop_issues:
         print("[Reconcile] Fixing missing stop-losses...")
         fix_missing_stops(trading_client, r, stop_issues)
+        print("[Reconcile] Re-checking after repairs...")
+        redis_pos = load_redis_positions(r)
+        alpaca_pos = load_alpaca_positions(trading_client)
+        pos_issues = reconcile_positions(redis_pos, alpaca_pos)
+        stop_issues = check_stop_losses(trading_client, redis_pos, alpaca_pos)
+        print_report(pos_issues, stop_issues)
     elif stop_issues:
         print("[Reconcile] Run with --fix to automatically resubmit missing stop-losses.")
 
     if pos_issues:
         print("[Reconcile] ⚠️  Phantom/orphan/mismatch issues require manual review.")
 
-    return len(pos_issues) + len(stop_issues)
+    return 0 if not pos_issues and not stop_issues else 1
 
 
 if __name__ == "__main__":  # pragma: no cover

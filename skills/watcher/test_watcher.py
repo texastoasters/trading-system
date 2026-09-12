@@ -1968,6 +1968,24 @@ class TestGenerateEntrySignalsNewGuards:
             signals = generate_entry_signals(r, MagicMock(), MagicMock())
         assert signals == []
 
+    def test_crypto_entry_ignores_stock_exited_today_brake(self):
+        item = make_watchlist_item(
+            "BTC/USD", close=100_000.0, prev_high=101_000.0,
+            atr14=500.0, sma200=95_000.0,
+        )
+        r = make_redis({
+            Keys.WATCHLIST: json.dumps([item]),
+            Keys.exited_today("BTC/USD"): "1",
+        })
+        with patch('watcher.is_market_hours', return_value=False), \
+             patch('watcher.check_whipsaw', return_value=False), \
+             patch('watcher.is_macro_event_day', return_value=False):
+            from watcher import generate_entry_signals
+            signals = generate_entry_signals(r, MagicMock(), MagicMock())
+
+        assert len(signals) == 1
+        assert signals[0]["symbol"] == "BTC/USD"
+
     def test_allows_entry_when_not_exited_today(self):
         r = make_redis({Keys.WATCHLIST: json.dumps([make_watchlist_item()])})
         with patch('watcher.is_market_hours', return_value=True), \

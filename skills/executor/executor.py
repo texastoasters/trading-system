@@ -12,6 +12,7 @@ Usage (from repo root):
 """
 
 import json
+import math
 import os
 import signal
 import sys
@@ -30,9 +31,16 @@ from alpaca.trading.enums import OrderSide, TimeInForce, QueryOrderStatus
 
 import config
 from config import Keys, get_redis, get_simulated_equity, is_crypto, init_redis_state
+from entry_constraints import (
+    asset_class_exposure, invested_value, proposed_notional, realized_exit_pnl,
+)
 from notify import notify, trade_alert, exit_alert, critical_alert
 
 _shutdown = False
+# Process-local last line of defense when Redis cannot durably record a known
+# broker fill. Deliberately survives Redis recovery and remains set until this
+# executor process is restarted or an operator intervenes by restarting it.
+_buy_fail_closed = False
 
 
 # ── Database Connection ─────────────────────────────────────
@@ -84,7 +92,7 @@ def get_simulated_cash(r):
     """Available cash in the simulated paper ledger (equity minus open position value)."""
     equity = get_simulated_equity(r)
     positions = json.loads(r.get(Keys.POSITIONS) or "{}")
-    invested = sum(p.get("value", 0) for p in positions.values())
+    invested = invested_value(positions)
     return max(0, equity - invested)
 
 
@@ -201,6 +209,7 @@ def _wait_for_order_cancelled(trading_client, order_id, timeout_seconds=10):
 
 
 _STOP_ORDER_TYPES = frozenset({"stop", "stop_limit", "trailing_stop"})
+_TERMINAL_BUY_STATUSES = frozenset({"filled", "canceled", "cancelled", "expired", "rejected"})
 
 
 def _find_active_stop_order(trading_client, symbol):
@@ -234,15 +243,121 @@ def _order_filled_qty(order):
         return 0.0
 
 
-def _order_fill_price(order, fallback):
-    """filled_avg_price on an Alpaca order as a float; `fallback` if absent/unparseable."""
+def _order_fill_price_or_none(order):
+    """Return a positive finite broker fill price, or None when unavailable."""
     raw = getattr(order, "filled_avg_price", None)
     if not isinstance(raw, (int, float, str)):
-        return fallback
+        return None
     try:
-        return float(raw)
+        price = float(raw)
     except (TypeError, ValueError):
-        return fallback
+        return None
+    return price if math.isfinite(price) and price > 0 else None
+
+
+def _order_fill_price(order, fallback):
+    """filled_avg_price on an Alpaca order as a float; `fallback` if unavailable."""
+    price = _order_fill_price_or_none(order)
+    return fallback if price is None else price
+
+
+def _update_known_buy_fill(order, known_qty=0.0, known_price=None):
+    """Preserve monotonic observed buy quantity and its authoritative avg price."""
+    observed_qty = _order_filled_qty(order)
+    observed_price = _order_fill_price_or_none(order)
+    if observed_qty > known_qty:
+        return observed_qty, observed_price
+    if observed_qty == known_qty and observed_qty > 0 and observed_price is not None:
+        return known_qty, observed_price
+    return known_qty, known_price
+
+
+def _record_manual_reconcile(
+    r, record_type, symbol, order_id, reason,
+    known_filled_qty=None, known_fill_price=None,
+):
+    """Atomically persist broker-reconciliation evidence and halt new entries.
+
+    The local latch is set first. If Redis is unavailable, this executor still
+    refuses every subsequent buy for the lifetime of the process.
+    """
+    global _buy_fail_closed
+    _buy_fail_closed = True
+    record = {
+        "time": datetime.now().isoformat(),
+        "severity": "critical",
+        "type": record_type,
+        "symbol": symbol,
+        "order_id": str(order_id),
+        "reason": reason,
+    }
+    if known_filled_qty is not None:
+        record["known_filled_qty"] = known_filled_qty
+        record["known_fill_price"] = known_fill_price
+    persistence_error = None
+    try:
+        pipe = r.pipeline(transaction=True)
+        pipe.rpush(Keys.MANUAL_RECONCILE, json.dumps(record))
+        pipe.set(Keys.SYSTEM_STATUS, "halted")
+        pipe.execute()
+    except Exception as exc:
+        persistence_error = exc
+
+    message = (
+        f"MANUAL BROKER RECONCILIATION REQUIRED: {symbol}\n"
+        f"Order {order_id}: {reason}\n"
+        "New entries halted; reconcile broker exposure before resuming."
+    )
+    if persistence_error is not None:
+        message += (
+            f" Redis persistence failed ({persistence_error}); executor-local "
+            "fail-closed latch is active until restart/manual intervention."
+        )
+    try:
+        critical_alert(message)
+    except Exception as exc:
+        print(f"  [Executor] ❌ Could not send reconciliation alert: {exc}")
+
+
+def _cancel_and_confirm_buy_remainder(
+    r, trading_client, order_id, symbol, known_qty, known_price,
+):
+    """Request cancellation and resolve terminal state without losing known fills.
+
+    Broker filled quantity is monotonic even when a later cancellation snapshot
+    omits or resets it. Preserve the greatest observed quantity and the latest
+    authoritative average price for that quantity. If terminal state cannot be
+    confirmed, persist those known exposure details and halt new entries.
+    """
+    try:
+        trading_client.cancel_order_by_id(order_id)
+    except Exception as exc:
+        print(f"  [Executor] ⚠️ Cancel request for remaining {symbol} buy raised: {exc}; confirming broker state")
+
+    last_status = "unknown"
+    for _ in range(3):
+        try:
+            final_order = trading_client.get_order_by_id(order_id)
+        except Exception as exc:
+            print(f"  [Executor] ❌ Could not confirm {symbol} buy cancellation: {exc}")
+            time.sleep(1)
+            continue
+        known_qty, known_price = _update_known_buy_fill(
+            final_order, known_qty, known_price
+        )
+        status = getattr(final_order.status, "value", final_order.status)
+        last_status = str(status).lower()
+        if last_status in _TERMINAL_BUY_STATUSES:
+            return final_order, known_qty, known_price
+        time.sleep(1)
+
+    reason = f"buy remainder not confirmed terminal (last status={last_status})"
+    print(f"  [Executor] ❌ {symbol} {reason}")
+    _record_manual_reconcile(
+        r, "unconfirmed_buy_order", symbol, order_id, reason,
+        known_filled_qty=known_qty, known_fill_price=known_price,
+    )
+    return None
 
 
 def _book_partial_stop_fill(r, pos, positions, symbol, stop_order, broker_qty):
@@ -570,15 +685,40 @@ def _check_trailing_upgrades(trading_client, r):
 def validate_order(r, order, account):
     """Validate order against all safety rules. Returns (ok, reason)."""
 
+    if _buy_fail_closed and order["side"] == "buy":
+        return False, "Executor fail-closed latch active — no new entries"
+
     # System status — blocks new entries, always allows exits
     status = r.get(Keys.SYSTEM_STATUS)
     if status in ("halted", "daily_halt", "paused") and order["side"] == "buy":
         return False, f"System is {status} — no new entries"
 
-    # Rule 1: Never exceed simulated cash
+    positions = json.loads(r.get(Keys.POSITIONS) or "{}")
+
+    # Re-validate every entry independently of the Portfolio Manager payload.
     if order["side"] == "buy":
+        symbol = order.get("symbol")
+        if not symbol:
+            return False, "Invalid buy: symbol is required"
+        crypto = is_crypto(symbol)
+        executable_price = order.get("entry_price")
+        if crypto:
+            if order.get("order_type") != "limit":
+                return False, "Invalid crypto buy: GTC limit order required"
+            try:
+                executable_price = float(order["limit_price"])
+            except (KeyError, TypeError, ValueError):
+                return False, "Invalid crypto buy: limit price is required"
+            if not math.isfinite(executable_price) or executable_price <= 0:
+                return False, "Invalid crypto buy: limit price must be positive and finite"
+
+        try:
+            order_value = proposed_notional(order["quantity"], executable_price)
+        except (KeyError, ValueError, TypeError):
+            return False, "Invalid buy quantity or entry price"
+
+        # Rule 1: Never exceed simulated cash. Never trust caller order_value.
         sim_cash = get_simulated_cash(r)
-        order_value = order.get("order_value", order["quantity"] * order["entry_price"])
         if order_value > sim_cash:
             return False, f"Rule 1: Order ${order_value:.0f} > simulated cash ${sim_cash:.0f}"
 
@@ -590,44 +730,137 @@ def validate_order(r, order, account):
             if daily_pnl <= -(equity * config.DAILY_LOSS_LIMIT_PCT):
                 return False, f"Daily loss limit: ${daily_pnl:.2f}"
 
+        if any(
+            position.get("symbol", key) == symbol
+            for key, position in positions.items()
+        ):
+            return False, f"Position already exists for {symbol}"
+
+        if len(positions) >= config.MAX_CONCURRENT_POSITIONS:
+            return False, f"Max positions ({config.MAX_CONCURRENT_POSITIONS})"
+
+        crypto = is_crypto(symbol)
+        crypto_count = sum(
+            1
+            for key, position in positions.items()
+            if is_crypto(position.get("symbol", key))
+        )
+        equity_count = len(positions) - crypto_count
+        if crypto and crypto_count >= config.MAX_CRYPTO_POSITIONS:
+            return False, f"Max crypto positions ({config.MAX_CRYPTO_POSITIONS})"
+        if not crypto and equity_count >= config.MAX_EQUITY_POSITIONS:
+            return False, f"Max equity positions ({config.MAX_EQUITY_POSITIONS})"
+
+        equity = get_simulated_equity(r)
+        allocation_pct = (
+            config.CRYPTO_ALLOCATION_PCT if crypto else config.EQUITY_ALLOCATION_PCT
+        )
+        asset_label = "Crypto" if crypto else "Equity"
+        proposed_exposure = asset_class_exposure(positions, symbol) + order_value
+        allocation_cap = equity * allocation_pct
+        if proposed_exposure > allocation_cap:
+            return False, (
+                f"{asset_label} allocation cap exceeded: "
+                f"${proposed_exposure:.2f} > ${allocation_cap:.2f}"
+            )
+
+        try:
+            stop_price = float(order["stop_price"])
+            entry_price = float(order["entry_price"])
+            quantity = float(order["quantity"])
+        except (KeyError, TypeError, ValueError):
+            return False, "Invalid buy: stop price is required"
+        if not all(math.isfinite(value) for value in (stop_price, entry_price, quantity)):
+            return False, "Invalid buy: stop inputs must be finite"
+        stop_distance = entry_price - stop_price
+        if stop_distance <= 0:
+            return False, "Invalid stop distance (stop >= entry)"
+        stop_risk = quantity * stop_distance
+        try:
+            risk_multiplier = float(r.get(Keys.RISK_MULTIPLIER) or 1.0)
+        except (TypeError, ValueError):
+            return False, "Invalid risk multiplier"
+        if not math.isfinite(risk_multiplier) or risk_multiplier < 0:
+            return False, "Invalid risk multiplier"
+        max_stop_risk = equity * config.RISK_PER_TRADE_PCT * risk_multiplier
+        if stop_risk > max_stop_risk:
+            return False, (
+                f"Stop risk ${stop_risk:.2f} exceeds effective per-trade "
+                f"limit ${max_stop_risk:.2f}"
+            )
+
     # Rule 1: Never short
     if order["side"] == "sell":
-        positions = json.loads(r.get(Keys.POSITIONS) or "{}")
         has_pos = any(p["symbol"] == order["symbol"] for p in positions.values())
         if not has_pos:
             return False, "Rule 1: Short selling prohibited"
-
-    # Max concurrent positions (for buys)
-    if order["side"] == "buy":
-        positions = json.loads(r.get(Keys.POSITIONS) or "{}")
-        if len(positions) >= config.MAX_CONCURRENT_POSITIONS:
-            return False, f"Max positions ({config.MAX_CONCURRENT_POSITIONS})"
 
     # Account status
     if account.trading_blocked:
         return False, "Account trading blocked"
 
-    # PDT gate — surgical, not blanket. Alpaca sets pattern_day_trader on paper
-    # cash accounts but does not enforce it (buying power is evaluated against
-    # cash, not day-trade buying power). Blocking every order when the flag is
-    # set disables exits of overnight positions (which are not day trades).
-    # We block only orders that would complete a same-day round-trip AND push
-    # us past the 3-day-trade ceiling tracked in trading:pdt:count.
-    if account.pattern_day_trader:
+    # Voluntary stock day-trade brake. Crypto is FINRA-PDT exempt and must not
+    # be blocked by, counted in, or write this stock-only bookkeeping.
+    symbol = order.get("symbol", "")
+    if (config.STOCK_DAY_TRADE_BRAKE_ENABLED
+            and not is_crypto(symbol)):
         pdt_count = int(r.get(Keys.PDT_COUNT) or 0)
         if pdt_count >= 3:
             today = datetime.now().strftime("%Y-%m-%d")
-            symbol = order["symbol"]
             if order["side"] == "sell":
-                positions = json.loads(r.get(Keys.POSITIONS) or "{}")
                 pos = positions.get(symbol)
-                if pos and pos.get("entry_date") == today:
+                protective_exit = (
+                    order.get("signal_type") == "stop_loss" or order.get("force")
+                )
+                if pos and pos.get("entry_date") == today and not protective_exit:
                     return False, "PDT: sell of today's entry would be 4th day trade"
             else:  # buy
                 if r.hexists(Keys.CLOSED_TODAY, symbol):
                     return False, "PDT: buy after today's close would be 4th day trade"
 
     return True, "All validations passed"
+
+
+def _check_post_fill_constraints(r, order, fill_qty, fill_price, order_id):
+    """Halt and persist reconciliation when an actual buy fill breaches a cap.
+
+    The fill already exists at the broker, so Rule 1 forbids pretending it did
+    not happen or liquidating an unrelated holding. The caller still records
+    and stop-protects the fill; this guard freezes new entries for manual review.
+    """
+    symbol = order["symbol"]
+    positions = json.loads(r.get(Keys.POSITIONS) or "{}")
+    actual_notional = proposed_notional(fill_qty, fill_price)
+    reasons = []
+
+    simulated_cash = get_simulated_cash(r)
+    if actual_notional > simulated_cash:
+        reasons.append(
+            f"actual fill ${actual_notional:.2f} exceeds simulated cash ${simulated_cash:.2f}"
+        )
+
+    crypto = is_crypto(symbol)
+    allocation_pct = (
+        config.CRYPTO_ALLOCATION_PCT if crypto else config.EQUITY_ALLOCATION_PCT
+    )
+    allocation_cap = get_simulated_equity(r) * allocation_pct
+    proposed_exposure = asset_class_exposure(positions, symbol) + actual_notional
+    if proposed_exposure > allocation_cap:
+        reasons.append(
+            f"actual {('crypto' if crypto else 'equity')} allocation "
+            f"${proposed_exposure:.2f} exceeds cap ${allocation_cap:.2f}"
+        )
+
+    if reasons:
+        _record_manual_reconcile(
+            r,
+            "post_fill_constraint_violation",
+            symbol,
+            order_id,
+            "; ".join(reasons),
+        )
+        return False
+    return True
 
 
 # ── Order Execution ─────────────────────────────────────────
@@ -680,6 +913,12 @@ def execute_buy(r, trading_client, order):
     # Cancel any stale orders for this symbol to avoid wash trade conflicts
     cancel_existing_orders(trading_client, symbol)
 
+    alpaca_order = None
+    known_fill_qty = 0.0
+    known_fill_price = None
+    stop_order_id = None
+    position_committed = False
+
     try:
         if order.get("order_type") == "limit" and order.get("limit_price"):
             req = LimitOrderRequest(
@@ -700,34 +939,81 @@ def execute_buy(r, trading_client, order):
         alpaca_order = trading_client.submit_order(req)
         print(f"  [Executor] Order submitted: {alpaca_order.id} ({alpaca_order.status})")
 
-        # Wait for fill — poll up to 10 seconds
-        filled_order = None
+        # Wait for fill — poll up to 10 seconds.  The accepted submit snapshot
+        # keeps the recovery path addressable even if the very first poll fails.
+        filled_order = alpaca_order
+        known_fill_qty, known_fill_price = _update_known_buy_fill(alpaca_order)
         for _ in range(5):
             time.sleep(2)
-            filled_order = trading_client.get_order_by_id(alpaca_order.id)
+            try:
+                filled_order = trading_client.get_order_by_id(alpaca_order.id)
+            except Exception as exc:
+                print(
+                    f"  [Executor] ⚠️ Buy poll for {symbol} failed after order acceptance "
+                    f"(known filled_qty={known_fill_qty}): {exc}; cancelling and confirming remainder"
+                )
+                break
+            known_fill_qty, known_fill_price = _update_known_buy_fill(
+                filled_order, known_fill_qty, known_fill_price
+            )
             if filled_order.status == "filled":
                 break
 
+        fill_qty = known_fill_qty
+        fill_price = known_fill_price
         if filled_order.status != "filled":
             print(f"  [Executor] ⚠️ Buy for {symbol} is {filled_order.status} after 10s — "
                   f"filled_qty={filled_order.filled_qty}/{quantity}")
-            # If partially filled, use what we got; if nothing, bail
-            if not filled_order.filled_qty or float(filled_order.filled_qty) <= 0:
-                print(f"  [Executor] ❌ Buy for {symbol} did not fill — cancelling")
-                try:
-                    trading_client.cancel_order_by_id(alpaca_order.id)
-                except Exception:
-                    pass
+            # Every accepted buy must reach a confirmed terminal order state
+            # before its exposure can be trusted. Preserve the monotonic fill
+            # observed before cancellation even if a later broker snapshot omits
+            # or resets its fill fields.
+            resolution = _cancel_and_confirm_buy_remainder(
+                r, trading_client, alpaca_order.id, symbol,
+                known_fill_qty, known_fill_price,
+            )
+            if resolution is None:
                 return False
-
-        fill_price = float(filled_order.filled_avg_price or order["entry_price"])
-        fill_qty = float(filled_order.filled_qty or 0)
+            filled_order, fill_qty, fill_price = resolution
+            if fill_qty <= 0:
+                print(f"  [Executor] Buy for {symbol} confirmed terminal with zero fill")
+                return False
+            if fill_price is None:
+                reason = "terminal buy fill has known quantity but no authoritative fill price"
+                _record_manual_reconcile(
+                    r, "buy_fill_missing_price", symbol, alpaca_order.id, reason,
+                    known_filled_qty=fill_qty, known_fill_price=None,
+                )
+                return False
 
         if fill_qty <= 0:
             print(f"  [Executor] ❌ Buy for {symbol} filled with qty=0 — order did not execute")
             return False
 
+        if fill_price is None:
+            reason = "completed buy fill has known quantity but no authoritative fill price"
+            _record_manual_reconcile(
+                r, "buy_fill_missing_price", symbol, alpaca_order.id, reason,
+                known_filled_qty=fill_qty, known_fill_price=None,
+            )
+            return False
+
+        # Re-check actual broker fill, not the PM estimate. If price/quantity
+        # crossed cash or allocation limits, preserve Rule 1 by halting future
+        # entries while still tracking and stop-protecting this real exposure.
+        _check_post_fill_constraints(
+            r, order, fill_qty, fill_price, alpaca_order.id
+        )
+
         stop_order_id = submit_stop_loss(trading_client, symbol, fill_qty, order["stop_price"])
+        if stop_order_id is None:
+            reason = "protective stop submission failed after confirmed buy fill"
+            print(f"  [Executor] ❌ {symbol} {reason}")
+            _record_manual_reconcile(
+                r, "buy_protection_failed", symbol, alpaca_order.id, reason,
+                known_filled_qty=fill_qty, known_fill_price=fill_price,
+            )
+            return False
 
         order_strategies = list(order.get("strategies") or [order["strategy"]])
         order_primary = order.get("primary_strategy") or order["strategy"]
@@ -750,6 +1036,7 @@ def execute_buy(r, trading_client, order):
         positions = json.loads(r.get(Keys.POSITIONS) or "{}")
         positions[symbol] = position_data
         r.set(Keys.POSITIONS, json.dumps(positions))
+        position_committed = True
         _log_trade(
             symbol=symbol,
             side="buy",
@@ -758,7 +1045,7 @@ def execute_buy(r, trading_client, order):
             total_value=fill_qty * fill_price,
             order_id=str(alpaca_order.id),
             strategy=order.get("strategy", "rsi2"),
-            asset_class=order.get("asset_class", "equity"),
+            asset_class="crypto" if is_crypto(symbol) else "equity",
         )
         trade_alert(
             side="buy",
@@ -778,11 +1065,69 @@ def execute_buy(r, trading_client, order):
 
     except Exception as e:
         error_msg = str(e)
+        if alpaca_order is not None and known_fill_qty > 0:
+            commit_phase = (
+                "after durable protected position commit"
+                if position_committed
+                else "before durable protected position commit"
+            )
+            protection = (
+                f"; protective stop order {stop_order_id} exists"
+                if stop_order_id is not None
+                else "; protective stop not confirmed"
+            )
+            reason = f"{commit_phase}: {error_msg}{protection}"
+            print(f"  [Executor] ❌ Known fill processing failed for {symbol}: {reason}")
+            _record_manual_reconcile(
+                r,
+                "known_fill_processing_failed",
+                symbol,
+                alpaca_order.id,
+                reason,
+                known_filled_qty=known_fill_qty,
+                known_fill_price=known_fill_price,
+            )
+            return False
+
+        if alpaca_order is not None:
+            print(
+                f"  [Executor] ⚠️ Accepted buy processing failed for {symbol}: "
+                f"{error_msg}; cancelling and confirming broker state"
+            )
+            resolution = _cancel_and_confirm_buy_remainder(
+                r,
+                trading_client,
+                alpaca_order.id,
+                symbol,
+                known_fill_qty,
+                known_fill_price,
+            )
+            if resolution is not None:
+                _, recovered_qty, recovered_price = resolution
+                if recovered_qty > 0:
+                    reason = (
+                        "accepted-order recovery found a fill after processing "
+                        f"failed: {error_msg}; fill is not durably tracked/protected"
+                    )
+                    _record_manual_reconcile(
+                        r,
+                        "accepted_buy_recovery_found_fill",
+                        symbol,
+                        alpaca_order.id,
+                        reason,
+                        known_filled_qty=recovered_qty,
+                        known_fill_price=recovered_price,
+                    )
+            return False
+
         if "403" in error_msg:
             print(f"  [Executor] ⚠️ PDT rejection for {symbol} — skipping")
         else:
             print(f"  [Executor] ❌ Order failed: {error_msg}")
-            critical_alert(f"Order failed for {symbol}: {error_msg}")
+            try:
+                critical_alert(f"Order failed for {symbol}: {error_msg}")
+            except Exception as alert_error:
+                print(f"  [Executor] ❌ Could not send order failure alert: {alert_error}")
         return False
 
 
@@ -992,11 +1337,9 @@ def execute_sell(r, trading_client, order):
         fill_price = float(filled_order.filled_avg_price)
         entry_price = pos["entry_price"]
         pnl_pct = (fill_price - entry_price) / entry_price * 100
-        pnl_dollar = (fill_price - entry_price) * quantity
+        pnl_dollar = realized_exit_pnl(pos, fill_price * quantity)
 
         if is_crypto(symbol):
-            fee = (entry_price * quantity + fill_price * quantity) * (config.BTC_FEE_RATE / 2)
-            pnl_dollar -= fee
             pnl_pct -= (config.BTC_FEE_RATE * 100)
 
         _log_trade(
@@ -1015,6 +1358,48 @@ def execute_sell(r, trading_client, order):
         new_equity = update_simulated_equity(r, pnl_dollar)
         del positions[symbol]
         r.set(Keys.POSITIONS, json.dumps(positions))
+        if order.get("signal_type") == "displaced":
+            # Notify PM only after the actual fill, fee-adjusted equity, and
+            # post-sale positions are durable in Redis. The completion hash is
+            # the durable outbox; Pub/Sub is only a low-latency wake-up.
+            displacement_id = order.get("displacement_id")
+            if not displacement_id:
+                critical_alert(
+                    f"Displacement sale completed for {symbol}, but the order had "
+                    "no displacement ID. No successor was released."
+                )
+            else:
+                completion = {
+                    "displacement_id": displacement_id,
+                    "symbol": symbol,
+                    "order_id": str(alpaca_order.id),
+                    "filled_qty": quantity,
+                    "fill_price": fill_price,
+                    "completed_at": datetime.now().isoformat(),
+                }
+                try:
+                    r.hset(
+                        Keys.DISPLACEMENT_COMPLETIONS,
+                        displacement_id,
+                        json.dumps(completion),
+                    )
+                except Exception as exc:
+                    critical_alert(
+                        f"Displacement completed for {symbol}, but durable completion "
+                        f"persistence failed: {exc}. No successor was released."
+                    )
+                else:
+                    try:
+                        r.publish(Keys.SIGNALS, json.dumps({
+                            **completion,
+                            "signal_type": "displacement_complete",
+                        }))
+                    except Exception as exc:
+                        critical_alert(
+                            f"Displacement completed for {symbol}, but successor queue "
+                            f"notification failed: {exc}. Pending entry remains queued "
+                            "for durable recovery."
+                        )
         # Clear exit-signaled so a future re-entry can exit normally.
         r.delete(Keys.exit_signaled(symbol))
 
@@ -1033,18 +1418,19 @@ def execute_sell(r, trading_client, order):
         except Exception:
             hold_days = 0
 
-        if hold_days == 0:
-            pdt_count = int(r.get(Keys.PDT_COUNT) or 0)
-            new_pdt = pdt_count + 1
-            r.set(Keys.PDT_COUNT, str(new_pdt))
-            print(f"  [Executor] ⚠️ Day trade consumed! PDT count: {new_pdt}/3")
-            if new_pdt == 2:
-                notify(f"⚠️ PDT warning: {new_pdt}/3 day trades used today. "
-                       f"One more will trigger the PDT limit.")
+        if config.STOCK_DAY_TRADE_BRAKE_ENABLED and not is_crypto(symbol):
+            if hold_days == 0:
+                pdt_count = int(r.get(Keys.PDT_COUNT) or 0)
+                new_pdt = pdt_count + 1
+                r.set(Keys.PDT_COUNT, str(new_pdt))
+                print(f"  [Executor] ⚠️ Day trade consumed! PDT count: {new_pdt}/3")
+                if new_pdt == 2:
+                    notify(f"⚠️ PDT warning: {new_pdt}/3 day trades used today. "
+                           f"One more will trigger the PDT limit.")
 
-        r.set(Keys.exited_today(symbol), "1", ex=_seconds_until_midnight_et())
-        # Record close for PDT gate — cleared by supervisor --reset-daily.
-        r.hset(Keys.CLOSED_TODAY, symbol, datetime.now().strftime("%H:%M:%S"))
+            r.set(Keys.exited_today(symbol), "1", ex=_seconds_until_midnight_et())
+            # Record stock close for the brake; reset by supervisor daily.
+            r.hset(Keys.CLOSED_TODAY, symbol, datetime.now().strftime("%H:%M:%S"))
         exit_alert(
             symbol=symbol,
             quantity=quantity,

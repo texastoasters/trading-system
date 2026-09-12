@@ -640,6 +640,110 @@ class TestRunScan:
         assert threshold_arg == float(config.RSI2_ENTRY_AGGRESSIVE)
 
 
+class TestCryptoOnlyScan:
+    def _make_redis(self, existing_watchlist, regime=None):
+        store = {
+            Keys.SYSTEM_STATUS: "active",
+            Keys.TIERS: json.dumps(config.DEFAULT_TIERS),
+            Keys.UNIVERSE: json.dumps(config.DEFAULT_UNIVERSE),
+            Keys.WATCHLIST: json.dumps(existing_watchlist),
+            Keys.REGIME: json.dumps(regime or ranging_regime()),
+        }
+        r = MagicMock()
+        r.get = lambda key: store.get(key)
+        r.set = MagicMock(side_effect=lambda key, value: store.update({key: value}))
+        return r, store
+
+    def test_crypto_only_scans_all_active_slash_symbols_and_preserves_equities(self):
+        equity_row = {"symbol": "QQQ", "priority": "watch", "tier": 1}
+        stale_crypto = {"symbol": "BTC/USD", "priority": "watch", "tier": 2}
+        r, store = self._make_redis([equity_row, stale_crypto], uptrend_regime())
+        btc_data = make_price_data(close_val=100_000.0)
+        eth_data = make_price_data(close_val=4_000.0)
+        btc_scan = {
+            "symbol": "BTC/USD", "priority": "signal", "tier": None,
+            "rsi2": 7.0, "close": 100_000.0, "sma200": 95_000.0,
+        }
+        eth_scan = {
+            "symbol": "ETH/USD", "priority": "watch", "tier": None,
+            "rsi2": 12.0, "close": 4_000.0, "sma200": 3_800.0,
+        }
+
+        with patch('screener.get_redis', return_value=r), \
+             patch('screener.config.init_redis_state'), \
+             patch('screener.get_active_instruments',
+                   return_value=["SPY", "BTC/USD", "QQQ", "ETH/USD"]), \
+             patch('screener.fetch_daily_bars', side_effect=[btc_data, eth_data]) as mock_fetch, \
+             patch('screener.scan_instrument', side_effect=[btc_scan, eth_scan]) as mock_scan, \
+             patch('screener.get_tier', side_effect=[2, 3]), \
+             patch('screener.notify'):
+            from screener import run_scan
+            result = run_scan(asset_class="crypto")
+
+        assert [call.args[0] for call in mock_fetch.call_args_list] == ["BTC/USD", "ETH/USD"]
+        assert [call.args[0] for call in mock_scan.call_args_list] == ["BTC/USD", "ETH/USD"]
+        assert all(call.args[2]["regime"] == "UPTREND" for call in mock_scan.call_args_list)
+        published = json.loads(store[Keys.WATCHLIST])
+        assert published[0] == equity_row
+        assert [row["symbol"] for row in published[1:]] == ["BTC/USD", "ETH/USD"]
+        assert result == published
+
+    def test_crypto_only_replaces_stale_crypto_rows_without_touching_regime_or_heatmap(self):
+        equity_row = {"symbol": "SPY", "priority": "signal", "tier": 1}
+        r, store = self._make_redis([
+            equity_row,
+            {"symbol": "BTC/USD", "priority": "signal", "tier": 2},
+        ])
+
+        with patch('screener.get_redis', return_value=r), \
+             patch('screener.config.init_redis_state'), \
+             patch('screener.get_active_instruments', return_value=["SPY", "BTC/USD"]), \
+             patch('screener.fetch_daily_bars', return_value=make_price_data()), \
+             patch('screener.scan_instrument', return_value=None), \
+             patch('screener.notify'):
+            from screener import run_scan
+            result = run_scan(asset_class="crypto")
+
+        assert result == [equity_row]
+        assert json.loads(store[Keys.WATCHLIST]) == [equity_row]
+        set_keys = [call.args[0] for call in r.set.call_args_list]
+        assert Keys.REGIME not in set_keys
+        assert Keys.HEATMAP not in set_keys
+
+    def test_cli_routes_asset_class_crypto_to_crypto_only_scan(self):
+        with patch('screener.run_scan') as mock_scan, \
+             patch.object(sys, 'argv', ['screener.py', '--asset-class', 'crypto']):
+            from screener import main
+            main()
+
+        mock_scan.assert_called_once_with(asset_class="crypto")
+
+    def test_rejects_unknown_asset_class(self):
+        from screener import run_scan
+        with pytest.raises(ValueError, match="Unsupported asset class"):
+            run_scan(asset_class="options")
+
+    def test_crypto_only_falls_back_when_saved_regime_is_malformed(self):
+        r, store = self._make_redis([])
+        store[Keys.REGIME] = "not-json"
+        with patch('screener.get_redis', return_value=r), \
+             patch('screener.config.init_redis_state'), \
+             patch('screener.get_active_instruments', return_value=[]), \
+             patch('screener.notify'):
+            from screener import run_scan
+            assert run_scan(asset_class="crypto") == []
+
+    def test_crypto_only_recovers_from_malformed_watchlist(self):
+        r, store = self._make_redis([])
+        store[Keys.WATCHLIST] = "not-json"
+        with patch('screener.get_redis', return_value=r), \
+             patch('screener.config.init_redis_state'), \
+             patch('screener.get_active_instruments', return_value=[]), \
+             patch('screener.notify'):
+            from screener import run_scan
+            assert run_scan(asset_class="crypto") == []
+
+
 class TestRunScanHeatmap:
     def _make_redis(self, status="active"):
         r = MagicMock()

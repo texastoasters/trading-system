@@ -48,6 +48,7 @@ def make_redis(store: dict = None):
     r.get = lambda k: base.get(k)
     r.set = MagicMock()
     r.publish = MagicMock()
+    r.llen = MagicMock(return_value=0)
     return r
 
 
@@ -379,6 +380,45 @@ class TestRunCircuitBreakers:
             run_circuit_breakers(r)
         mock_en.assert_called_once_with(r)
 
+    def test_unresolved_manual_reconcile_does_not_recover_at_zero_drawdown(self):
+        r = _make_cb(status="halted")
+        r.llen.return_value = 1
+
+        with patch("supervisor.notify") as mock_notify:
+            from supervisor import run_circuit_breakers
+            result = run_circuit_breakers(r)
+
+        assert result is False
+        status_writes = [
+            call.args[1] for call in r.set.call_args_list
+            if call.args[0] == Keys.SYSTEM_STATUS
+        ]
+        assert "active" not in status_writes
+        r.set.assert_any_call(Keys.RISK_MULTIPLIER, "0")
+        mock_notify.assert_not_called()
+
+    def test_manual_reconcile_enters_halted_state(self):
+        r = _make_cb(status="active")
+        r.llen.return_value = 1
+
+        from supervisor import run_circuit_breakers
+        assert run_circuit_breakers(r) is False
+        r.set.assert_any_call(Keys.SYSTEM_STATUS, "halted")
+        r.set.assert_any_call(Keys.RISK_MULTIPLIER, "0")
+
+    def test_halted_recovers_when_manual_reconcile_is_clear(self):
+        r = _make_cb(status="halted")
+        r.llen.return_value = 0
+
+        with patch("supervisor.notify") as mock_notify:
+            from supervisor import run_circuit_breakers
+            result = run_circuit_breakers(r)
+
+        assert result is True
+        r.set.assert_any_call(Keys.SYSTEM_STATUS, "active")
+        r.set.assert_any_call(Keys.RISK_MULTIPLIER, "1.0")
+        mock_notify.assert_called_once()
+
     def test_paused_preserved_when_drawdown_normal(self):
         """When drawdown < 5% and status is 'paused', do not overwrite to 'active'."""
         r = _make_cb(status="paused")  # equity=5000, peak=5000 → 0% drawdown
@@ -553,6 +593,7 @@ class TestTierManagement:
         r.get = lambda key: store.get(key)
         r.set = MagicMock(side_effect=lambda key, value: store.__setitem__(key, value))
         r.delete = MagicMock(side_effect=lambda key: store.pop(key, None))
+        r.llen = MagicMock(return_value=0)
 
         with patch("supervisor.notify"), patch("supervisor.get_db", side_effect=Exception("offline")):
             from supervisor import run_circuit_breakers
@@ -973,6 +1014,18 @@ class TestResetDaily:
             reset_daily(r)
         r.set.assert_any_call(Keys.SYSTEM_STATUS, "active")
 
+    def test_daily_halt_stays_halted_when_manual_reconcile_is_unresolved(self):
+        r = self._make(**{Keys.SYSTEM_STATUS: "daily_halt"})
+        r.llen.return_value = 1
+
+        with patch("supervisor.notify"):
+            from supervisor import reset_daily
+            reset_daily(r)
+
+        r.set.assert_any_call(Keys.SYSTEM_STATUS, "halted")
+        r.set.assert_any_call(Keys.RISK_MULTIPLIER, "0")
+        assert call(Keys.SYSTEM_STATUS, "active") not in r.set.call_args_list
+
     def test_daily_halt_reset_clears_stale_temporary_tier_gate(self):
         r = self._make(**{
             Keys.SYSTEM_STATUS: "daily_halt",
@@ -1167,13 +1220,28 @@ class TestRunReconcile:
     def test_fires_critical_alert_on_nonzero_exit(self):
         """Non-zero exit code → critical_alert with 'reconcile' in message."""
         r = MagicMock()
-        result = MagicMock(returncode=1, stderr=b"connection refused")
+        result = MagicMock(returncode=1, stdout=b"", stderr=b"connection refused")
         with patch("supervisor.subprocess.run", return_value=result), \
              patch("supervisor.critical_alert") as mock_alert:
             from supervisor import run_reconcile
             run_reconcile(r)
         mock_alert.assert_called_once()
         assert "reconcile" in mock_alert.call_args[0][0].lower()
+
+    def test_nonzero_alert_includes_unrepaired_reconcile_report(self):
+        r = MagicMock()
+        result = MagicMock(
+            returncode=1,
+            stdout=b"PHANTOM positions (1): SPY\nTotal issues: 1",
+            stderr=b"",
+        )
+        with patch("supervisor.subprocess.run", return_value=result), \
+             patch("supervisor.critical_alert") as mock_alert:
+            from supervisor import run_reconcile
+            run_reconcile(r)
+        message = mock_alert.call_args[0][0]
+        assert "unresolved" in message.lower()
+        assert "PHANTOM positions" in message
 
     def test_fires_critical_alert_on_exception(self):
         """Subprocess exception (e.g. timeout) → critical_alert, no raise."""

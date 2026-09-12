@@ -7,6 +7,7 @@ Runs end-of-day scans and publishes a ranked watchlist to Redis.
 
 Usage (from repo root):
     PYTHONPATH=scripts python3 skills/screener/screener.py              # Run one scan
+    PYTHONPATH=scripts python3 skills/screener/screener.py --asset-class crypto
     PYTHONPATH=scripts python3 skills/screener/screener.py --daemon     # Run continuously on schedule
 """
 
@@ -204,8 +205,18 @@ def scan_instrument(symbol, data, regime_info, threshold):
     }
 
 
-def run_scan():
-    """Run a complete scan of the active universe."""
+def run_scan(asset_class="all"):
+    """Scan the active universe, optionally refreshing only crypto rows.
+
+    A crypto-only scan reuses the last equity regime for thresholds, fetches no
+    SPY data, and leaves the equity regime and heatmap untouched. Its publish is
+    a read/replace of only slash-delimited watchlist rows so the weekday equity
+    snapshot remains available to the continuously running Watcher.
+    """
+    if asset_class not in ("all", "crypto"):
+        raise ValueError(f"Unsupported asset class: {asset_class}")
+
+    crypto_only = asset_class == "crypto"
     r = get_redis()
     config.init_redis_state(r)
     config.load_overrides(r)   # apply any runtime config overrides
@@ -218,20 +229,40 @@ def run_scan():
         return
 
     instruments = get_active_instruments(r)
-    print(f"[Screener] Scanning {len(instruments)} instruments...")
+    if crypto_only:
+        instruments = [symbol for symbol in instruments if "/" in symbol]
+    print(f"[Screener] Scanning {len(instruments)} "
+          f"{'crypto ' if crypto_only else ''}instruments...")
 
-    stock_client = StockHistoricalDataClient(config.ALPACA_API_KEY, config.ALPACA_SECRET_KEY)
+    stock_client = None if crypto_only else StockHistoricalDataClient(
+        config.ALPACA_API_KEY, config.ALPACA_SECRET_KEY
+    )
     crypto_client = CryptoHistoricalDataClient(config.ALPACA_API_KEY, config.ALPACA_SECRET_KEY)
 
-    spy_data = fetch_daily_bars("SPY", stock_client, crypto_client)
-    if spy_data is None:
-        print("[Screener] ERROR: Could not fetch SPY data for regime detection")
-        return
+    spy_data = None
+    if crypto_only:
+        try:
+            regime_info = json.loads(r.get(Keys.REGIME) or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            regime_info = {}
+        regime_info = {
+            "regime": regime_info.get("regime", "RANGING"),
+            "adx": regime_info.get("adx", 0),
+            "plus_di": regime_info.get("plus_di", 0),
+            "minus_di": regime_info.get("minus_di", 0),
+        }
+        print(f"[Screener] Crypto-only scan; equity regime remains "
+              f"{regime_info['regime']}")
+    else:
+        spy_data = fetch_daily_bars("SPY", stock_client, crypto_client)
+        if spy_data is None:
+            print("[Screener] ERROR: Could not fetch SPY data for regime detection")
+            return
 
-    regime_info = compute_regime(spy_data)
-    r.set(Keys.REGIME, json.dumps(regime_info))
-    print(f"[Screener] Regime: {regime_info['regime']} (ADX={regime_info['adx']}, "
-          f"+DI={regime_info['plus_di']}, -DI={regime_info['minus_di']})")
+        regime_info = compute_regime(spy_data)
+        r.set(Keys.REGIME, json.dumps(regime_info))
+        print(f"[Screener] Regime: {regime_info['regime']} (ADX={regime_info['adx']}, "
+              f"+DI={regime_info['plus_di']}, -DI={regime_info['minus_di']})")
 
     watchlist = []
     heatmap_instruments = {}
@@ -264,15 +295,31 @@ def run_scan():
 
     priority_order = {"strong_signal": 0, "signal": 1, "watch": 2}
     watchlist.sort(key=lambda x: (priority_order.get(x["priority"], 99), x["tier"]))
+    scanned_watchlist = watchlist
+
+    if crypto_only:
+        try:
+            current_watchlist = json.loads(r.get(Keys.WATCHLIST) or "[]")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            current_watchlist = []
+        equity_rows = [
+            row for row in current_watchlist
+            if "/" not in row.get("symbol", "")
+        ]
+        watchlist = equity_rows + watchlist
 
     r.set(Keys.WATCHLIST, json.dumps(watchlist))
-    r.set(Keys.HEATMAP, json.dumps({"dates": heatmap_dates or [], "instruments": heatmap_instruments}))
+    if not crypto_only:
+        r.set(Keys.HEATMAP, json.dumps({
+            "dates": heatmap_dates or [],
+            "instruments": heatmap_instruments,
+        }))
 
-    signals = [w for w in watchlist if w["priority"] in ("signal", "strong_signal")]
-    watches = [w for w in watchlist if w["priority"] == "watch"]
+    signals = [w for w in scanned_watchlist if w["priority"] in ("signal", "strong_signal")]
+    watches = [w for w in scanned_watchlist if w["priority"] == "watch"]
 
     print(f"[Screener] Watchlist: {len(signals)} signals, {len(watches)} watches")
-    for w in watchlist:
+    for w in scanned_watchlist:
         emoji = "🔴" if w["priority"] == "strong_signal" else "🟡" if w["priority"] == "signal" else "⚪"
         print(f"  {emoji} {w['symbol']:<10} RSI-2={w['rsi2']:>6.2f}  "
               f"Close={w['close']:>10.2f}  SMA200={w['sma200']:>10.2f}  "
@@ -282,9 +329,9 @@ def run_scan():
     adx_val = regime_info["adx"]
     regime_emoji = {"RANGING": "➡️", "UPTREND": "📈", "DOWNTREND": "📉"}.get(regime, "❓")
 
-    if watchlist:
+    if scanned_watchlist:
         watchlist_lines = []
-        for w in watchlist:
+        for w in scanned_watchlist:
             icon = "🔴" if w["priority"] == "strong_signal" else "🟡" if w["priority"] == "signal" else "⚪"
             watchlist_lines.append(
                 f"{icon} <b>{w['symbol']}</b> RSI-2={w['rsi2']:.1f}  "
@@ -308,7 +355,7 @@ def run_scan():
     return watchlist
 
 
-def daemon_loop():  # pragma: no cover
+def daemon_loop(asset_class="all"):  # pragma: no cover
     """Run scans on schedule."""
     print("[Screener] Starting daemon mode...")
     while True:
@@ -321,7 +368,7 @@ def daemon_loop():  # pragma: no cover
         if minute < 5:  # run in the first 5 minutes of each 4-hour block
             if hour % 4 == 0:
                 try:
-                    run_scan()
+                    run_scan(asset_class=asset_class)
                 except Exception as e:
                     print(f"[Screener] Scan error: {e}")
                     from notify import critical_alert
@@ -333,12 +380,16 @@ def daemon_loop():  # pragma: no cover
 def main():  # pragma: no cover
     parser = argparse.ArgumentParser(description="Screener Agent")
     parser.add_argument("--daemon", action="store_true", help="Run continuously")
+    parser.add_argument(
+        "--asset-class", choices=("all", "crypto"), default="all",
+        help="Limit the scan to crypto while preserving equity watchlist state",
+    )
     args = parser.parse_args()
 
     if args.daemon:
-        daemon_loop()
+        daemon_loop(asset_class=args.asset_class)
     else:
-        run_scan()
+        run_scan(asset_class=args.asset_class)
 
 
 if __name__ == "__main__":  # pragma: no cover
