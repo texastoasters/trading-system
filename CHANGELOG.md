@@ -8,6 +8,21 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.38.0] - 2026-11-15
+
+### Added
+- **Broker-isolated AI decision lab:** timestamped evidence/portfolio validation, bounded research/CIO/critic roles, complete target portfolios, deterministic long-only/no-debt previews and explicit abstention/failure records. Every result is non-executable; no existing agent, Redis, order, service, scheduler or deployment integration.
+- **Existing-account Nous adapter:** exact authenticated catalog checks, fresh entitlement checks, bounded requests without automatic retries/fallback or billing-setting writes. Usage-window plans require Keep-going off; legacy credit-grant plans require a conservative subscription-credit preflight (not an atomic reservation).
+- **Reproducible run records:** input/prompt/model receipts and SHA-256 artifact manifests, offline integrity verification and deterministic replay where valid role responses are available. Historical diagnostics remain labelled non-prospective.
+- **Managed-runtime launcher:** uses Hermes' actual dependency closure rather than assuming an obsolete virtualenv works. Offline validation/replay need only Python's standard library.
+
+### Safety and verification
+- Added failure-injection, expiry, citation, allocation/rounding, duplicate-run and tampering regressions. Position targets round down and retain cash residuals rather than creating borrowing through cent rounding.
+- Actual GPT-6.1-Sol three-role inference and deterministic replay exercised against preserved, dated paper-account evidence. This verifies functionality, not profitable performance or future-blind evaluation.
+- Existing trading containment remains untouched. No orders submitted, account reset, new subscription, billing change, production restart or merge performed by this feature.
+
+---
+
 ## [0.37.1] - 2026-09-12
 
 ### Fixed

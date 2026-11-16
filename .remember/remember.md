@@ -1,20 +1,22 @@
-# Session State (2026-09-12)
+# Session State — AI Decision Lab (2026-11-15)
 
-## In flight
+## Current feature branch
 
-- **fix/p0-safety-invariants (v0.37.1)** → branch `fix/p0-safety-invariants`
-  - Fix TSMOM exit routing: preserve stop-losses, use `TSMOM_MAX_HOLD_DAYS`, and block RSI-2/prior-high mean-reversion exits.
-  - Preserve cumulative high-water drawdown across daily reset; initialize missing peak state only.
-  - Move defensive/critical temporary Tier 2/3 gates to `trading:disabled_tiers`; enforce at Watcher, TSMOM, and PM final approval boundaries without mutating permanent exclusions.
-  - Regression suite: 1120 passed. Independent GPT-5.6-Sol review passed. No deployment or Redis change occurred.
+`feat/ai-decision-lab`, v0.38.0, based on `9d695cb` (merged PR228). Broker-isolated research/shadow capability; not a replacement trading deployment. See `docs/AI_DECISION_LAB.md` for the standalone input/CLI/receipt/replay contract.
 
-## Openboog ops (not this PR)
+- Bounded actual AI research → CIO portfolio targets/cash → critic; deterministic validity checks and non-executable monetary preview.
+- Existing Nous OAuth adapter with fresh allowance/catalog checks; no new billing/provider configuration. Managed runtime launcher avoids obsolete Hermes venv dependencies.
+- Preserved actual dated paper evidence exercised with GPT-6.1-Sol through all3 roles and deterministic offline replay. This is historical diagnostics, not profit evidence or a current broker snapshot.
+- Parent review added strict no-overallocation and cent-rounding regressions; residuals retained as cash.
+- Full Python tests, independent review, coverage and remote CI receipts are recorded in the PR. Do not carry a historical pass count forward without rerunning.
 
-- Open P0: `scripts/verify_alpaca.py` can submit a market order and overwrite/delete the production watchlist; do not run it on openboog until safely redesigned.
-- Open controls: decide live 5% risk / 20-position overrides, allocation enforcement, PDT semantics, and missing schedule policy before profitability optimization.
+## Operational constraints
+
+- The old openboog trading system has an explicit persistent service/cron/dashboard hold. Do not remove it, restart the bot, reset the account, alter broker orders or deploy this feature by SSH.
+- Full AI-first trader is not delivered by this lab: continuous data detectors, isolated experiment-account truth/execution lifecycle, independent exit/monitor/notification operations and prospective performance evaluation remain later slices.
+- PR229 (`fix/task4-integration`) is separate pre-existing work; preserve it. The original local checkout's dirty feature wishlist/untracked docs were not incorporated here.
+- Prior audit found negative paper cash, account/ledger divergence and final-fill/crypto identity/protection defects. Disposable paper losses are experiment data, not a reason to spend effort rescuing fictional capital or erase evidence.
 
 ## Process reminders
 
-- Bug fixes via PR + CI/CD only; never edit/deploy on the server directly. SSH is read-only for diagnosis. Ops restore / crash-loop stop / wipe / systemd env are ops, not feature deploys.
-- TDD: failing test first. Keep Python + Elixir at 100% coverage; no coveralls-ignore shortcuts.
-- Roadmap board (Project #1): pick top Todo by priority, move to In Progress before starting.
+Changes via PR review and CI/CD; never push feature code directly to openboog. No live-money authority, unapproved subscriptions/top-ups, or global Hermes configuration changes. Rule1 stays long-only/no borrowing/no debt. Use actual tool output, preserve failures and keep tests at public seams. **Keep Python + Elixir coverage at100%, with no coverage exclusions/ignore shortcuts.** Existing uncovered legacy lines must be reported explicitly, not concealed or used to weaken that standing standard.
