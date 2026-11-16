@@ -19,4 +19,4 @@
 
 ## Process reminders
 
-Changes via PR review and CI/CD; never push feature code directly to openboog. No live-money authority, unapproved subscriptions/top-ups, or global Hermes configuration changes. Rule1 stays long-only/no borrowing/no debt. Use actual tool output, preserve failures, keep tests at public seams, and report coverage gaps rather than hiding them.
+Changes via PR review and CI/CD; never push feature code directly to openboog. No live-money authority, unapproved subscriptions/top-ups, or global Hermes configuration changes. Rule1 stays long-only/no borrowing/no debt. Use actual tool output, preserve failures and keep tests at public seams. **Keep Python + Elixir coverage at100%, with no coverage exclusions/ignore shortcuts.** Existing uncovered legacy lines must be reported explicitly, not concealed or used to weaken that standing standard.

@@ -7,7 +7,7 @@ import pytest
 from decision_lab import replay_run, run_lab
 from decision_lab.preview import build_preview
 from test_ai_decision_lab import NOW, FixtureProvider, bundle, responses
-from test_decision_lab_failure_cases import completed_run
+from test_decision_lab_failure_cases import completed_run, rehash
 
 
 def test_clock_objects_and_invalid_clock_do_not_orphan_run_reservations(tmp_path):
@@ -41,14 +41,22 @@ def test_accepted_record_cannot_omit_its_cio_artifact(tmp_path):
         replay_run(directory)
 
 
-def test_post_inference_freshness_block_has_honest_integrity_only_replay(tmp_path):
+def test_post_inference_freshness_block_has_deterministic_no_trade_replay(tmp_path):
     late = (datetime.fromisoformat(NOW) + timedelta(minutes=6)).isoformat()
     clocks = iter([NOW, NOW, NOW, NOW, late])
     result = run_lab(bundle("late-after-critic"), FixtureProvider(), tmp_path, now=lambda: next(clocks))
     assert result["status"] == "blocked"
     assert result["reason"] == "stale_snapshot"
     assert result["cio"]["action"] == "rebalance"
-    assert replay_run(result["run_dir"])["verification_kind"] == "integrity_only"
+    assert replay_run(result["run_dir"])["verification_kind"] == "deterministic_replay"
+    directory = tmp_path / "late-after-critic"
+    decision_file = directory / "decision.json"
+    decision = json.loads(decision_file.read_text())
+    decision["reason"] = "expired_bundle"
+    decision_file.write_text(json.dumps(decision))
+    rehash(directory, "decision.json")
+    with pytest.raises(ValueError, match="freshness decision mismatch"):
+        replay_run(directory)
 
 
 def test_hold_rejects_wrong_cash_even_with_matching_position_notionals(tmp_path):
@@ -92,3 +100,14 @@ def test_concurrent_foreign_run_directory_is_never_overwritten(tmp_path):
     assert (final / "owner.txt").read_text() == "foreign-owner"
     assert not (final / "decision.json").exists()
     assert len(provider.calls) == 3
+
+
+def test_expiring_cited_evidence_is_a_durable_failure_not_an_orphan(tmp_path):
+    value = bundle("citation-expired-during-critic")
+    value["evidence"][0]["expires_at"] = (datetime.fromisoformat(NOW) + timedelta(minutes=1)).isoformat()
+    late = (datetime.fromisoformat(NOW) + timedelta(minutes=2)).isoformat()
+    clocks = iter([NOW, NOW, NOW, NOW, late])
+    result = run_lab(value, FixtureProvider(), tmp_path, now=lambda: next(clocks))
+    assert result["status"] == "failed"
+    assert result["failure_type"] == "response_validation"
+    assert replay_run(result["run_dir"])["verified"] is True

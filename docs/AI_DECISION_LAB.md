@@ -66,7 +66,7 @@ Receipts retain available request ID/model/token counts/latency. Unknown actual 
 
 ## Persistence/replay
 
-Runs atomically reserve `OUTPUT/RUN_ID` and refuse overwrites. Saved files include normalized input, role prompts/responses/receipts, `decision.json`, and SHA256 manifest with input/prompt/code/artifact fingerprints. Invalid input has a minimal sanitized failure record rather than unsafe raw content. Malformed model output retains allowlisted receipts and at most16,000 characters of response text for diagnosis.
+Runs atomically reserve `OUTPUT/RUN_ID` and refuse overwrites. Saved files include normalized input, role prompts/responses/receipts, `decision.json`, and SHA256 manifest with input/prompt/code/artifact fingerprints. Invalid input has a minimal sanitized failure record rather than unsafe raw content. Model records retain only the public role-contract fields (including allowlisted target fields); unexpected/private-reasoning fields are excluded before any write. Malformed model output is represented by a content fingerprint/size and safe receipt, not raw text.
 
 Replay verifies safe flat artifact names, no symlinked run/artifacts, hashes and exact artifact set, input hash/schema and non-executable invariant. Where valid saved role responses exist, it revalidates them and recomputes the policy decision/preview. Early failures/blocks explicitly report `verification_kind: integrity_only`. Hashes are corruption/change checks, not a cryptographic signature against an attacker rewriting an entire run. Persistence failure must never lead to inference/order submission without a record.
 

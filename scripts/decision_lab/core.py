@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -20,7 +21,30 @@ from .validation import (
 
 PROMPT_VERSION = "decision-lab-v2"
 MAX_RESPONSE_BYTES = 500_000
-MAX_INVALID_RESPONSE_CHARS = 16_000
+
+# Only categorical codes raised by our provider adapter may cross the public
+# seam.  Arbitrary exception attributes and provider bodies are never trusted.
+SAFE_PROVIDER_ERROR_CODES = {
+    "access_denied",
+    "authentication_failed",
+    "incomplete_completion",
+    "inference_unavailable",
+    "invalid_completion",
+    "invalid_payload",
+    "invalid_role",
+    "model_not_available",
+    "overage_control_unverified",
+    "paid_allowance_unavailable",
+    "payload_too_large",
+    "quota_exhausted",
+    "rate_limited",
+    "subscription_credits_insufficient",
+    "unknown_allowance_or_price",
+    "unknown_model_price",
+    "unknown_usage_window",
+    "unsupported_runtime",
+    "unverified_account",
+}
 
 ROLE_CONTRACTS = {
     "research": {
@@ -123,7 +147,9 @@ def _safe_receipt(receipt: Any) -> dict:
     if isinstance(raw_usage, dict):
         for key in ("input_tokens", "output_tokens", "total_tokens", "cost"):
             value = raw_usage.get(key)
-            if isinstance(value, (int, float)) and not isinstance(value, bool):
+            if (isinstance(value, int) and not isinstance(value, bool)) or (
+                isinstance(value, float) and math.isfinite(value)
+            ):
                 usage[key] = value
             elif isinstance(value, str) and len(value) <= 100:
                 usage[key] = value
@@ -133,13 +159,31 @@ def _safe_receipt(receipt: Any) -> dict:
     return {
         "model": model[:200] if isinstance(model, str) else "unknown",
         "usage": usage,
-        "latency_ms": latency if isinstance(latency, (int, float)) and not isinstance(latency, bool) else None,
+        "latency_ms": latency if (
+            (isinstance(latency, int) and not isinstance(latency, bool))
+            or (isinstance(latency, float) and math.isfinite(latency))
+        ) else None,
         "request_id": request_id[:200] if isinstance(request_id, str) else None,
     }
 
 
 def _provider_call(provider, role: str, payload: dict) -> dict:
-    raw = provider.complete(role, payload)
+    try:
+        raw = provider.complete(role, payload)
+    except Exception as exc:
+        failure = {
+            "valid": False,
+            "failure_type": "provider_error",
+            "receipt": _safe_receipt(None),
+        }
+        safe_code = getattr(exc, "code", None)
+        if (
+            exc.__class__.__module__ == "decision_lab.providers"
+            and exc.__class__.__name__ == "InferenceAccessError"
+            and safe_code in SAFE_PROVIDER_ERROR_CODES
+        ):
+            failure["provider_error_code"] = safe_code
+        return failure
     receipt = _safe_receipt(raw)
     if not isinstance(raw, dict):
         return {"valid": False, "failure_type": "invalid_response", "receipt": receipt}
@@ -148,34 +192,85 @@ def _provider_call(provider, role: str, payload: dict) -> dict:
         return {"valid": False, "failure_type": "invalid_response", "receipt": receipt}
     text = raw["text"]
     encoded_size = len(text.encode("utf-8"))
-    artifact = {
-        "receipt": receipt,
-        "raw_text": text[:MAX_INVALID_RESPONSE_CHARS],
-        "raw_truncated": len(text) > MAX_INVALID_RESPONSE_CHARS,
+    response_receipt = {
+        "response_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        "response_bytes": encoded_size,
     }
     if encoded_size > MAX_RESPONSE_BYTES:
-        return {"valid": False, "failure_type": "invalid_response", "receipt": receipt, "artifact": artifact}
+        return {"valid": False, "failure_type": "invalid_response", "receipt": receipt,
+                **response_receipt}
     try:
         parsed = json.loads(text, parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
     except (json.JSONDecodeError, ValueError):
-        return {"valid": False, "failure_type": "invalid_json", "receipt": receipt, "artifact": artifact}
+        return {"valid": False, "failure_type": "invalid_json", "receipt": receipt,
+                **response_receipt}
     return {
         "valid": True,
         "response": parsed,
         "receipt": receipt,
-        "artifact": {"valid_json": True, "response": parsed, "receipt": receipt},
+        **response_receipt,
     }
 
 
 def _response_artifact(outcome: dict) -> dict:
-    artifact = outcome.get("artifact")
-    if artifact is not None:
-        return artifact
-    return {
+    artifact = {
         "valid_json": False,
         "receipt": outcome["receipt"],
         "failure_type": outcome.get("failure_type", "invalid_response"),
     }
+    for key in ("response_sha256", "response_bytes", "provider_error_code"):
+        if key in outcome:
+            artifact[key] = outcome[key]
+    return artifact
+
+
+def _project_response(role: str, value: Any) -> Any:
+    """Apply the documented allowlist before model data can be persisted."""
+    if not isinstance(value, dict):
+        return value
+    fields = {
+        "research": ("summary", "candidate_symbols", "evidence_ids", "counterevidence", "missing_data"),
+        "cio": ("action", "targets", "cash_weight", "rationale", "evidence_ids", "counterevidence", "expires_at"),
+        "critic": ("verdict", "issues", "evidence_ids"),
+    }[role]
+    projected = {key: value[key] for key in fields if key in value}
+    if role == "cio" and isinstance(projected.get("targets"), list):
+        target_fields = ("symbol", "weight", "thesis", "evidence_ids", "falsifier")
+        projected["targets"] = [
+            {key: target[key] for key in target_fields if key in target}
+            if isinstance(target, dict) else target
+            for target in projected["targets"]
+        ]
+    return projected
+
+
+def _invoke_role(
+    directory: Path,
+    sequence: int,
+    role: str,
+    payload: dict,
+    provider,
+    validate: Callable[[Any], dict],
+) -> dict:
+    """Persist one prompt and only a validated, allowlisted model response."""
+    write_json(directory / f"prompt-{sequence:02d}-{role}.json", payload)
+    outcome = _provider_call(provider, role, payload)
+    if outcome["valid"]:
+        projected = _project_response(role, outcome["response"])
+        try:
+            response = validate(projected)
+        except (ResponseValidationError, BundleValidationError, TypeError):
+            outcome = {**outcome, "valid": False, "failure_type": "response_validation"}
+        except Exception:
+            outcome = {**outcome, "valid": False, "failure_type": "internal_error"}
+        else:
+            outcome["response"] = response
+    artifact = (
+        {"valid_json": True, "response": outcome["response"], "receipt": outcome["receipt"]}
+        if outcome["valid"] else _response_artifact(outcome)
+    )
+    write_json(directory / f"response-{sequence:02d}-{role}.json", artifact)
+    return outcome
 
 
 def _current_evidence_ids(bundle: dict, reference: datetime) -> set[str]:
@@ -354,19 +449,21 @@ def run_lab(
         if research:
             sequence += 1
             payload = _prompt("research", validated, prior)
-            write_json(temporary / f"prompt-{sequence:02d}-research.json", payload)
-            outcome = _provider_call(provider, "research", payload)
-            receipts.append({"role": "research", **outcome["receipt"]})
-            write_json(temporary / f"response-{sequence:02d}-research.json", _response_artifact(outcome))
-            if not outcome["valid"]:
-                return _finish(temporary, final, validated, {
-                    **base, "status": "failed", "failure_type": outcome["failure_type"]
-                }, receipts)
-            prior["research"] = validate_research(
-                outcome["response"],
-                {item["symbol"] for item in validated["universe"]},
-                {item["evidence_id"] for item in validated["evidence"]},
+            outcome = _invoke_role(
+                temporary, sequence, "research", payload, provider,
+                lambda response: validate_research(
+                    response,
+                    {item["symbol"] for item in validated["universe"]},
+                    {item["evidence_id"] for item in validated["evidence"]},
+                ),
             )
+            receipts.append({"role": "research", **outcome["receipt"]})
+            if not outcome["valid"]:
+                failure = {**base, "status": "failed", "failure_type": outcome["failure_type"]}
+                if "provider_error_code" in outcome:
+                    failure["provider_error_code"] = outcome["provider_error_code"]
+                return _finish(temporary, final, validated, failure, receipts)
+            prior["research"] = outcome["response"]
             clock = _clock(now)
             reason = _freshness_reason(validated, clock)
             if reason:
@@ -376,44 +473,48 @@ def run_lab(
 
         sequence += 1
         payload = _prompt("cio", validated, prior)
-        write_json(temporary / f"prompt-{sequence:02d}-cio.json", payload)
-        outcome = _provider_call(provider, "cio", payload)
+        cio_reference = _decision_reference(validated, clock)
+        outcome = _invoke_role(
+            temporary, sequence, "cio", payload, provider,
+            lambda response: validate_cio(
+                response,
+                validated,
+                now=cio_reference,
+                current_evidence_ids=_current_evidence_ids(validated, cio_reference),
+            ),
+        )
         receipts.append({"role": "cio", **outcome["receipt"]})
-        write_json(temporary / f"response-{sequence:02d}-cio.json", _response_artifact(outcome))
         if not outcome["valid"]:
-            return _finish(temporary, final, validated, {
-                **base, "status": "failed", "failure_type": outcome["failure_type"]
-            }, receipts)
+            failure = {**base, "status": "failed", "failure_type": outcome["failure_type"]}
+            if "provider_error_code" in outcome:
+                failure["provider_error_code"] = outcome["provider_error_code"]
+            return _finish(temporary, final, validated, failure, receipts)
         clock = _clock(now)
         reason = _freshness_reason(validated, clock)
         if reason:
             return _finish(temporary, final, validated, {
                 **_base(validated, recorded_at, clock.isoformat()), "status": "blocked", "reason": reason
             }, receipts)
-        reference = _decision_reference(validated, clock)
-        cio = validate_cio(
-            outcome["response"],
-            validated,
-            now=reference,
-            current_evidence_ids=_current_evidence_ids(validated, reference),
-        )
+        cio = outcome["response"]
         prior["cio"] = cio
 
         critic_result = None
         if critic:
             sequence += 1
             payload = _prompt("critic", validated, prior)
-            write_json(temporary / f"prompt-{sequence:02d}-critic.json", payload)
-            outcome = _provider_call(provider, "critic", payload)
-            receipts.append({"role": "critic", **outcome["receipt"]})
-            write_json(temporary / f"response-{sequence:02d}-critic.json", _response_artifact(outcome))
-            if not outcome["valid"]:
-                return _finish(temporary, final, validated, {
-                    **base, "status": "failed", "failure_type": outcome["failure_type"]
-                }, receipts)
-            critic_result = validate_critic(
-                outcome["response"], {item["evidence_id"] for item in validated["evidence"]}
+            outcome = _invoke_role(
+                temporary, sequence, "critic", payload, provider,
+                lambda response: validate_critic(
+                    response, {item["evidence_id"] for item in validated["evidence"]}
+                ),
             )
+            receipts.append({"role": "critic", **outcome["receipt"]})
+            if not outcome["valid"]:
+                failure = {**base, "status": "failed", "failure_type": outcome["failure_type"]}
+                if "provider_error_code" in outcome:
+                    failure["provider_error_code"] = outcome["provider_error_code"]
+                return _finish(temporary, final, validated, failure, receipts)
+            critic_result = outcome["response"]
 
         clock = _clock(now)
         reason = _freshness_reason(validated, clock, cio)
@@ -424,22 +525,23 @@ def run_lab(
                 "critic": critic_result,
             }, receipts)
         reference = _decision_reference(validated, clock)
-        cio = validate_cio(
-            cio,
-            validated,
-            now=reference,
-            current_evidence_ids=_current_evidence_ids(validated, reference),
-        )
-        decision = _evaluate_decision(validated, cio, critic_result, reference, evaluation_base)
+        try:
+            cio = validate_cio(
+                cio,
+                validated,
+                now=reference,
+                current_evidence_ids=_current_evidence_ids(validated, reference),
+            )
+            decision = _evaluate_decision(validated, cio, critic_result, reference, evaluation_base)
+        except (ResponseValidationError, BundleValidationError):
+            decision = {**evaluation_base, "status": "failed", "failure_type": "response_validation"}
+        except Exception:
+            decision = {**evaluation_base, "status": "failed", "failure_type": "internal_error"}
         return _finish(temporary, final, validated, decision, receipts)
-    except ResponseValidationError:
-        return _finish(temporary, final, validated, {
-            **base, "status": "failed", "failure_type": "response_validation"
-        }, receipts)
     except Exception:
-        return _finish(temporary, final, validated, {
-            **base, "status": "failed", "failure_type": "provider_error"
-        }, receipts)
+        # Persistence/finalization failures must escape once; retrying _finish
+        # could mislabel the fault and falsely imply a durable record exists.
+        raise
 
 
 def _safe_manifest_files(directory: Path, files: Any) -> dict[str, str]:
@@ -488,8 +590,16 @@ def _deterministic_replay(directory: Path, bundle: dict, decision: dict) -> bool
             raise ValueError("run integrity failure: accepted run lacks valid CIO response")
         return False
     if "preview" not in decision:
-        # A mid-inference freshness block has no completed policy preview to replay.
-        return False
+        # Reproduce a completed no-trade freshness transition, not a target preview.
+        evaluation = parse_time(decision["evaluation_at"], "decision.evaluation_at")
+        reason = _freshness_reason(bundle, evaluation, cio_response)
+        critic_response = _response_by_role(directory, "critic")
+        if (decision.get("status") != "blocked" or reason is None
+                or reason != decision.get("reason")
+                or cio_response != decision.get("cio")
+                or critic_response != decision.get("critic")):
+            raise ValueError("run integrity failure: freshness decision mismatch")
+        return True
     evaluation = parse_time(decision["evaluation_at"], "decision.evaluation_at")
     reference = _decision_reference(bundle, evaluation)
     evidence_ids = {item["evidence_id"] for item in bundle["evidence"]}

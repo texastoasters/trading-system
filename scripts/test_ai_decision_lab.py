@@ -221,7 +221,10 @@ def test_bad_json_nonfinite_and_provider_failure_are_durable_and_sanitized(tmp_p
         next((tmp_path / "bad-json").glob("response-*-research.json")).read_text()
     )
     assert bad_artifact["receipt"]["model"] == "fixture-model-not-real-inference"
-    assert "raw_text" in bad_artifact
+    # Malformed output keeps an auditable receipt/hash, never its unvalidated text.
+    assert "raw_text" not in bad_artifact
+    assert bad_artifact["response_bytes"] > 0
+    assert len(bad_artifact["response_sha256"]) == 64
 
     class SecretQuotaError(Exception):
         pass
