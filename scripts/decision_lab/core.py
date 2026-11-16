@@ -291,7 +291,7 @@ def _invalid_input_run(
     failure = {
         "schema_version": 1,
         "run_id": run_id,
-        "mode": bundle.get("mode") if isinstance(bundle, dict) else None,
+        "mode": bundle.get("mode") if isinstance(bundle, dict) and isinstance(bundle.get("mode"), str) and bundle["mode"] in {"shadow", "historical_diagnostic"} else None,
         "prospective": False,
         "recorded_at": recorded_at,
         "evaluation_at": recorded_at,

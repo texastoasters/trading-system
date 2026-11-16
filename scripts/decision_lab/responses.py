@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN
 from typing import Any
 
+from .preview import CENT, build_preview
 from .validation import ResponseValidationError, WEIGHT_TOLERANCE, parse_time
 
 
@@ -113,18 +114,21 @@ def validate_cio(
     current_values = {position["symbol"]: Decimal(position["market_value"])
                       for position in bundle["portfolio"]["positions"]}
     equity = Decimal(bundle["portfolio"]["equity"])
-    current_weights = {symbol: current_values.get(symbol, Decimal("0")) / equity for symbol in symbols}
     current_cash_weight = Decimal(bundle["portfolio"]["cash"]) / equity
+    proposed_values = {
+        item["symbol"]: Decimal(item["target_value"])
+        for item in build_preview(bundle, value)["targets"]
+    }
     if value["action"] == "hold":
-        if any(abs(weights[symbol] - current_weights[symbol]) > WEIGHT_TOLERANCE for symbol in symbols):
+        if any(proposed_values[symbol] != current_values.get(symbol, Decimal("0")).quantize(CENT, rounding=ROUND_DOWN) for symbol in symbols):
             raise ResponseValidationError("hold targets must match current holdings")
-        if abs(_weight(value["cash_weight"], "cio.cash_weight") - current_cash_weight) > WEIGHT_TOLERANCE:
+        if abs(_weight(value["cash_weight"], "cio.cash_weight") * equity - Decimal(bundle["portfolio"]["cash"])) > CENT:
             raise ResponseValidationError("hold cash weight must match current cash")
         if current_cash_weight < 0:
             raise ResponseValidationError("negative-cash portfolio cannot claim invariant-valid hold")
     if value["action"] == "rebalance":
-        for symbol, weight in weights.items():
-            if weight > current_weights[symbol] + WEIGHT_TOLERANCE:
+        for symbol in weights:
+            if proposed_values[symbol] > current_values.get(symbol, Decimal("0")):
                 citations = citations_by_symbol[symbol]
                 if not citations or any(citation not in current_evidence_ids for citation in citations):
                     raise ResponseValidationError("added risk requires applicable nonexpired evidence")

@@ -49,3 +49,37 @@ def test_cent_rounding_cannot_create_debt(tmp_path):
     preview = result["preview"]
     assert sum(Decimal(t["target_value"]) for t in preview["targets"]) + Decimal(preview["target_cash"]) == Decimal("1.00")
     assert Decimal(preview["target_cash"]) >= 0
+
+
+def test_malformed_container_types_are_durable_input_failures(tmp_path):
+    for field, bad in (("mode", []), ("universe", {"wrong": "shape"}), ("evidence", True)):
+        value = bundle("bad-container-" + field)
+        value[field] = bad
+        provider = FixtureProvider()
+        result = run_lab(value, provider, tmp_path)
+        assert result["status"] == "failed"
+        assert result["failure_type"] == "input_validation"
+        assert provider.calls == []
+        assert (tmp_path / value["run_id"] / "decision.json").is_file()
+
+
+def test_tiny_increases_still_require_applicable_evidence(tmp_path):
+    from test_ai_decision_lab import NOW, responses
+    items = responses()
+    items[1]["targets"][1]["weight"] = "0.00005"
+    items[1]["targets"][1]["evidence_ids"] = []
+    items[1]["targets"][0]["weight"] = "0.50"
+    items[1]["cash_weight"] = "0.49995"
+    result = run_lab(bundle("tiny-uncited-risk"), FixtureProvider(items), tmp_path, now=NOW)
+    assert result["status"] == "failed"
+    assert result["failure_type"] == "response_validation"
+
+
+def test_hold_cannot_hide_small_positive_reallocation(tmp_path):
+    from test_ai_decision_lab import NOW, responses
+    items = responses(action="hold")
+    items[1]["targets"][0]["weight"] = "0.50005"
+    items[1]["cash_weight"] = "0.49995"
+    result = run_lab(bundle("not-actually-hold"), FixtureProvider(items), tmp_path, now=NOW)
+    assert result["status"] == "failed"
+    assert result["failure_type"] == "response_validation"

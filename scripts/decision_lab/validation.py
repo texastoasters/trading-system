@@ -60,7 +60,7 @@ def _required(value: dict, fields: set[str], label: str) -> None:
         raise BundleValidationError(f"{label} missing: {', '.join(missing)}")
 
 
-def validate_bundle(bundle: dict, *, now: str | datetime | None = None) -> dict:
+def _validate_bundle(bundle: dict, *, now: str | datetime | None = None) -> dict:
     if not isinstance(bundle, dict):
         raise BundleValidationError("bundle must be an object")
     try:
@@ -200,3 +200,13 @@ def validate_bundle(bundle: dict, *, now: str | datetime | None = None) -> dict:
         if not isinstance(value, int) or isinstance(value, bool) or value < minimum:
             raise BundleValidationError(f"{field} must be an integer >= {minimum}")
     return bundle
+
+
+def validate_bundle(bundle: dict, *, now: str | datetime | None = None) -> dict:
+    """Normalize malformed JSON shapes into the public validation failure type."""
+    try:
+        return _validate_bundle(bundle, now=now)
+    except BundleValidationError:
+        raise
+    except (TypeError, KeyError, ValueError, InvalidOperation, OverflowError):
+        raise BundleValidationError("invalid JSON field type or value") from None
