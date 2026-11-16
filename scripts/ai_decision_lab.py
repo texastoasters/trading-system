@@ -61,12 +61,7 @@ def main(argv: list[str] | None = None) -> int:
         # Deliberately lazy: offline validate/replay have no Hermes/OpenAI dependency.
         providers = importlib.import_module("decision_lab.providers")
 
-        if hasattr(providers, "create_provider"):
-            provider = getattr(providers, "create_provider")(args.model)
-        elif hasattr(providers, "NousProvider"):
-            provider = getattr(providers, "NousProvider")(args.model)
-        else:
-            raise RuntimeError("provider adapter exposes neither create_provider nor NousProvider")
+        provider = providers.create_provider(args.model)
         result = run_lab(
             _load(args.input),
             provider,

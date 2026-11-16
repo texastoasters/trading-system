@@ -120,12 +120,12 @@ def validate_cio(
         for item in build_preview(bundle, value)["targets"]
     }
     if value["action"] == "hold":
+        if current_cash_weight < 0:
+            raise ResponseValidationError("negative-cash portfolio cannot claim invariant-valid hold")
         if any(proposed_values[symbol] != current_values.get(symbol, Decimal("0")).quantize(CENT, rounding=ROUND_DOWN) for symbol in symbols):
             raise ResponseValidationError("hold targets must match current holdings")
         if abs(_weight(value["cash_weight"], "cio.cash_weight") * equity - Decimal(bundle["portfolio"]["cash"])) > CENT:
             raise ResponseValidationError("hold cash weight must match current cash")
-        if current_cash_weight < 0:
-            raise ResponseValidationError("negative-cash portfolio cannot claim invariant-valid hold")
     if value["action"] == "rebalance":
         for symbol in weights:
             if proposed_values[symbol] > current_values.get(symbol, Decimal("0")):

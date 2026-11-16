@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import shutil
+
 from pathlib import Path
 from typing import Any
 
@@ -54,7 +54,3 @@ def publish_run(temporary: Path, final: Path) -> None:
     if final.exists():
         raise FileExistsError(f"run already exists: {final.name}")
     temporary.rename(final)
-
-
-def abandon_run(temporary: Path) -> None:
-    shutil.rmtree(temporary, ignore_errors=True)

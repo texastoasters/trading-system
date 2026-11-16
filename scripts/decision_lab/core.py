@@ -329,9 +329,9 @@ def run_lab(
     run_id = bundle.get("run_id") if isinstance(bundle, dict) else None
     if not isinstance(run_id, str) or not RUN_ID_RE.fullmatch(run_id) or run_id in {".", ".."}:
         raise BundleValidationError("run_id must be a portable identifier without path traversal")
-    temporary, final = reserve_run(output_dir, run_id)
     recorded_clock = _clock(now)
     recorded_at = recorded_clock.isoformat()
+    temporary, final = reserve_run(output_dir, run_id)
     try:
         validated = validate_bundle(bundle, now=recorded_clock)
     except BundleValidationError:
@@ -477,8 +477,18 @@ def _response_by_role(directory: Path, role: str) -> dict | None:
 
 
 def _deterministic_replay(directory: Path, bundle: dict, decision: dict) -> bool:
+    accepted = decision.get("status") == "accepted"
+    if accepted:
+        for path in directory.glob("response-??-*.json"):
+            if json.loads(path.read_text()).get("valid_json") is not True:
+                raise ValueError("run integrity failure: accepted run has invalid role artifact")
     cio_response = _response_by_role(directory, "cio")
     if cio_response is None or "cio" not in decision:
+        if accepted:
+            raise ValueError("run integrity failure: accepted run lacks valid CIO response")
+        return False
+    if "preview" not in decision:
+        # A mid-inference freshness block has no completed policy preview to replay.
         return False
     evaluation = parse_time(decision["evaluation_at"], "decision.evaluation_at")
     reference = _decision_reference(bundle, evaluation)

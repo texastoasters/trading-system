@@ -58,3 +58,21 @@ def test_refuses_unreconciled_equity():
     source["account"]["equity"] = "120"
     with pytest.raises(ValueError):
         build_incident_bundle(source, "incident-test", {"BTCUSD": "crypto"})
+
+
+@pytest.mark.parametrize("change", [
+    lambda d: d["account"].update(cash=50),
+    lambda d: d["account"].update(cash="not-money"),
+    lambda d: d["account"].update(cash="Infinity"),
+    lambda d: d.update(observed_at="2026-11-16T00:44:08"),
+    lambda d: d["account"].update(equity="0"),
+    lambda d: d["positions"][0].update(side="short"),
+    lambda d: d["positions"][0].update(qty="-2"),
+    lambda d: d.update(positions=[]),
+    lambda d: d["positions"].append(deepcopy(d["positions"][0])),
+])
+def test_converter_rejects_invalid_captured_account_values(change):
+    data = observation()
+    change(data)
+    with pytest.raises(ValueError):
+        build_incident_bundle(data, "bad-capture-fixture", {"BTCUSD": "crypto"})
