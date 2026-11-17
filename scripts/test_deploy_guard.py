@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import deploy_guard
 import pytest
+import yaml
 
 
 def test_hold_blocks_updater(tmp_path, capsys):
@@ -19,18 +20,40 @@ def test_hold_blocks_updater(tmp_path, capsys):
 
 
 def test_workflow_streams_guard_before_legacy_updater():
-    workflow = (Path(__file__).parents[1] / ".github/workflows/deploy.yml").read_text()
-    assert "'python3 -' < scripts/deploy_guard.py" in workflow
-    assert "'/home/linuxuser/.local/bin/update-trading-system'" not in workflow
-    assert "persist-credentials: false" in workflow
-    assert "ref: ${{ github.event.workflow_run.head_sha }}" in workflow
-    for required in (
-        "github.event.workflow_run.conclusion == 'success'",
-        "github.event.workflow_run.event == 'push'",
-        "github.event.workflow_run.head_branch == 'main'",
-        "github.event.workflow_run.head_repository.full_name == github.repository",
-    ):
-        assert required in workflow
+    workflow = yaml.safe_load(
+        (Path(__file__).parents[1] / ".github/workflows/deploy.yml").read_text()
+    )
+    tag = workflow["jobs"]["tag"]
+    assert " ".join(tag["if"].split()) == (
+        "github.event.workflow_run.conclusion == 'success' && "
+        "github.event.workflow_run.event == 'push' && "
+        "github.event.workflow_run.head_branch == 'main' && "
+        "github.event.workflow_run.head_repository.full_name == github.repository"
+    )
+    assert workflow["jobs"]["deploy"] == {
+        "name": "Deploy to production",
+        "runs-on": "ubuntu-latest",
+        "needs": ["tag"],
+        "permissions": {"contents": "read"},
+        "steps": [
+            {
+                "uses": "actions/checkout@v4",
+                "with": {
+                    "ref": "${{ github.event.workflow_run.head_sha }}",
+                    "persist-credentials": False,
+                },
+            },
+            {
+                "uses": "webfactory/ssh-agent@v0.9.0",
+                "with": {"ssh-private-key": "${{ secrets.DEPLOY_SSH_KEY }}"},
+            },
+            {
+                "name": "Deploy via SSH",
+                "env": {"DEPLOY_HOST": "${{ secrets.DEPLOY_HOST }}"},
+                "run": "ssh -o StrictHostKeyChecking=no \\\n    -o ConnectTimeout=30 \\\n    linuxuser@\"$DEPLOY_HOST\" \\\n    'python3 -' < scripts/deploy_guard.py\n",
+            },
+        ],
+    }
 
 
 @pytest.mark.parametrize("kind", ["file", "directory", "dangling_link"])
@@ -69,6 +92,16 @@ def test_explicitly_clear_state_runs_real_updater_and_propagates_exit(tmp_path, 
     updater.chmod(0o700)
     assert deploy_guard.main(root, updater) == status
     assert called.read_text() == "called"
+
+
+@pytest.mark.parametrize("signal_name, expected", [("TERM", 143), ("KILL", 137)])
+def test_signal_termination_uses_conventional_shell_exit(tmp_path, signal_name, expected):
+    root = tmp_path / "containment"
+    root.mkdir()
+    updater = tmp_path / "update"
+    updater.write_text(f"#!/bin/sh\nkill -{signal_name} $$\n")
+    updater.chmod(0o700)
+    assert deploy_guard.main(root, updater) == expected
 
 
 def test_default_updater_is_current_ssh_users_helper(tmp_path, monkeypatch):

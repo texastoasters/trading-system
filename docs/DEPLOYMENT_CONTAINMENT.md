@@ -15,8 +15,9 @@ alone therefore does not contain all deployment side effects.
   a directory or dangling link, blocks. Missing/not-directory/unreadable state
   also blocks. Exit78 is a visible deployment failure, never success.
 - Only an explicitly readable directory without HOLD allows the existing SSH
-  user's `~/.local/bin/update-trading-system` to run. Its status is propagated;
-  inability to launch it fails closed. Python/SSH failure also prevents launch.
+  user's `~/.local/bin/update-trading-system` to run. Normal exit status is
+  propagated; signal termination becomes conventional shell `128 + signal`.
+  Inability to launch it fails closed. Python/SSH failure also prevents launch.
 - No marker creation/removal, service/container/cron write or broker action is
   performed by the preflight itself. Missing containment directories require an
   operator decision, not automatic creation or treating absence as approval.

@@ -27,7 +27,8 @@ def main(hold_root=HOLD_ROOT, updater=None):
     if updater is None:
         updater = Path.home() / ".local/bin/update-trading-system"
     try:
-        return subprocess.run([str(updater)], check=False).returncode
+        status = subprocess.run([str(updater)], check=False).returncode
+        return status if status >= 0 else 128 - status
     except OSError:
         print("Deployment blocked: updater unavailable.", file=sys.stderr)
         return 78

@@ -2,3 +2,4 @@ pytest
 pytest-cov
 coveralls
 numpy
+PyYAML>=6,<7
