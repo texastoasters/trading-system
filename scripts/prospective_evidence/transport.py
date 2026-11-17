@@ -441,10 +441,15 @@ def _validate_wire_result(value):
 
 
 class SshAlpacaTransport:
-    """Invoke the fixed read-only helper on the fixed ``openboog`` host."""
+    """Invoke the fixed helper and bound availability by the local SSH call.
 
-    def __init__(self, *, runner=None):
+    Public request/receipt times describe the caller-local SSH call lifetime,
+    not exact upstream HTTP dispatch, completion, or source publication.
+    """
+
+    def __init__(self, *, runner=None, clock=None):
         self._runner = runner or subprocess.run
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
 
     def fetch(self, endpoint, params):
         ordered_params = _validate_params(endpoint, params, ssh=True)
@@ -453,6 +458,7 @@ class SshAlpacaTransport:
         )
         if len(wire_input.encode("utf-8")) > MAX_STDIN_BYTES:
             _fail("invalid_params")
+        started_at = _clock_iso(self._clock)
         try:
             completed = self._runner(
                 list(_SSH_ARGV),
@@ -487,7 +493,14 @@ class SshAlpacaTransport:
                 envelope["result"]
             ):
                 _fail("ssh_source_unavailable")
-            return envelope["result"]
+            received_at = _clock_iso(self._clock)
+            if _parse_window_value(received_at) < _parse_window_value(started_at):
+                _fail("invalid_clock")
+            return {
+                **envelope["result"],
+                "request_started_at": started_at,
+                "received_at": received_at,
+            }
         if set(envelope) != {"ok", "code", "http_status"}:
             _fail("ssh_source_unavailable")
         code = envelope["code"]
