@@ -10,7 +10,7 @@ import copy
 import hashlib
 import json
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import Context, Decimal, ROUND_HALF_EVEN, localcontext
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
@@ -288,7 +288,12 @@ def _decision_arm(decision: dict[str, Any], deadline: datetime, completed: datet
                 {"symbol": target["symbol"], "weight": target["weight"]}
                 for target in cio["targets"]
             ]
-            cash_weight = cio.get("cash_weight")
+            with localcontext(Context(prec=38, rounding=ROUND_HALF_EVEN)):
+                residual = Decimal("1") - sum(
+                    (Decimal(target["weight"]) for target in targets),
+                    Decimal("0"),
+                )
+                cash_weight = format(residual, "f").rstrip("0").rstrip(".") or "0"
     if completed >= deadline:
         prior_reason = reason if isinstance(reason, str) and reason == "inputs_completed_after_deadline" else "decision_deadline_elapsed"
         status, reason, targets, cash_weight = "unavailable", prior_reason, None, None
@@ -646,7 +651,23 @@ def _offline_state(path: Path) -> dict[str, Any]:
             })
 
     checkpoints = [_value(record) for record in load_records(path, "checkpoints")]
-    tick_values = [_value(record) for record in load_records(path, "ticks")]
+    tick_records = load_records(path, "ticks")
+    tick_values = [_value(record) for record in tick_records]
+    campaign_end = _parse_time(registration["registered_at"]) + timedelta(days=90)
+    terminal_keys = {
+        "schema_version", "tick_id", "status", "completed_at", "executable", "reason",
+    }
+    campaign_expired = any(
+        set(tick) == terminal_keys
+        and _record_id(record) == tick.get("tick_id")
+        and tick.get("schema_version") == 1
+        and tick.get("status") == "terminal"
+        and tick.get("reason") == "campaign_expired"
+        and tick.get("executable") is False
+        and _parse_time(tick.get("completed_at")) >= campaign_end
+        and tick.get("tick_id") == _tick_id(_parse_time(tick.get("completed_at")))
+        for record, tick in zip(tick_records, tick_values, strict=True)
+    )
     verified_checkpoints = []
     for checkpoint in checkpoints:
         collection_dir = _artifact(checkpoint["collection_path"], path, "collections")
@@ -731,6 +752,21 @@ def _offline_state(path: Path) -> dict[str, Any]:
             }
         else:
             score = score_checkpoint(protocol, checkpoint, valid_observations)
+            if campaign_expired:
+                for horizon in score["horizons"]:
+                    if horizon["status"] == "pending":
+                        horizon.update({
+                            "status": "unavailable",
+                            "reason": "campaign_expired",
+                            "latest_status": "unavailable",
+                            "latest_reason": "campaign_expired",
+                        })
+                score["counts"] = {
+                    "scored": sum(item["status"] == "scored" for item in score["horizons"]),
+                    "pending": sum(item["status"] == "pending" for item in score["horizons"]),
+                    "unavailable": sum(item["status"] == "unavailable" for item in score["horizons"]),
+                    "economically_scorable": 0,
+                }
         verified_checkpoints.append({
             "slot_date": checkpoint["slot_date"],
             "checkpoint": copy.deepcopy(checkpoint),

@@ -139,10 +139,15 @@ class FakeExecutor:
 
 
 class Provider:
-    def __init__(self, *, model="fixture-model", failure=None):
+    def __init__(
+        self, *, model="fixture-model", failure=None,
+        target_weight="1", cash_weight="0",
+    ):
         self.calls = []
         self.model = model
         self.failure = failure
+        self.target_weight = target_weight
+        self.cash_weight = cash_weight
 
     def complete(self, role, payload):
         self.calls.append(role)
@@ -163,10 +168,10 @@ class Provider:
             "cio": {
                 "action": "rebalance",
                 "targets": [{
-                    "symbol": "SPY", "weight": "1", "thesis": "Synthetic fixture.",
+                    "symbol": "SPY", "weight": self.target_weight, "thesis": "Synthetic fixture.",
                     "evidence_ids": [evidence_id], "falsifier": "Fixture changes.",
                 }],
-                "cash_weight": "0", "rationale": "Synthetic fixture allocation.",
+                "cash_weight": self.cash_weight, "rationale": "Synthetic fixture allocation.",
                 "evidence_ids": [evidence_id], "counterevidence": [], "expires_at": expires,
             },
             "critic": {"verdict": "pass", "issues": [], "evidence_ids": [evidence_id]},
@@ -286,6 +291,106 @@ def test_campaign_expiry_is_terminal_before_any_source_call(tmp_path):
     assert receipt["status"] == "terminal"
     assert receipt["reason"] == "campaign_expired"
     assert runner.load_records(path, "observations") == []
+
+
+def test_durable_expiry_closes_only_pending_horizons_offline(tmp_path):
+    registered = NOW - timedelta(hours=1)
+    path = register_campaign(tmp_path, request("expiry-closes-pending"), clock=Clock(registered))
+    assert runner.tick(
+        path, MarketTransport(), PublicTransport(), Provider(), clock=Clock(NOW),
+    )["status"] == "completed"
+
+    observed_at = NOW + timedelta(days=1)
+
+    class FirstHorizonMarket(MarketTransport):
+        def __init__(self):
+            super().__init__()
+            day = date(2026, 1, 22)
+            self.bars.append({
+                "t": day.isoformat() + "T05:00:00Z", "o": "121", "h": "123",
+                "l": "120", "c": "122", "v": 2000,
+            })
+
+        def fetch(self, source, query):
+            result = super().fetch(source, query)
+            result["request_started_at"] = observed_at.isoformat()
+            result["received_at"] = observed_at.isoformat()
+            return result
+
+    runner.tick(
+        path, FirstHorizonMarket(), Forbidden(), Forbidden(), clock=Clock(observed_at),
+    )
+    before = runner.report_campaign(path)["checkpoints"][0]["score"]
+    assert [item["status"] for item in before["horizons"]] == ["scored", "pending"]
+    preserved = before["horizons"][0]
+
+    expired_at = registered + timedelta(days=91)
+    terminal = runner.tick(
+        path, Forbidden(), Forbidden(), Forbidden(), clock=Clock(expired_at),
+    )
+    report = runner.report_campaign(path)
+    verified = runner.verify_campaign(path)
+    score = report["checkpoints"][0]["score"]
+
+    assert terminal["status"] == "terminal"
+    assert terminal["reason"] == "campaign_expired"
+    assert score["horizons"][0] == preserved
+    assert score["horizons"][1] == {
+        "horizon": 5, "status": "unavailable", "reason": "campaign_expired",
+        "first_observed": None, "latest_observed": None,
+        "latest_status": "unavailable", "latest_reason": "campaign_expired",
+        "latest_observation_completed_at": before["horizons"][1]["latest_observation_completed_at"],
+    }
+    assert score["counts"] == {
+        "scored": 1, "pending": 0, "unavailable": 1, "economically_scorable": 0,
+    }
+    assert verified["checkpoints"][0]["score"] == score
+
+
+def test_premature_forged_terminal_tick_does_not_close_pending_horizons(tmp_path):
+    registered = NOW - timedelta(hours=1)
+    path = register_campaign(tmp_path, request("premature-terminal"), clock=Clock(registered))
+    assert runner.tick(
+        path, MarketTransport(), PublicTransport(), Provider(), clock=Clock(NOW),
+    )["status"] == "completed"
+    forged_at = registered + timedelta(days=89)
+    forged_id = forged_at.replace(minute=0, second=0, microsecond=0).strftime("%Y%m%dT%H%M%SZ")
+    write_record(path, "ticks", forged_id, {
+        "schema_version": 1, "tick_id": forged_id, "status": "terminal",
+        "completed_at": forged_at.isoformat(), "executable": False,
+        "reason": "campaign_expired",
+    })
+
+    report = runner.report_campaign(path)
+    verified = runner.verify_campaign(path)
+
+    assert [
+        item["status"] for item in report["checkpoints"][0]["score"]["horizons"]
+    ] == ["pending", "pending"]
+    assert verified["checkpoints"][0]["score"] == report["checkpoints"][0]["score"]
+
+
+def test_noncanonical_terminal_tick_does_not_close_pending_horizons(tmp_path):
+    registered = NOW - timedelta(hours=1)
+    path = register_campaign(tmp_path, request("noncanonical-terminal"), clock=Clock(registered))
+    assert runner.tick(
+        path, MarketTransport(), PublicTransport(), Provider(), clock=Clock(NOW),
+    )["status"] == "completed"
+    forged_at = registered + timedelta(days=91)
+    forged_id = forged_at.replace(minute=0, second=0, microsecond=0).strftime("%Y%m%dT%H%M%SZ")
+    write_record(path, "ticks", forged_id, {
+        "schema_version": 1, "tick_id": forged_id, "status": "terminal",
+        "completed_at": forged_at.isoformat(), "executable": False,
+        "reason": "campaign_expired", "forged": True,
+    })
+
+    report = runner.report_campaign(path)
+    verified = runner.verify_campaign(path)
+
+    assert [
+        item["status"] for item in report["checkpoints"][0]["score"]["horizons"]
+    ] == ["pending", "pending"]
+    assert verified["checkpoints"][0]["score"] == report["checkpoints"][0]["score"]
 
 
 def test_waiting_slots_cover_no_complete_and_insufficient_future_rows(tmp_path):
@@ -462,6 +567,64 @@ def test_complete_tick_freezes_inputs_runs_exact_model_and_offline_reconstructs(
     assert verified["verified"] is True
     assert report["counts"]["checkpoints"] == 1
     assert report["checkpoints"][0]["score"]["counts"]["pending"] == 2
+
+
+def test_accepted_cio_undersum_uses_residual_cash_without_rewriting_raw_artifact(tmp_path):
+    path = register_campaign(tmp_path, request("accepted-undersum"), clock=Clock(NOW - timedelta(hours=1)))
+    target_weight = "0.500010000000000000000000000000000001"
+    provider = Provider(target_weight=target_weight, cash_weight="0.49995")
+
+    receipt = runner.tick(
+        path, MarketTransport(), PublicTransport(), provider, clock=Clock(NOW),
+    )
+    checkpoint = runner.load_records(path, "checkpoints")[0]["value"]
+    decision_path = path / checkpoint["decision_path"] / "decision.json"
+    raw_decision = json.loads(decision_path.read_text())
+
+    assert receipt["status"] == "completed"
+    assert raw_decision["cio"]["cash_weight"] == "0.49995"
+    assert checkpoint["arms"]["ai_three_role"]["targets"] == [
+        {"symbol": "SPY", "weight": target_weight},
+    ]
+    assert checkpoint["arms"]["ai_three_role"]["cash_weight"] == (
+        "0.499989999999999999999999999999999999"
+    )
+    assert runner.report_campaign(path)["checkpoints"][0]["score"]["counts"]["pending"] == 2
+    assert runner.verify_campaign(path)["verified"] is True
+
+    observed_at = NOW + timedelta(days=5)
+
+    class MatureMarket(MarketTransport):
+        def __init__(self):
+            super().__init__()
+            for index in range(21, 26):
+                day = date(2026, 1, 1) + timedelta(days=index)
+                self.bars.append({
+                    "t": day.isoformat() + "T05:00:00Z", "o": str(100 + index),
+                    "h": str(102 + index), "l": str(99 + index),
+                    "c": str(101 + index), "v": 1000 + index,
+                })
+
+        def fetch(self, source, query):
+            result = super().fetch(source, query)
+            result["request_started_at"] = observed_at.isoformat()
+            result["received_at"] = observed_at.isoformat()
+            return result
+
+    later = runner.tick(
+        path, MatureMarket(), Forbidden(), Forbidden(), clock=Clock(observed_at),
+    )
+    report = runner.report_campaign(path)
+    verified = runner.verify_campaign(path)
+
+    assert later["status"] == "waiting"
+    assert raw_decision == json.loads(decision_path.read_text())
+    first = report["checkpoints"][0]["score"]["horizons"][0]["first_observed"]
+    assert first["raw_response"]["arms"][-1] == {
+        "arm": "ai_three_role", "arm_status": "accepted", "status": "scored",
+        "response": "0.0041323140495867768595041322314049586682",
+    }
+    assert verified["checkpoints"][0]["score"] == report["checkpoints"][0]["score"]
 
 
 def test_execute_lab_hook_uses_archived_unchanged_bundle_once_without_provider(tmp_path):
