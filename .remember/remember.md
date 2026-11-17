@@ -8,7 +8,7 @@ See `docs/PROSPECTIVE_EVIDENCE.md` and `docs/AI_DECISION_LAB.md` for interfaces 
 
 - Credential-isolated fixed-host GET acquisition: Alpaca metadata-only news, explicit IEX/raw daily bars, real extended-session calendar; public official BEA ICS, no guessed BLS/FOMC times.
 - Completed-session candle/quant evidence, explicit synthetic or caller-supplied book origin, immutable complete/failed archives and offline semantic reconstruction. Full calendar retained; fixed30-day event context horizon limits irrelevant model input.
-- Actual four-source acquisition/normalization and semantic reconstruction were exercised. Fresh CLI/inference, final full tests, independent reviews and exact-head CI remain acceptance gates until their receipts are recorded in the PR; do not infer readiness from historical counts.
+- Actual fresh CLI collection, three-role GPT-6.1-Sol inference, semantic reconstruction and deterministic decision replay were exercised under run `prospective-20261117T031900Z`. The synthetic book remained100% cash with zero orders. Full Python suite passed; independent reviews and exact-head CI remain gates until recorded in the PR. Never reuse historical counts as current proof.
 - No fixtures are actual source/model results. Receipt hashes of original HTTP bodies cannot be recomputed from projected metadata. Offline semantic reconstruction and decision replay are distinct proofs, neither establishes profit.
 
 ## Operational constraints

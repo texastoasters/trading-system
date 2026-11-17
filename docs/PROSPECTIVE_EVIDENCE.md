@@ -6,7 +6,7 @@ No order submission, broker reset, production restart, or containment override e
 
 ## Setup
 
-Run from the repository root. Requires Python3.13, `uv`, SSH access to the existing
+Run from the repository root. Requires Python 3.13, `uv`, SSH access to the existing
 `openboog` host, and its already configured Alpaca credentials. No new paid feed or signup.
 
 ```sh
@@ -28,7 +28,7 @@ Copy `docs/examples/prospective-research.example.json` to your experiment file.
 Choose a **new unique `collection_id`** before every collection: identities are immutable
 and an existing directory is not overwritten. Supply exact symbols and equity/ETF classes.
 
-The example declares a **synthetic cash-only research starting book**. Its100000.00 is
+The example declares a **synthetic cash-only research starting book**. Its 100000.00 is
 experimental capital, not observed broker cash, a spending cap, account creation/reset,
 fills, returns, or a claim the held legacy account is reconciled. Repeated cash-only books
 are independent research starting points, not a persistent simulated portfolio.
@@ -58,7 +58,7 @@ success; a leftover pending directory is not a published collection.
 - Bars use explicit `feed=iex`, `adjustment=raw`, `asof=-`, `currency=USD`, `timeframe=1Day`.
   IEX is not consolidated coverage. Raw price changes are not split/dividend-adjusted
   total returns; neither candle patterns nor numerical features demonstrate alpha.
-- Last21 completed sessions support candle classification, SMA20,20-session raw close
+- Last 21 completed sessions support candle classification, SMA20, 20-session raw close
   change, price-relative and volume-relative features. Zero-volume denominators are
   unavailable, not invented zero scores. Partial current-session bars are excluded.
 - Metadata-only news retains headline, IDs, created/updated timestamps, source, symbols
@@ -69,7 +69,7 @@ success; a leftover pending directory is not a published collection.
   Full event snapshots support UID additions, revisions and removals. Unknown publication
   time stays unknown; `DTSTAMP` is not a publication timestamp. Unsupported recurrence
   or cancelled schedules fail closed. Source SUMMARY whitespace is preserved exactly.
-- Model context uses a declared30-calendar-day future-event horizon while retaining the
+- Model context uses a declared 30-calendar-day future-event horizon while retaining the
   full snapshot for reconstruction. This is a fixed context-cost policy, not learned alpha.
   BLS access and exact future FOMC decision-time support remain explicit gaps; no guessed
   weekday/time is substituted.
@@ -95,3 +95,14 @@ Hashes do not authenticate the upstream provider, recover omitted article conten
 market/news completeness, or protect against a malicious rewrite of every artifact and
 manifest. Saved raw-body hashes are receipt provenance: projected payloads cannot be used
 to recompute an omitted original HTTP body's byte hash.
+
+## Exercised development checkpoint
+
+On 2026-11-16 CST, run `prospective-20261117T031900Z` collected actual SPY/QQQ/IWM/AAPL
+inputs: 5 news metadata records, completed-session chart/quant evidence per symbol and 8
+BEA releases within the declared horizon. Existing Nous OAuth/GPT-6.1-Sol completed
+research/CIO/critic; the validated result held 100% of the explicit synthetic book in cash.
+No orders were submitted. Both offline semantic reconstruction and deterministic decision
+replay succeeded. Three calls recorded 28,919 input / 2,293 output tokens; exact billed cost
+remains unknown. This proves integration, not trading edge, forward returns or continuous
+operation. Final reviewed-head test/CI evidence belongs in the PR, not this dated checkpoint.
