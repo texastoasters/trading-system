@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import tempfile
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -23,30 +24,38 @@ KINDS = ("events", "observations", "checkpoints", "ticks")
 MAX_JSON_BYTES = 4_000_000
 _REGISTRATION = "registration.json"
 _MANIFEST = "manifest.json"
+MAX_JSON_DEPTH = 100
 
 
-def _strict_json_value(value: Any, seen: set[int] | None = None) -> bool:
-    if value is None or isinstance(value, (str, bool, int)):
-        return True
-    if isinstance(value, float):
-        return value == value and value not in (float("inf"), float("-inf"))
-    if isinstance(value, list):
-        seen = seen or set()
-        if id(value) in seen:
+def _strict_json_value(value: Any) -> bool:
+    active: set[int] = set()
+    stack: list[tuple[Any, int, bool]] = [(value, 0, False)]
+    while stack:
+        item, depth, exiting = stack.pop()
+        if exiting:
+            active.remove(id(item))
+            continue
+        if item is None or isinstance(item, (str, bool, int)):
+            continue
+        if isinstance(item, float):
+            if item != item or item in (float("inf"), float("-inf")):
+                return False
+            continue
+        if not isinstance(item, (list, dict)) or depth >= MAX_JSON_DEPTH:
             return False
-        seen.add(id(value))
-        valid = all(_strict_json_value(item, seen) for item in value)
-        seen.remove(id(value))
-        return valid
-    if isinstance(value, dict):
-        seen = seen or set()
-        if id(value) in seen or any(not isinstance(key, str) for key in value):
+        identity = id(item)
+        if identity in active:
             return False
-        seen.add(id(value))
-        valid = all(_strict_json_value(item, seen) for item in value.values())
-        seen.remove(id(value))
-        return valid
-    return False
+        active.add(identity)
+        stack.append((item, depth, True))
+        if isinstance(item, dict):
+            if any(not isinstance(key, str) for key in item):
+                return False
+            children = item.values()
+        else:
+            children = item
+        stack.extend((child, depth + 1, False) for child in children)
+    return True
 
 
 def _canonical_bytes(value: Any) -> bytes:
@@ -85,9 +94,15 @@ def _load_json(path: Path) -> Any:
         raise CampaignError("oversized JSON artifact")
     try:
         text = path.read_text(encoding="utf-8")
-        return json.loads(text, parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)),
-                          object_pairs_hook=_unique_object)
-    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        value = json.loads(
+            text,
+            parse_constant=lambda item: (_ for _ in ()).throw(ValueError(item)),
+            object_pairs_hook=_unique_object,
+        )
+        if not _strict_json_value(value):
+            raise ValueError("invalid JSON value")
+        return value
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError, RecursionError) as exc:
         raise CampaignError("invalid JSON artifact") from exc
 
 
@@ -160,26 +175,44 @@ def implementation_fingerprint() -> str:
     return digest.hexdigest()
 
 
+def _remove_tree(path: Path) -> None:
+    if not path.exists() and not path.is_symlink():
+        return
+    for child in sorted(path.rglob("*"), key=lambda item: len(item.parts), reverse=True):
+        child.rmdir() if child.is_dir() and not child.is_symlink() else child.unlink(missing_ok=True)
+    path.rmdir()
+
+
+@contextmanager
+def _registration_lock(base: Path) -> Iterator[None]:
+    lock = base / ".campaign-registration.lock"
+    descriptor = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
 def register_campaign(
     root: str | Path,
     request: Any,
     *,
     clock: Callable[[], datetime] | None = None,
 ) -> Path:
-    """Create a campaign once at ``root/<campaign_id>``."""
+    """Create and atomically publish a campaign once at ``root/<campaign_id>``."""
     protocol = prepare_protocol(request)
     base = Path(root)
     if base.exists() and not _safe_directory(base):
         raise CampaignError("unsafe campaign root")
     base.mkdir(parents=True, exist_ok=True)
     path = base / protocol["campaign_id"]
+    staging = Path(tempfile.mkdtemp(prefix=f".{protocol['campaign_id']}.", suffix=".pending", dir=base))
     try:
-        path.mkdir(mode=0o700)
-    except FileExistsError as exc:
-        raise CampaignError("campaign already exists") from exc
-    try:
+        staging.chmod(0o700)
         for name in (*KINDS, "artifacts"):
-            (path / name).mkdir(mode=0o700)
+            (staging / name).mkdir(mode=0o700)
         now = (clock or (lambda: datetime.now(timezone.utc)))()
         registration = {
             "schema_version": 1,
@@ -187,20 +220,21 @@ def register_campaign(
             "registered_at": _utc_text(now),
             "implementation_fingerprint": implementation_fingerprint(),
         }
-        _exclusive_write(path / _REGISTRATION, registration)
+        _exclusive_write(staging / _REGISTRATION, registration)
         manifest = {
             "schema_version": 1,
-            "files": {_REGISTRATION: _hash_file(path / _REGISTRATION)},
+            "files": {_REGISTRATION: _hash_file(staging / _REGISTRATION)},
         }
-        _exclusive_write(path / _MANIFEST, manifest)
-        _fsync_directory(path)
-        _fsync_directory(base)
+        _exclusive_write(staging / _MANIFEST, manifest)
+        _fsync_directory(staging)
+        with _registration_lock(base):
+            if path.exists() or path.is_symlink():
+                raise CampaignError("campaign already exists")
+            os.rename(staging, path)
+            _fsync_directory(base)
         return path
-    except BaseException:
-        for child in sorted(path.rglob("*"), reverse=True):
-            child.rmdir() if child.is_dir() else child.unlink(missing_ok=True)
-        path.rmdir()
-        raise
+    finally:
+        _remove_tree(staging)
 
 
 def _verify_layout(path: Path) -> None:
@@ -212,6 +246,14 @@ def _verify_layout(path: Path) -> None:
     for name in (*KINDS, "artifacts"):
         if not _safe_directory(path / name):
             raise CampaignError("unsafe campaign layout")
+    artifacts = path / "artifacts"
+    for child in artifacts.rglob("*"):
+        if child.is_symlink():
+            raise CampaignError("unsafe campaign layout")
+    lock = path / ".lock"
+    if lock.exists() or lock.is_symlink():
+        if not stat.S_ISREG(lock.lstat().st_mode):
+            raise CampaignError("unsafe campaign lock")
 
 
 def _valid_registered_at(value: Any) -> bool:
@@ -230,7 +272,7 @@ def load_campaign(path: str | Path) -> dict[str, Any]:
     _verify_layout(campaign)
     manifest = _load_json(campaign / _MANIFEST)
     if (not isinstance(manifest, dict) or set(manifest) != {"schema_version", "files"}
-            or manifest["schema_version"] != 1
+            or type(manifest["schema_version"]) is not int or manifest["schema_version"] != 1
             or manifest["files"] != {_REGISTRATION: _hash_file(campaign / _REGISTRATION)}):
         raise CampaignError("campaign manifest mismatch")
     registration = _load_json(campaign / _REGISTRATION)
@@ -242,6 +284,8 @@ def load_campaign(path: str | Path) -> dict[str, Any]:
             or re.fullmatch(r"[0-9a-f]{64}", registration["implementation_fingerprint"]) is None):
         raise CampaignError("invalid campaign registration")
     validate_protocol(registration["protocol"])
+    if campaign.name != registration["protocol"]["campaign_id"]:
+        raise CampaignError("campaign identity mismatch")
     return registration
 
 
@@ -254,6 +298,7 @@ def write_record(path: str | Path, kind: str, record_id: str, value: Any) -> dic
     """Publish one create-once canonical record; callers manage the campaign lock."""
     campaign = Path(path)
     _verify_layout(campaign)
+    load_campaign(campaign)
     if kind not in KINDS or not _safe_id(record_id):
         raise CampaignError("invalid record identity")
     envelope = {
@@ -271,6 +316,7 @@ def load_records(path: str | Path, kind: str) -> list[dict[str, Any]]:
     """Load and integrity-check all records of one exact kind in ID order."""
     campaign = Path(path)
     _verify_layout(campaign)
+    load_campaign(campaign)
     if kind not in KINDS:
         raise CampaignError("invalid record kind")
     directory = campaign / kind
@@ -296,6 +342,9 @@ def campaign_lock(path: str | Path) -> Iterator[None]:
     if not _safe_directory(campaign):
         raise CampaignError("unsafe campaign path")
     lock_path = campaign / ".lock"
+    if lock_path.exists() or lock_path.is_symlink():
+        if not stat.S_ISREG(lock_path.lstat().st_mode):
+            raise CampaignError("unsafe campaign lock")
     flags = os.O_RDWR | os.O_CREAT
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW

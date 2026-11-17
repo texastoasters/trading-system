@@ -54,6 +54,31 @@ def _hold_lock(path: str, ready: Any, release: Any) -> None:
         release.get(timeout=10)
 
 
+def _die_during_registration(root: str, request: dict[str, Any], ready: Any) -> None:
+    def die_after_staging() -> datetime:
+        ready.send("staged")
+        ready.close()
+        os._exit(86)
+
+    register_campaign(root, request, clock=die_after_staging)
+
+
+def _register_concurrently(
+    root: str, request: dict[str, Any], ready: Any, release: Any, result: Any,
+) -> None:
+    ready.put("ready")
+    release.wait(timeout=10)
+    try:
+        register_campaign(
+            root,
+            request,
+            clock=lambda: datetime(2026, 11, 17, tzinfo=timezone.utc),
+        )
+        result.put("registered")
+    except CampaignError as exc:
+        result.put(str(exc))
+
+
 def _registered(tmp_path: Path) -> Path:
     return register_campaign(
         tmp_path,
@@ -66,6 +91,9 @@ def test_register_campaign_creates_exact_durable_layout_and_loads_registration(t
     path = _registered(tmp_path)
 
     assert path == tmp_path / VALID_REQUEST["campaign_id"]
+    assert {item.name for item in tmp_path.iterdir()} == {
+        ".campaign-registration.lock", VALID_REQUEST["campaign_id"],
+    }
     assert {item.name for item in path.iterdir()} == {
         "registration.json", "manifest.json", "events", "observations",
         "checkpoints", "ticks", "artifacts",
@@ -87,6 +115,70 @@ def test_register_campaign_creates_exact_durable_layout_and_loads_registration(t
 
     with pytest.raises(CampaignError, match="^campaign already exists$"):
         register_campaign(tmp_path, deepcopy(VALID_REQUEST))
+
+
+def test_registration_process_death_leaves_no_final_identity_and_retry_succeeds(tmp_path) -> None:
+    context = multiprocessing.get_context("spawn")
+    parent, child = context.Pipe(duplex=False)
+    request = {**deepcopy(VALID_REQUEST), "campaign_id": "process-death"}
+    process = context.Process(
+        target=_die_during_registration,
+        args=(str(tmp_path), request, child),
+    )
+    process.start()
+    child.close()
+    assert parent.recv() == "staged"
+    parent.close()
+    process.join(10)
+
+    assert process.exitcode == 86
+    assert not (tmp_path / "process-death").exists()
+    assert all(item.name == ".campaign-registration.lock" or item.name.endswith(".pending")
+               for item in tmp_path.iterdir())
+    assert register_campaign(tmp_path, request).name == "process-death"
+
+
+def test_registration_never_overwrites_existing_destination_and_concurrent_publish_is_create_once(tmp_path) -> None:
+    for identity, create in (
+        ("preexisting-empty", lambda target: target.mkdir()),
+        ("preexisting-file", lambda target: target.write_text("reserved")),
+    ):
+        destination = tmp_path / identity
+        create(destination)
+        with pytest.raises(CampaignError, match="^campaign already exists$"):
+            register_campaign(
+                tmp_path,
+                {**deepcopy(VALID_REQUEST), "campaign_id": identity},
+            )
+        if destination.is_dir():
+            assert list(destination.iterdir()) == []
+        else:
+            assert destination.read_text() == "reserved"
+
+    context = multiprocessing.get_context("spawn")
+    ready = context.Queue()
+    release = context.Event()
+    result = context.Queue()
+    request = {**deepcopy(VALID_REQUEST), "campaign_id": "concurrent"}
+    processes = [
+        context.Process(
+            target=_register_concurrently,
+            args=(str(tmp_path), request, ready, release, result),
+        )
+        for _ in range(2)
+    ]
+    for process in processes:
+        process.start()
+    assert [ready.get(timeout=5), ready.get(timeout=5)] == ["ready", "ready"]
+    release.set()
+    for process in processes:
+        process.join(10)
+        assert process.exitcode == 0
+
+    assert sorted([result.get(timeout=2), result.get(timeout=2)]) == [
+        "campaign already exists", "registered",
+    ]
+    assert load_campaign(tmp_path / "concurrent")["protocol"]["campaign_id"] == "concurrent"
 
 
 def test_registration_rejects_unsafe_root_and_naive_clock(tmp_path) -> None:
@@ -131,7 +223,7 @@ def test_fingerprint_ignores_tests_and_changes_with_production_sources(tmp_path)
 
 def test_write_and_load_records_use_exact_sorted_integrity_envelopes(tmp_path) -> None:
     path = _registered(tmp_path)
-    value = {"decimal": "1.25", "available": True, "nested": [None, 2]}
+    value = {"decimal": "1.25", "available": True, "nested": [None, 2], "ratio": 1.5}
     first = write_record(path, "events", "z-last", value)
     second = write_record(path, "events", "a-first", {"event": "started"})
 
@@ -162,14 +254,30 @@ def test_record_publication_is_create_once_and_strict_json(tmp_path) -> None:
         ("unknown", "valid", {}),
         ("events", "../escape", {}),
         ("events", "valid", {"bad": float("nan")}),
+        ("events", "valid", {"good": 1.25, "bad": float("inf")}),
         ("events", "valid", {1: "non-string-key"}),
         ("events", "valid", {"bad": object()}),
         ("events", "valid", cyclic),
     ):
         with pytest.raises(CampaignError):
             write_record(path, kind, record_id, value)
+
+    deeply_nested: Any = None
+    for _ in range(2000):
+        deeply_nested = [deeply_nested]
+    with pytest.raises(CampaignError, match="^invalid JSON value$"):
+        write_record(path, "events", "deep", deeply_nested)
+
     with pytest.raises(CampaignError, match="^invalid record kind$"):
         load_records(path, "unknown")
+
+
+def test_load_normalizes_excessive_json_nesting_to_campaign_error(tmp_path) -> None:
+    path = _registered(tmp_path)
+    (path / "events" / "deep.json").write_text("[" * 2000 + "0" + "]" * 2000)
+
+    with pytest.raises(CampaignError, match="^invalid JSON artifact$"):
+        load_records(path, "events")
 
 
 def _envelope_bytes(record_id: str, value: str) -> bytes:
@@ -226,14 +334,18 @@ def test_load_fails_closed_on_symlink_traversal_layout_and_hash_tampering(tmp_pa
 
 
 def test_load_campaign_rejects_registration_manifest_layout_and_json_tampering(tmp_path) -> None:
-    cases = ("registration_hash", "manifest_shape", "invalid_registration", "invalid_time", "invalid_time_parse", "invalid_fingerprint", "duplicate_key", "nonfinite", "extra_layout")
+    cases = ("registration_hash", "manifest_shape", "manifest_bool", "invalid_registration", "invalid_time", "invalid_time_parse", "invalid_fingerprint", "duplicate_key", "nonfinite", "extra_layout")
     for index, case in enumerate(cases):
         request = {**deepcopy(VALID_REQUEST), "campaign_id": f"tamper-{index}"}
         path = register_campaign(tmp_path, request)
         if case == "registration_hash":
             (path / "registration.json").write_text("{}")
         elif case == "manifest_shape":
-            (path / "manifest.json").write_text('{"schema_version":true,"files":{}}')
+            (path / "manifest.json").write_text('{"schema_version":1,"files":{},"extra":true}')
+        elif case == "manifest_bool":
+            manifest = json.loads((path / "manifest.json").read_text())
+            manifest["schema_version"] = True
+            (path / "manifest.json").write_text(json.dumps(manifest))
         elif case in {"invalid_registration", "invalid_time", "invalid_time_parse", "invalid_fingerprint"}:
             registration = json.loads((path / "registration.json").read_text())
             if case == "invalid_registration":
@@ -261,12 +373,37 @@ def test_load_campaign_rejects_registration_manifest_layout_and_json_tampering(t
 
 
 def test_load_rejects_symlinked_campaign_components(tmp_path) -> None:
+    cases = ("events", "artifacts", "artifacts/collections", ".lock")
+    for index, relative in enumerate(cases):
+        path = register_campaign(
+            tmp_path,
+            {**deepcopy(VALID_REQUEST), "campaign_id": f"symlink-layout-{index}"},
+        )
+        component = path / relative
+        outside = tmp_path / f"outside-{index}"
+        if component.exists():
+            component.rename(outside)
+        else:
+            outside.mkdir()
+        component.symlink_to(outside, target_is_directory=True)
+
+        expected_error = "unsafe campaign lock" if relative == ".lock" else "unsafe campaign layout"
+        with pytest.raises(CampaignError, match=f"^{expected_error}$"):
+            load_campaign(path)
+        with pytest.raises(CampaignError, match=f"^{expected_error}$"):
+            write_record(path, "events", "blocked", {"value": 1})
+        assert list(outside.iterdir()) == []
+
+
+def test_campaign_name_must_match_frozen_campaign_identity(tmp_path) -> None:
     path = _registered(tmp_path)
-    real_events = tmp_path / "real-events"
-    (path / "events").rename(real_events)
-    (path / "events").symlink_to(real_events, target_is_directory=True)
-    with pytest.raises(CampaignError, match="^unsafe campaign layout$"):
-        load_campaign(path)
+    renamed = tmp_path / "renamed-campaign"
+    path.rename(renamed)
+
+    with pytest.raises(CampaignError, match="^campaign identity mismatch$"):
+        load_campaign(renamed)
+    with pytest.raises(CampaignError, match="^campaign identity mismatch$"):
+        write_record(renamed, "events", "blocked", {})
 
 
 def test_campaign_lock_is_nonblocking_across_processes_and_released_on_death(tmp_path) -> None:
@@ -312,13 +449,21 @@ def test_campaign_lock_is_nonblocking_across_processes_and_released_on_death(tmp
     assert result.get(timeout=2) == "busy"
 
 
-def test_campaign_lock_rejects_missing_path_and_symlink_lock(tmp_path) -> None:
+def test_campaign_lock_rejects_missing_path_and_unsafe_lock_entry(tmp_path) -> None:
     with pytest.raises(CampaignError, match="^unsafe campaign path$"):
         with campaign_lock(tmp_path / "missing"):
             pass
 
-    path = _registered(tmp_path)
-    (path / ".lock").symlink_to(path / "registration.json")
-    with pytest.raises(OSError):
-        with campaign_lock(path):
-            pass
+    for index, kind in enumerate(("symlink", "directory")):
+        path = register_campaign(
+            tmp_path,
+            {**deepcopy(VALID_REQUEST), "campaign_id": f"unsafe-lock-{index}"},
+        )
+        lock = path / ".lock"
+        if kind == "symlink":
+            lock.symlink_to(path / "registration.json")
+        else:
+            lock.mkdir()
+        with pytest.raises(CampaignError, match="^unsafe campaign lock$"):
+            with campaign_lock(path):
+                pass
