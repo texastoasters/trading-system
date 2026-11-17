@@ -1,22 +1,23 @@
-# Session State — AI Decision Lab (2026-11-15)
+# Session State — Prospective Evidence (2026-11-16)
 
 ## Current feature branch
 
-`feat/ai-decision-lab`, v0.38.0, based on `9d695cb` (merged PR228). Broker-isolated research/shadow capability; not a replacement trading deployment. See `docs/AI_DECISION_LAB.md` for the standalone input/CLI/receipt/replay contract.
+`feat/prospective-evidence`, v0.39.0, based on merged `c97f670` (PR231/v0.38.1).
+Standalone read-only source capture into the already merged non-executing AI lab (PR230).
+See `docs/PROSPECTIVE_EVIDENCE.md` and `docs/AI_DECISION_LAB.md` for interfaces and caveats.
 
-- Bounded actual AI research → CIO portfolio targets/cash → critic; deterministic validity checks and non-executable monetary preview.
-- Existing Nous OAuth adapter with fresh allowance/catalog checks; no new billing/provider configuration. Managed runtime launcher avoids obsolete Hermes venv dependencies.
-- Preserved actual dated paper evidence exercised with GPT-6.1-Sol through all3 roles and deterministic offline replay. This is historical diagnostics, not profit evidence or a current broker snapshot.
-- Parent review added strict no-overallocation and cent-rounding regressions; residuals retained as cash.
-- Full Python tests, independent review, coverage and remote CI receipts are recorded in the PR. Do not carry a historical pass count forward without rerunning.
+- Credential-isolated fixed-host GET acquisition: Alpaca metadata-only news, explicit IEX/raw daily bars, real extended-session calendar; public official BEA ICS, no guessed BLS/FOMC times.
+- Completed-session candle/quant evidence, explicit synthetic or caller-supplied book origin, immutable complete/failed archives and offline semantic reconstruction. Full calendar retained; fixed30-day event context horizon limits irrelevant model input.
+- Actual four-source acquisition/normalization and semantic reconstruction were exercised. Fresh CLI/inference, final full tests, independent reviews and exact-head CI remain acceptance gates until their receipts are recorded in the PR; do not infer readiness from historical counts.
+- No fixtures are actual source/model results. Receipt hashes of original HTTP bodies cannot be recomputed from projected metadata. Offline semantic reconstruction and decision replay are distinct proofs, neither establishes profit.
 
 ## Operational constraints
 
-- The old openboog trading system has an explicit persistent service/cron/dashboard hold. Do not remove it, restart the bot, reset the account, alter broker orders or deploy this feature by SSH.
-- Full AI-first trader is not delivered by this lab: continuous data detectors, isolated experiment-account truth/execution lifecycle, independent exit/monitor/notification operations and prospective performance evaluation remain later slices.
-- PR229 (`fix/task4-integration`) is separate pre-existing work; preserve it. The original local checkout's dirty feature wishlist/untracked docs were not incorporated here.
-- Prior audit found negative paper cash, account/ledger divergence and final-fill/crypto identity/protection defects. Disposable paper losses are experiment data, not a reason to spend effort rescuing fictional capital or erase evidence.
+- Old openboog trading has a persistent service/cron/dashboard hold. Do not remove it, restart the bot, reset the account, alter broker orders or deploy feature code by SSH. The standalone credential-isolation helper lives only in remote cache, not the production trader.
+- Full AI-first trader remains unfinished: continuous prospective collection/evaluation, experiment-account truth/execution lifecycle, exits/watchdogs and performance promotion are later slices.
+- PR229 (`fix/task4-integration`) is separate; preserve it and the original local checkout's dirty wishlist/untracked docs.
+- Prior negative paper cash/account divergence is dated incident evidence. Synthetic research cash is not a fresh broker observation, rescue, account reset or realized P&L.
 
 ## Process reminders
 
-Changes via PR review and CI/CD; never push feature code directly to openboog. No live-money authority, unapproved subscriptions/top-ups, or global Hermes configuration changes. Rule1 stays long-only/no borrowing/no debt. Use actual tool output, preserve failures and keep tests at public seams. **Keep Python + Elixir coverage at100%, with no coverage exclusions/ignore shortcuts.** Existing uncovered legacy lines must be reported explicitly, not concealed or used to weaken that standing standard.
+Changes via reviewed PR and CI/CD. No live-money authority, new subscriptions/top-ups or global Hermes configuration changes. Rule1 remains long-only/no borrowing/no debt. Preserve public-seam TDD and actual failures. **Keep Python + Elixir coverage at100%, with no coverage exclusions/ignore shortcuts.** Disclose pre-existing legacy gaps, never weaken the standard or conceal them.
