@@ -131,3 +131,10 @@ def test_distinct_news_revisions_preserved_and_inputs_unchanged():
     assert len(result["news"]) == 2
     assert len({x["evidence_id"] for x in result["news"]}) == 2
     assert value == original
+
+
+def test_normalized_new_york_evening_close_is_accepted_by_detector():
+    from prospective_evidence.signals import derive_bar_evidence
+    value = normalize.normalize_market(fixture_capture(), expires_at="2026-01-22T01:20:00Z")
+    records = derive_bar_evidence("SPY", **value["bar_inputs"]["SPY"], expires_at="2026-01-22T01:20:00Z")
+    assert [item["kind"] for item in records] == ["technical", "algorithmic"]
