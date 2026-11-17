@@ -1,0 +1,12 @@
+{
+  "collection_id": "sample-prospective-v1",
+  "book_id": "synthetic-cash-research-v1",
+  "research_cash": "100000.00",
+  "ttl_seconds": 900,
+  "universe": [
+    {"symbol": "SPY", "asset_class": "etf"},
+    {"symbol": "QQQ", "asset_class": "etf"},
+    {"symbol": "IWM", "asset_class": "etf"},
+    {"symbol": "AAPL", "asset_class": "equity"}
+  ]
+}

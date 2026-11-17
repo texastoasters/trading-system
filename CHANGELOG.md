@@ -8,6 +8,19 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.39.0] - 2026-11-16
+
+### Added
+- **Read-only multi-signal evidence pipeline:** credential-isolated allowlisted Alpaca GET collection for metadata-only news, explicit IEX/raw daily bars and authoritative extended-session cutoff; official BEA ICS scheduled releases without invented BLS/FOMC timing. Complete pagination, bounded payloads and honest source failures.
+- **Deterministic evidence and provenance:** completed-session candle patterns and quantitative features, exact source/receipt clocks, explicit synthetic/caller research-book origin, full calendar snapshot reconciliation and a fixed30-day model-context horizon. No claims of adjusted total returns, exhaustive news coverage or alpha.
+- **Immutable collections and semantic reconstruction:** projected source pages, declared experiment, normalized bundle and hashed manifest; offline recomputation is separate from integrity-only loading and from the existing decision replay. Failed collections have no runnable bundle. See `docs/PROSPECTIVE_EVIDENCE.md`.
+
+### Safety and scope
+- Collection and model inference remain separate; outputs are non-executable. No broker orders, account reset, new subscription, production scheduler integration, containment removal or old-bot restart.
+- Actual-source and model/replay verification are documented separately from synthetic fixture tests. This release is not continuous prospective evaluation or an unattended replacement trader.
+
+---
+
 ## [0.38.1] - 2026-11-16
 
 ### Fixed

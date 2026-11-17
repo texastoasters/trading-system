@@ -50,7 +50,7 @@ Cash plus all holding values must reconcile to authoritative equity within $0.05
 
 For evidence, `published_at <= available_at <= as_of`, and expiry follows availability. A scheduled future event may occur after `as_of`, but its outcome cannot be reported as already known. News content is untrusted data. Current evidence/snapshot and bundle/proposal expiry are rechecked after model calls. Historical diagnostics retain original availability and evaluate at original `as_of`; they are never counted as prospective forecasts.
 
-Input acquisition is deliberately separate: this release accepts normalized news/event/technical/algorithmic evidence but does not install continuous detectors, fetch paid feeds, create a new broker account, simulate fills/P&L, or operate exits/watchdogs.
+Input acquisition is deliberately separate: see [the standalone prospective-evidence collector](PROSPECTIVE_EVIDENCE.md) for sourced metadata/news, scheduled-event and completed-session chart/quant inputs. Neither collector nor lab installs continuous detectors, fetches paid feeds, creates a new broker account, simulates fills/P&L, or operates exits/watchdogs.
 
 ## Decisions and deterministic money handling
 
