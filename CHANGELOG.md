@@ -8,6 +8,21 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.40.0] - 2026-11-17
+
+### Added
+- **Continuous prospective research evaluation:** immutable campaign registration, four matched allocation arms, frozen future-session horizons, bounded idempotent ticks and conservative crash recovery without repeating ambiguous inference charges. Offline reports reconstruct source collections, replay decisions and preserve missing/failed/missed states.
+- **Causal raw-price measurement:** explicit bundle/input/model/publication clocks, future IEX daily-price proxies, first versus latest revisions and missingness, deterministic Decimal arithmetic, and unknown economic costs. No adjusted total-return, execution-price, after-cost alpha or promotion claim.
+- **Isolated managed inference:** campaign dependencies stay in project Python; only the existing pure lab CLI uses Hermes' SDK closure. Lazy discovery, bounded execution and exact archived-input/artifact replay validation. See `docs/PROSPECTIVE_EVALUATION.md`.
+
+### Fixed
+- **Cross-host availability clocks:** the credential-isolated SSH adapter now publishes collector-local call bounds instead of comparing remote HTTP timestamps with local completion. Payload/hash/rate metadata and fixed GET protocol remain unchanged; historical failed captures are not rewritten.
+
+### Safety and scope
+- Research-only `executable=false`; no broker writes, account reset, subscription/billing changes, daemon/timer installation, containment removal, production restart or SSH feature deployment. Future outcomes remain pending until actually observable. A working evaluator is not an unattended trader or demonstrated profitable strategy.
+
+---
+
 ## [0.39.0] - 2026-11-16
 
 ### Added
