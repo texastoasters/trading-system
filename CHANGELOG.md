@@ -8,6 +8,17 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.38.1] - 2026-11-16
+
+### Fixed
+- **Containment-aware CI deployment:** stream a stdlib Python preflight to the remote host before the legacy updater. An existing HOLD of any type, or unreadable/missing containment state, blocks with exit78 before cron, containers, source or service changes. No containment removal or updater rewrite.
+- **Trusted deployment source:** deploy only successful main-branch push runs from this repository; checkout the tested SHA without persisted credentials for the streamed guard. No permission broadening or substitute release credentials.
+
+### Verification and limitations
+- Regression tests cover blocked/unknown states and real disposable updater invocation/exit propagation. Gate is point-in-time, not a concurrency lock. Existing tag-push403 is not claimed repaired; no production workflow rerun is part of this change. See `docs/DEPLOYMENT_CONTAINMENT.md`.
+
+---
+
 ## [0.38.0] - 2026-11-15
 
 ### Added
