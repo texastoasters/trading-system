@@ -298,7 +298,7 @@ def test_derive_bar_evidence_rejects_finite_values_that_cannot_be_finite_metrics
 
 
 def test_records_pass_existing_lab_evidence_validation_without_reimplementing_it():
-    from scripts.decision_lab.validation import validate_bundle
+    from decision_lab.validation import validate_bundle
 
     evidence = derive_bar_evidence(
         "SPY",

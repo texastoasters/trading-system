@@ -343,7 +343,7 @@ def test_empty_calendar_is_a_valid_full_snapshot_and_reports_removals():
 
 
 def test_event_records_pass_existing_lab_validation_without_reimplementing_it():
-    from scripts.decision_lab.validation import validate_bundle
+    from decision_lab.validation import validate_bundle
 
     evidence = parse(synthetic_calendar(synthetic_event()))["evidence"]
     bundle = {
