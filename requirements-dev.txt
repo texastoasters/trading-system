@@ -3,3 +3,4 @@ pytest-cov
 coveralls
 numpy
 PyYAML>=6,<7
+-r requirements-evidence.txt

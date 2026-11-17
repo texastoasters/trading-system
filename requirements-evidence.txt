@@ -1,0 +1,2 @@
+# Optional prospective-evidence calendar parser; decision lab remains stdlib.
+icalendar==7.3.0
