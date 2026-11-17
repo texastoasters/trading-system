@@ -467,15 +467,37 @@ def test_invalid_sessions_and_calendar_payloads_are_rejected():
     assert result["sources"]["bars"]["error"]["code"] == "invalid_source_response"
 
 
-def test_record_count_bounds_are_enforced(monkeypatch):
-    import prospective_evidence.acquire as acquire
-
-    monkeypatch.setattr(acquire, "_MAX_RECORDS", 0)
+def test_record_count_bounds_are_enforced():
+    session = {
+        "date": "2026-11-16",
+        "open": "09:30",
+        "close": "16:00",
+        "session_open": "04:00",
+        "session_close": "20:00",
+        "settlement_date": "2026-11-18",
+    }
+    bar = {
+        "t": "2026-11-16T05:00:00Z",
+        "o": "680.00",
+        "h": "681.00",
+        "l": "679.00",
+        "c": "680.50",
+        "v": 100,
+    }
+    news = {
+        "id": 1,
+        "headline": "Synthetic headline",
+        "created_at": STAMP,
+        "updated_at": STAMP,
+        "url": None,
+        "symbols": ["SPY"],
+        "source": "synthetic-wire",
+    }
     alpaca = SyntheticSource(
         [
-            receipt([{}]),
-            receipt({"bars": {"SPY": [{}]}, "next_page_token": None}),
-            receipt({"news": [{}], "next_page_token": None}),
+            receipt([session] * 20_001),
+            receipt({"bars": {"SPY": [bar] * 20_001}, "next_page_token": None}),
+            receipt({"news": [news] * 20_001, "next_page_token": None}),
         ]
     )
     result = collect_sources(

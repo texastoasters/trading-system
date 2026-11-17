@@ -5,18 +5,10 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 
 MAX_EXPERIMENT_BYTES = 64 * 1024
-_ALLOWED_EXPERIMENT_KEYS = {
-    "collection_id", "book_id", "universe", "research_cash", "portfolio", "ttl_seconds"
-}
-_POSITION_KEYS = {"symbol", "quantity", "market_value"}
-_PORTFOLIO_KEYS = {
-    "snapshot_id", "observed_at", "cash", "equity", "pending_buy_notional", "positions"
-}
 
 
 class _ArgumentParser(argparse.ArgumentParser):
@@ -43,30 +35,6 @@ def _failure(code, **fields):
     return {"status": "failed", "error": code, "executable": False, **fields}
 
 
-def _portable(value):
-    from decision_lab.validation import RUN_ID_RE
-    return isinstance(value, str) and bool(RUN_ID_RE.fullmatch(value)) and value not in {".", ".."}
-
-
-def _decimal(value):
-    if not isinstance(value, str) or not value or value.strip() != value:
-        return False
-    try:
-        number = Decimal(value)
-    except InvalidOperation:
-        return False
-    return number.is_finite() and number > 0
-
-
-def _valid_portfolio(value):
-    if not isinstance(value, dict) or set(value) != _PORTFOLIO_KEYS:
-        return False
-    positions = value.get("positions")
-    return isinstance(positions, list) and all(
-        isinstance(item, dict) and set(item) == _POSITION_KEYS for item in positions
-    )
-
-
 def _read_experiment(filename):
     path = Path(filename)
     if path.is_symlink() or not path.is_file():
@@ -91,40 +59,11 @@ def _read_experiment(filename):
         )
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
         raise ValueError("invalid_experiment") from None
-    if (not isinstance(value, dict) or not set(value).issubset(_ALLOWED_EXPERIMENT_KEYS)
-            or not {"collection_id", "book_id", "universe"}.issubset(value)
-            or not _portable(value["collection_id"]) or not _portable(value["book_id"])):
-        raise ValueError("invalid_experiment")
-    universe = value["universe"]
-    if (not isinstance(universe, list) or not 1 <= len(universe) <= 20
-            or any(not isinstance(item, dict) or set(item) != {"symbol", "asset_class"}
-                   or not isinstance(item["symbol"], str) or not item["symbol"]
-                   or "," in item["symbol"] or any(char.isspace() for char in item["symbol"])
-                   or item["asset_class"] not in {"equity", "etf"} for item in universe)
-            or len({item["symbol"] for item in universe}) != len(universe)):
-        raise ValueError("invalid_experiment")
-    cash, portfolio = "research_cash" in value, "portfolio" in value
-    if cash == portfolio or cash and not _decimal(value["research_cash"]):
-        raise ValueError("invalid_experiment")
-    if portfolio:
-        if not _valid_portfolio(value["portfolio"]):
-            raise ValueError("invalid_experiment")
-        try:
-            from datetime import timedelta
-            from decision_lab.validation import parse_time
-            from prospective_evidence.book import prepare_book
-            observed = parse_time(value["portfolio"]["observed_at"], "portfolio observed_at")
-            prepare_book(
-                universe, as_of=observed.isoformat(),
-                expires_at=(observed + timedelta(seconds=3600)).isoformat(),
-                book_id=value["book_id"], portfolio=value["portfolio"],
-            )
-        except Exception:
-            raise ValueError("invalid_experiment") from None
-    ttl = value.get("ttl_seconds", 900)
-    if type(ttl) is not int or not 1 <= ttl <= 3600:
-        raise ValueError("invalid_experiment")
-    return value
+    try:
+        from prospective_evidence.pipeline import prepare_experiment
+        return prepare_experiment(value)
+    except Exception:
+        raise ValueError("invalid_experiment") from None
 
 
 def _counts(bundle):

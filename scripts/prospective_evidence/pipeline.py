@@ -34,6 +34,8 @@ _PAGE_KEYS = {
     "body_sha256", "rate_limit",
 }
 _HEX_256 = re.compile(r"[0-9a-f]{64}")
+_MAX_PREVIOUS_EVENTS = 2_000
+_MAX_EVENT_TEXT_CHARS = 20_000
 
 
 class PipelineError(ValueError):
@@ -172,17 +174,39 @@ def _project_portfolio(value: Any) -> dict[str, Any]:
 
 def _project_previous(value: Any) -> list[dict[str, Any]]:
     fields = {"uid", "summary", "event_at", "dtstamp", "sequence", "duration"}
-    if not isinstance(value, list):
+    if not isinstance(value, list) or len(value) > _MAX_PREVIOUS_EVENTS:
         _fail("invalid_experiment")
     result = []
     for item in value:
         if not isinstance(item, dict) or set(item) != fields:
             _fail("invalid_experiment")
+        if any(
+            not isinstance(item[field], str)
+            or not item[field]
+            or len(item[field]) > _MAX_EVENT_TEXT_CHARS
+            for field in ("uid", "summary", "event_at")
+        ):
+            _fail("invalid_experiment")
+        if item["dtstamp"] is not None and (
+            not isinstance(item["dtstamp"], str)
+            or not item["dtstamp"]
+            or len(item["dtstamp"]) > _MAX_EVENT_TEXT_CHARS
+        ):
+            _fail("invalid_experiment")
+        if item["sequence"] is not None and type(item["sequence"]) is not int:
+            _fail("invalid_experiment")
+        if item["duration"] is not None and (
+            not isinstance(item["duration"], str)
+            or not item["duration"]
+            or len(item["duration"]) > _MAX_EVENT_TEXT_CHARS
+        ):
+            _fail("invalid_experiment")
         result.append({key: copy.deepcopy(item[key]) for key in fields})
     return result
 
 
-def _experiment(value: Any, capture: dict[str, Any]) -> dict[str, Any]:
+def prepare_experiment(value: Any, *, symbols: Any = None) -> dict[str, Any]:
+    """Validate and sanitize an explicit experiment before source acquisition."""
     if not isinstance(value, dict):
         _fail("invalid_experiment")
     allowed = {"collection_id", "book_id", "universe", "research_cash", "portfolio", "ttl_seconds", "previous_events"}
@@ -191,16 +215,21 @@ def _experiment(value: Any, capture: dict[str, Any]) -> dict[str, Any]:
     if not _portable(value["collection_id"]) or not _portable(value["book_id"]):
         _fail("invalid_experiment")
     universe = value["universe"]
-    if not isinstance(universe, list) or len(universe) != len(capture["symbols"]):
+    if not isinstance(universe, list) or not 1 <= len(universe) <= 20:
         _fail("invalid_experiment")
     projected_universe = []
     for item in universe:
         if (not isinstance(item, dict) or set(item) != {"symbol", "asset_class"}
+                or not isinstance(item["symbol"], str) or not item["symbol"]
+                or "," in item["symbol"] or any(char.isspace() for char in item["symbol"])
                 or not isinstance(item["asset_class"], str)
                 or item["asset_class"] not in {"equity", "etf"}):
             _fail("invalid_experiment")
         projected_universe.append({"symbol": item["symbol"], "asset_class": item["asset_class"]})
-    if [item["symbol"] for item in projected_universe] != capture["symbols"]:
+    declared_symbols = [item["symbol"] for item in projected_universe]
+    if len(set(declared_symbols)) != len(declared_symbols):
+        _fail("invalid_experiment")
+    if symbols is not None and (not isinstance(symbols, list) or declared_symbols != symbols):
         _fail("invalid_experiment")
     cash_present, portfolio_present = "research_cash" in value, "portfolio" in value
     if cash_present == portfolio_present or cash_present and not _decimal_cash(value["research_cash"]):
@@ -215,13 +244,25 @@ def _experiment(value: Any, capture: dict[str, Any]) -> dict[str, Any]:
     if cash_present:
         result["research_cash"] = value["research_cash"]
     else:
-        result["portfolio"] = _project_portfolio(value["portfolio"])
+        portfolio = _project_portfolio(value["portfolio"])
+        try:
+            observed = parse_time(portfolio["observed_at"], "portfolio observed_at")
+            prepare_book(
+                projected_universe,
+                as_of=observed.isoformat(),
+                expires_at=(observed + timedelta(seconds=3600)).isoformat(),
+                book_id=value["book_id"],
+                portfolio=portfolio,
+            )
+        except (BookError, BundleValidationError, KeyError, TypeError, ValueError, OverflowError):
+            _fail("invalid_experiment")
+        result["portfolio"] = portfolio
     if "previous_events" in value:
         result["previous_events"] = _project_previous(value["previous_events"])
     return result
 
 
-def _build(capture: dict[str, Any], experiment: dict[str, Any]) -> dict[str, Any]:
+def _assemble_collection(capture: dict[str, Any], experiment: dict[str, Any]) -> dict[str, Any]:
     as_of = capture["completed_at"]
     expiry = (_time(as_of) + timedelta(seconds=experiment["ttl_seconds"])).isoformat()
     try:
@@ -307,8 +348,8 @@ def _build(capture: dict[str, Any], experiment: dict[str, Any]) -> dict[str, Any
 def build_collection(capture: Any, experiment: Any) -> dict[str, Any]:
     """Build a valid shadow-lab bundle and durable offline reconstruction envelope."""
     _validate_capture(capture)
-    declared = _experiment(experiment, capture)
-    return _build(capture, declared)
+    declared = prepare_experiment(experiment, symbols=capture["symbols"])
+    return _assemble_collection(capture, declared)
 
 
 def reconstruct_collection(path: Any) -> dict[str, Any]:

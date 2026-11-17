@@ -9,8 +9,12 @@ import socket
 import subprocess
 import sys
 from datetime import datetime, timezone
+from email.message import Message
 from pathlib import Path
+from typing import Any
 from urllib.error import HTTPError, URLError
+from urllib import request as urllib_request
+from urllib import response as urllib_response
 
 import pytest
 
@@ -264,21 +268,53 @@ def test_unexpected_opener_failure_is_also_sanitized():
         HttpGetTransport(opener=opener, clock=clocks()).fetch("bea_calendar", {})
 
 
-def test_default_opener_has_redirects_disabled(monkeypatch):
-    captured = {}
+def test_default_opener_rejects_redirect_without_requesting_target_or_reading_body(monkeypatch):
+    requested_urls = []
 
-    class FakeBuiltOpener:
-        def open(self, request, *, timeout):
-            captured["request"] = request
-            return FakeResponse(b"calendar")
+    class UnreadBody(io.BytesIO):
+        def __init__(self):
+            super().__init__(b"secret redirect error body")
+            self.read_calls = 0
 
-    def fake_build(handler):
-        captured["handler"] = handler
-        return FakeBuiltOpener()
+        def read(self, size: int | None = -1):
+            self.read_calls += 1
+            return super().read(size)
 
-    monkeypatch.setattr(transport.request, "build_opener", fake_build)
-    HttpGetTransport(clock=clocks()).fetch("bea_calendar", {})
-    assert isinstance(captured["handler"], transport._NoRedirectHandler)
+        def close(self):
+            pass
+
+    redirect_body = UnreadBody()
+    redirect_target = "https://attacker.invalid/redirect-target"
+
+    class SyntheticHTTPSHandler(urllib_request.HTTPSHandler):
+        def https_open(self, req) -> Any:
+            requested_urls.append(req.full_url)
+            headers = Message()
+            headers["Location"] = redirect_target
+            response = urllib_response.addinfourl(
+                redirect_body,
+                headers,
+                req.full_url,
+                302,
+            )
+            setattr(response, "msg", "Synthetic redirect")
+            return response
+
+    original_build_opener = urllib_request.build_opener
+
+    def build_synthetic_opener(*handlers):
+        return original_build_opener(*handlers, SyntheticHTTPSHandler())
+
+    monkeypatch.setattr(transport.request, "build_opener", build_synthetic_opener)
+
+    with pytest.raises(TransportError, match="^source_http_error$") as caught:
+        HttpGetTransport(clock=clocks()).fetch("bea_calendar", {})
+
+    assert caught.value.http_status == 302
+    assert requested_urls == [transport.BEA_CALENDAR_URL]
+    assert redirect_target not in requested_urls
+    assert redirect_body.read_calls == 0
+    assert redirect_body.tell() == 0
 
 
 def test_clock_must_return_aware_datetime():
@@ -537,9 +573,7 @@ def test_additional_validation_and_sanitization_edges_do_not_escape_public_error
             HttpGetTransport(key, secret).fetch("sessions", SESSIONS)
 
 
-def test_redirect_handler_clock_failure_and_response_shape_edges_are_sanitized():
-    assert transport._NoRedirectHandler().redirect_request(None, None, 302, "", {}, "x") is None
-
+def test_clock_failure_and_response_shape_edges_are_sanitized():
     def broken_clock():
         raise RuntimeError("secret clock detail")
 

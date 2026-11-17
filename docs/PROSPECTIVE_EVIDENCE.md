@@ -35,6 +35,28 @@ are independent research starting points, not a persistent simulated portfolio.
 Alternatively provide `portfolio` instead of `research_cash`; its original observation
 time is retained and must satisfy existing lab freshness rules. Never supply both.
 
+For a later collection, optional `previous_events` must contain the **entire normalized
+calendar snapshot** from a previously verified collection, not just its selected future
+evidence. For example, after running `verify` on the prior collection:
+
+```python
+import json
+from pathlib import Path
+
+prior = json.loads(Path("artifacts/prospective/OLD-ID/capture.json").read_text())
+path = Path("/path/to/experiment.json")
+experiment = json.loads(path.read_text())
+experiment["previous_events"] = prior["derived"]["normalized_calendar_events"]
+# Also choose a NEW collection_id before collecting again.
+path.write_text(json.dumps(experiment, indent=2))
+```
+
+The new capture records UID additions, changed normalized records and removals relative
+to that declared snapshot. A missing UID means absent from the observed full snapshot,
+not proof of authoritative cancellation. Prior events are bounded and validated; they
+never supply release outcomes or retimestamp a portfolio. The complete experiment file,
+including this snapshot, must fit the CLI's 64 KiB input bound.
+
 ```sh
 .venv/bin/python scripts/collect_prospective_evidence.py collect \
   --experiment /path/to/experiment.json --output-dir artifacts/prospective

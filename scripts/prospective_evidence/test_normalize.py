@@ -7,6 +7,24 @@ import pytest
 from prospective_evidence import normalize
 
 
+@pytest.mark.parametrize("requested,accepted", [
+    ("2026-01-22T00:59:59.999999Z", False),
+    ("2026-01-22T01:00:00Z", False),
+    ("2026-01-22T01:00:00.000001Z", True),
+])
+def test_daily_bar_request_must_be_strictly_after_extended_close(requested, accepted):
+    capture = fixture_capture()
+    capture["started_at"] = "2026-01-22T00:59:00Z"
+    capture["sources"]["bars"]["pages"][0]["request_started_at"] = requested
+    if not accepted:
+        with pytest.raises(normalize.NormalizationError, match="invalid_market_capture"):
+            normalize.normalize_market(capture, expires_at="2026-01-22T01:20:00Z")
+    else:
+        result = normalize.normalize_market(capture, expires_at="2026-01-22T01:20:00Z")
+        assert result["bar_inputs"]["SPY"]["bars"][-1]["session_date"] == "2026-01-21"
+        assert result["excluded_partial_bars"]["SPY"] == 0
+
+
 def fixture_capture():
     symbols = ["SPY"]
     sessions, bars = [], []

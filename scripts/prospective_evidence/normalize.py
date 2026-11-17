@@ -116,7 +116,7 @@ def _bars(pages, session_pages, sessions, symbols, completed):
                 _require(day in sessions and local.hour == local.minute == local.second == local.microsecond == 0)
                 requested = parse_time(page["request_started_at"], "request")
                 _require(interval <= requested)
-                if sessions[day] > requested:
+                if sessions[day] >= requested:
                     excluded[symbol] += 1
                     continue
                 value = {"session_date": day, "session_close_at": sessions[day].isoformat(),

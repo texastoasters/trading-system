@@ -153,6 +153,56 @@ def experiment(symbols=None):
     }
 
 
+def test_prepare_experiment_is_the_public_sanitizing_validator_for_cli_and_build():
+    declared = experiment()
+    del declared["ttl_seconds"]
+    declared["previous_events"] = []
+
+    prepared = pipeline.prepare_experiment(declared, symbols=["SPY"])
+
+    assert prepared == {**declared, "ttl_seconds": 900}
+    assert prepared is not declared
+    assert prepared["universe"] is not declared["universe"]
+    assert prepared["previous_events"] is not declared["previous_events"]
+
+
+@pytest.mark.parametrize("previous", [
+    None,
+    {},
+    [None],
+    [{"uid": "only-one-field"}],
+    [{"uid": [], "summary": "x", "event_at": "x", "dtstamp": None,
+      "sequence": None, "duration": None}],
+    [{"uid": "x", "summary": "x", "event_at": "x", "dtstamp": 7,
+      "sequence": None, "duration": None}],
+    [{"uid": "x", "summary": "x", "event_at": "x", "dtstamp": None,
+      "sequence": "1", "duration": None}],
+    [{"uid": "x", "summary": "x", "event_at": "x", "dtstamp": None,
+      "sequence": None, "duration": []}],
+    [{"uid": "x", "summary": "x", "event_at": "x", "dtstamp": None,
+      "sequence": None, "duration": None}] * 2001,
+])
+def test_prepare_experiment_rejects_malformed_or_unbounded_previous_snapshot(previous):
+    declared = experiment()
+    declared["previous_events"] = previous
+    with pytest.raises(pipeline.PipelineError, match="^invalid_experiment$"):
+        pipeline.prepare_experiment(declared)
+
+
+def test_prepare_experiment_fully_validates_caller_portfolio_without_capture_freshness():
+    declared = experiment()
+    del declared["research_cash"]
+    declared["portfolio"] = {
+        "snapshot_id": "caller-fixture", "observed_at": "2020-01-01T00:00:00+00:00",
+        "cash": "10", "equity": "10", "pending_buy_notional": "0", "positions": [],
+    }
+    assert pipeline.prepare_experiment(declared)["portfolio"] == declared["portfolio"]
+
+    declared["portfolio"]["equity"] = "NaN"
+    with pytest.raises(pipeline.PipelineError, match="^invalid_experiment$"):
+        pipeline.prepare_experiment(declared)
+
+
 def test_build_collection_integrates_all_observed_and_derived_evidence_deterministically():
     capture = synthetic_capture(["SPY", "QQQ"])
     declared = experiment(["SPY", "QQQ"])
@@ -272,6 +322,10 @@ def test_caller_portfolio_keeps_observation_time_and_must_be_fresh():
     assert "caller_supplied" in json.loads(result["bundle"]["evidence"][0]["content"])["origin"]
 
     declared["portfolio"]["observed_at"] = "2026-01-22T00:59:59+00:00"
+    with pytest.raises(pipeline.PipelineError, match="^invalid_experiment$"):
+        pipeline.build_collection(synthetic_capture(), declared)
+
+    declared["portfolio"]["observed_at"] = "2026-01-22T01:06:00+00:00"
     with pytest.raises(pipeline.PipelineError, match="^invalid_experiment$"):
         pipeline.build_collection(synthetic_capture(), declared)
 

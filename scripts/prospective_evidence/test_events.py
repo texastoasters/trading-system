@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 from datetime import datetime, timezone
+from typing import Any
 
 import pytest
 
@@ -521,8 +522,9 @@ def test_additional_scalar_validation_paths(overrides, message):
 
 
 def test_non_vcalendar_and_non_string_inputs_are_rejected():
+    invalid_calendar: Any = 3
     with pytest.raises(EventError, match="string"):
-        parse(3)  # type: ignore[arg-type]
+        parse(invalid_calendar)
     with pytest.raises(EventError, match="VCALENDAR"):
         parse(synthetic_event())
 
