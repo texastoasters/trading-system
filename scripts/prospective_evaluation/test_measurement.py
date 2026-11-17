@@ -175,7 +175,7 @@ def checkpoint() -> dict[str, Any]:
         "collection_id": "synthetic-collection",
         "bundle_hash": "a" * 64,
         "collection_path": "artifacts/collections/synthetic-collection",
-        "decision_path": "artifacts/decisions/synthetic-decision",
+        "decision_path": "artifacts/decisions/synthetic-collection",
         "source_session_close_at": "2026-01-22T01:00:00Z",
         "decision_deadline": "2026-01-22T01:07:00Z",
         "bundle_as_of": "2026-01-22T01:02:00Z",
@@ -204,6 +204,7 @@ def checkpoint() -> dict[str, Any]:
             },
         },
         "model_receipts": [],
+        "executable": False,
     }
 
 
@@ -368,6 +369,8 @@ def test_scoring_uses_future_raw_prices_and_fixed_first_anchor_across_revisions(
     assert (h1["horizon"], h1["status"], h5["horizon"], h5["status"]) == (1, "scored", 5, "scored")
     assert h1["first_observed"]["observation_completed_at"] == "2026-01-26T22:00:00+00:00"
     assert h1["latest_observed"]["observation_completed_at"] == "2026-01-27T22:00:00+00:00"
+    assert (h1["latest_status"], h1["latest_reason"]) == ("scored", None)
+    assert h1["latest_observation_completed_at"] == "2026-01-27T22:00:00+00:00"
     assert h1["first_observed"]["raw_response"]["symbols"][0] == {
         "symbol": "SPY",
         "entry_price": "100",
@@ -431,6 +434,39 @@ def test_outcome_pending_before_maturity_then_unavailable_when_mature_data_missi
     assert result["horizons"][1]["reason"] == "mature_data_missing"
     assert result["horizons"][1]["first_observed"] is None
     assert result["horizons"][1]["latest_observed"] is None
+
+
+def test_newer_mature_missing_capture_is_explicit_without_rewriting_first_score():
+    complete = observation(completed_at="2026-01-26T22:00:00Z", closes=complete_prices())
+    sparse_prices = complete_prices(h5_spy="130")
+    del sparse_prices["AAPL"]["2026-01-26"]
+    sparse = observation(completed_at="2026-01-27T22:00:00Z", closes=sparse_prices)
+
+    result = score_checkpoint(protocol(), checkpoint(), [sparse, complete])
+    horizon = result["horizons"][1]
+
+    assert (horizon["status"], horizon["reason"]) == ("scored", None)
+    assert horizon["first_observed"]["observation_completed_at"] == "2026-01-26T22:00:00+00:00"
+    assert horizon["first_observed"]["raw_response"]["symbols"][0]["exit_price"] == "120"
+    assert horizon["latest_observed"] is None
+    assert (horizon["latest_status"], horizon["latest_reason"]) == ("unavailable", "mature_data_missing")
+    assert horizon["latest_observation_completed_at"] == "2026-01-27T22:00:00+00:00"
+
+
+def test_exact_duplicate_completion_is_deduplicated_but_distinct_ties_fail_closed():
+    first = observation(completed_at="2026-01-26T22:00:00Z", closes=complete_prices())
+    duplicate = deepcopy(first)
+    assert score_checkpoint(protocol(), checkpoint(), [first, duplicate]) == score_checkpoint(
+        protocol(), checkpoint(), [duplicate, first]
+    )
+
+    distinct = observation(
+        completed_at="2026-01-26T22:00:00Z",
+        closes=complete_prices(h5_spy="130"),
+    )
+    for captures in ([first, distinct], [distinct, first]):
+        with pytest.raises(MeasurementError, match="^invalid_measurement_input$"):
+            score_checkpoint(protocol(), checkpoint(), captures)
 
 
 def test_failed_ai_status_is_preserved_and_never_converted_to_cash():
@@ -520,6 +556,38 @@ def test_malformed_checkpoint_shapes_and_arm_vectors_fail_closed(mutate):
     capture = observation(completed_at="2026-01-26T22:00:00Z", closes=complete_prices())
     with pytest.raises(MeasurementError, match="^invalid_measurement_input$"):
         score_checkpoint(protocol(), item, [capture])
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda c: c.update(extra_future_price="999"),
+        lambda c: c.update(executable=True),
+        lambda c: c.update(executable=0),
+        lambda c: c.update(bundle_hash="A" * 64),
+        lambda c: c.update(bundle_hash="a" * 63),
+        lambda c: c.update(slot_date=1),
+        lambda c: c.update(slot_date="2026-99-99"),
+        lambda c: c.update(collection_id="../escape"),
+        lambda c: c.update(collection_id="CON"),
+        lambda c: c.update(collection_id="unsafe."),
+        lambda c: c.update(collection_path="artifacts/collections/other"),
+        lambda c: c.update(collection_path="/artifacts/collections/synthetic-collection"),
+        lambda c: c.update(decision_path="artifacts/decisions/other"),
+        lambda c: c["arms"]["cash"].update(extra_future_price="999"),
+        lambda c: c["arms"]["cash"]["targets"][0].update(extra_future_price="999"),
+        lambda c: c["arms"]["ai_three_role"].update(reason=[]),
+        lambda c: c["arms"]["cash"].update(reason="not-a-baseline-field"),
+        lambda c: c["arms"]["ai_three_role"].pop("reason"),
+        lambda c: c["arms"]["cash"].update(status=[]),
+        lambda c: c["arms"]["cash"]["targets"][0].update(symbol=[]),
+    ],
+)
+def test_checkpoint_arm_and_target_public_schemas_are_exact(mutate):
+    item = checkpoint()
+    mutate(item)
+    with pytest.raises(MeasurementError, match="^invalid_measurement_input$"):
+        score_checkpoint(protocol(), item, [])
 
 
 def test_mature_missing_entry_is_unavailable_without_fake_cash_or_zero():

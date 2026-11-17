@@ -1,7 +1,8 @@
 """Deterministic controls and causal raw-price cohort measurement."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+import re
+from datetime import date, datetime, timedelta
 from decimal import Context, Decimal, InvalidOperation, ROUND_DOWN, ROUND_HALF_EVEN, localcontext
 from typing import Any
 
@@ -16,6 +17,14 @@ _ONE = Decimal("1")
 _QUANTUM = Decimal("0.000000000001")
 _BASELINES = ("cash", "equal_weight", "sma20")
 _ALLOWED_ARM_STATUSES = {"accepted", "unavailable", "missing", "failed", "blocked", "abstained", "in_doubt"}
+_PORTABLE_ID = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,63})\Z")
+_LOWER_HEX_256 = re.compile(r"[0-9a-f]{64}\Z")
+_WINDOWS_RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
+_CHECKPOINT_KEYS = {
+    "schema_version", "slot_date", "collection_id", "bundle_hash", "collection_path",
+    "decision_path", "source_session_close_at", "decision_deadline", "inputs_frozen_at",
+    "frozen_at", "bundle_as_of", "outcome_sessions", "arms", "model_receipts", "executable",
+}
 
 
 def _fail() -> None:
@@ -51,6 +60,10 @@ def _format(number: Decimal) -> str:
         return "0"
     text = format(number.normalize(), "f")
     return text.rstrip("0").rstrip(".") if "." in text else text
+
+
+def _iso_time(value: datetime | None) -> str | None:
+    return value.isoformat() if value is not None else None
 
 
 def _keys(value: Any, required: set[str], *, exact: bool = False) -> dict[str, Any]:
@@ -134,8 +147,17 @@ def _validate_outcome_sessions(value: Any) -> list[dict[str, Any]]:
 
 def _validate_arm(name: str, arm: Any, symbols: list[str]) -> dict[str, Any]:
     arm = _keys(arm, {"status", "targets", "cash_weight"})
+    expected_keys = (
+        {"status", "targets", "cash_weight"}
+        if name in _BASELINES
+        else {"status", "reason", "targets", "cash_weight"}
+    )
+    if set(arm) != expected_keys:
+        _fail()
     status = arm["status"]
-    if status not in _ALLOWED_ARM_STATUSES:
+    if not isinstance(status, str) or status not in _ALLOWED_ARM_STATUSES:
+        _fail()
+    if name == "ai_three_role" and arm["reason"] is not None and not isinstance(arm["reason"], str):
         _fail()
     if status != "accepted":
         if arm["targets"] is not None or arm["cash_weight"] is not None:
@@ -147,8 +169,8 @@ def _validate_arm(name: str, arm: Any, symbols: list[str]) -> dict[str, Any]:
     total = _decimal(arm["cash_weight"])
     seen: list[str] = []
     for item in targets:
-        item = _keys(item, {"symbol", "weight"})
-        if item["symbol"] not in symbols:
+        item = _keys(item, {"symbol", "weight"}, exact=True)
+        if not isinstance(item["symbol"], str) or item["symbol"] not in symbols:
             _fail()
         seen.append(item["symbol"])
         total += _decimal(item["weight"])
@@ -159,17 +181,28 @@ def _validate_arm(name: str, arm: Any, symbols: list[str]) -> dict[str, Any]:
 
 def _validated_checkpoint(protocol: dict[str, Any], checkpoint: Any) -> tuple[list[str], list[dict[str, Any]], dict[str, Any], bool]:
     symbols = _protocol_symbols(protocol)
-    checkpoint = _keys(checkpoint, {
-        "schema_version", "slot_date", "collection_id", "bundle_hash", "collection_path",
-        "decision_path", "source_session_close_at", "decision_deadline", "inputs_frozen_at",
-        "frozen_at", "bundle_as_of", "outcome_sessions", "arms", "model_receipts",
-    })
+    checkpoint = _keys(checkpoint, _CHECKPOINT_KEYS, exact=True)
     if type(checkpoint["schema_version"]) is not int or checkpoint["schema_version"] != 1:
         _fail()
-    for field in ("slot_date", "collection_id", "bundle_hash", "collection_path"):
-        if not isinstance(checkpoint[field], str) or not checkpoint[field]:
+    if checkpoint["executable"] is not False:
+        _fail()
+    slot_date = checkpoint["slot_date"]
+    try:
+        if not isinstance(slot_date, str) or date.fromisoformat(slot_date).isoformat() != slot_date:
             _fail()
-    if checkpoint["decision_path"] is not None and not isinstance(checkpoint["decision_path"], str):
+    except ValueError:
+        _fail()
+    collection_id = checkpoint["collection_id"]
+    if (not isinstance(collection_id, str) or _PORTABLE_ID.fullmatch(collection_id) is None
+            or collection_id.endswith(".") or collection_id.split(".", 1)[0].upper() in _WINDOWS_RESERVED):
+        _fail()
+    if not isinstance(checkpoint["bundle_hash"], str) or _LOWER_HEX_256.fullmatch(checkpoint["bundle_hash"]) is None:
+        _fail()
+    expected_collection = f"artifacts/collections/{collection_id}"
+    expected_decision = f"artifacts/decisions/{collection_id}"
+    if checkpoint["collection_path"] != expected_collection:
+        _fail()
+    if checkpoint["decision_path"] is not None and checkpoint["decision_path"] != expected_decision:
         _fail()
     if not isinstance(checkpoint["model_receipts"], list):
         _fail()
@@ -285,8 +318,31 @@ def _response_version(
     }
 
 
-def _horizon_unavailable(horizon: int, reason: str) -> dict[str, Any]:
-    return {"horizon": horizon, "status": "unavailable", "reason": reason, "first_observed": None, "latest_observed": None}
+def _horizon_unavailable(
+    horizon: int, reason: str, *, latest_completed_at: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "horizon": horizon,
+        "status": "unavailable",
+        "reason": reason,
+        "first_observed": None,
+        "latest_observed": None,
+        "latest_status": "unavailable",
+        "latest_reason": reason,
+        "latest_observation_completed_at": latest_completed_at,
+    }
+
+
+def _deduplicate_ordered_observations(values: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Order captures only where receipt chronology proves a strict order."""
+    by_completion: dict[datetime, dict[str, Any]] = {}
+    for value in values:
+        completed = _time(value["completed_at"])
+        prior = by_completion.get(completed)
+        if prior is not None and prior != value:
+            _fail()
+        by_completion[completed] = value
+    return [by_completion[completed] for completed in sorted(by_completion)]
 
 
 def score_checkpoint(protocol: dict[str, Any], checkpoint: dict[str, Any], observations: list[dict[str, Any]]) -> dict[str, Any]:
@@ -301,7 +357,7 @@ def _score_checkpoint(protocol: dict[str, Any], checkpoint: dict[str, Any], obse
         symbols, outcomes, arms, late = _validated_checkpoint(protocol, checkpoint)
         if not isinstance(observations, list):
             _fail()
-        normalized = sorted((_reconstruct(item) for item in observations), key=lambda item: _time(item["completed_at"]))
+        normalized = _deduplicate_ordered_observations([_reconstruct(item) for item in observations])
         # Earlier campaign frames may not cover this checkpoint's future calendar.
         # They remain validated artifacts, but cannot be outcome observations.
         frozen_at = _time(checkpoint["frozen_at"])
@@ -336,22 +392,33 @@ def _score_checkpoint(protocol: dict[str, Any], checkpoint: dict[str, Any], obse
                         horizons.append({
                             "horizon": horizon, "status": "pending", "reason": "awaiting_maturity",
                             "first_observed": None, "latest_observed": None,
+                            "latest_status": "pending", "latest_reason": "awaiting_maturity",
+                            "latest_observation_completed_at": _iso_time(latest_completed),
                         })
                         continue
                     if len(anchors) != len(symbols):
-                        horizons.append(_horizon_unavailable(horizon, "mature_data_missing"))
+                        horizons.append(_horizon_unavailable(
+                            horizon, "mature_data_missing", latest_completed_at=_iso_time(latest_completed),
+                        ))
                         continue
+                    mature = [item for item in normalized if _time(item["completed_at"]) > target_close]
                     versions = [
-                        version for item in normalized
-                        if _time(item["completed_at"]) > target_close
+                        version for item in mature
                         if (version := _response_version(item, symbols, outcomes, arms, horizon, anchors)) is not None
                     ]
                     if not versions:
-                        horizons.append(_horizon_unavailable(horizon, "mature_data_missing"))
+                        horizons.append(_horizon_unavailable(
+                            horizon, "mature_data_missing",
+                            latest_completed_at=_time(mature[-1]["completed_at"]).isoformat(),
+                        ))
                     else:
+                        latest_version = _response_version(mature[-1], symbols, outcomes, arms, horizon, anchors)
                         horizons.append({
                             "horizon": horizon, "status": "scored", "reason": None,
-                            "first_observed": versions[0], "latest_observed": versions[-1],
+                            "first_observed": versions[0], "latest_observed": latest_version,
+                            "latest_status": "scored" if latest_version is not None else "unavailable",
+                            "latest_reason": None if latest_version is not None else "mature_data_missing",
+                            "latest_observation_completed_at": _time(mature[-1]["completed_at"]).isoformat(),
                         })
         counts = {
             "scored": sum(item["status"] == "scored" for item in horizons),
