@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "campaign_id": "daily-iex-research-v1",
+  "universe": [
+    {"symbol": "SPY", "asset_class": "etf"},
+    {"symbol": "QQQ", "asset_class": "etf"},
+    {"symbol": "IWM", "asset_class": "etf"},
+    {"symbol": "AAPL", "asset_class": "equity"}
+  ],
+  "model": "openai/gpt-6.1-sol",
+  "research_cash": "100000.00",
+  "max_checkpoints": 20
+}
