@@ -186,13 +186,24 @@ def _remove_tree(path: Path) -> None:
 @contextmanager
 def _registration_lock(base: Path) -> Iterator[None]:
     lock = base / ".campaign-registration.lock"
-    descriptor = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
+    flags = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW
+    descriptor: int | None = None
     try:
+        descriptor = os.open(lock, flags, 0o600)
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise OSError("registration lock is not a regular file")
         fcntl.flock(descriptor, fcntl.LOCK_EX)
+    except OSError as exc:
+        if descriptor is not None:
+            os.close(descriptor)
+        raise CampaignError("unsafe campaign registration lock") from exc
+    try:
         yield
     finally:
-        fcntl.flock(descriptor, fcntl.LOCK_UN)
-        os.close(descriptor)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
 
 
 def register_campaign(

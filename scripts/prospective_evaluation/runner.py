@@ -432,9 +432,8 @@ def _recover_started(
             recovered=True, prospective=now < _parse_time(inputs["decision_deadline"]),
         )
     except (OSError, json.JSONDecodeError, RunnerError, ValueError, KeyError, TypeError):
-        recorded_completion = _parse_time(inputs["inputs_frozen_at"])
         checkpoint = _checkpoint_from_inputs(
-            inputs, {}, [], recorded_completion, protocol["model"], in_doubt=True,
+            inputs, {}, [], now, protocol["model"], in_doubt=True,
         )
         write_record(campaign, "checkpoints", checkpoint_id, checkpoint)
         return _write_tick(
@@ -513,7 +512,7 @@ def tick(path, alpaca, public, provider, *, clock=None, execute_lab=None) -> dic
         source_session, outcomes = candidate
         anchor = _parse_time(outcomes[0]["interval_start"])
         slot = source_session["date"]
-        if current >= anchor or registered >= anchor or anchor - current <= timedelta(seconds=300):
+        if current >= anchor or registered >= anchor:
             closed = "slot_window_closed"
             return _write_tick(campaign, tick_id, "waiting", current, reason=closed)
         if _slot_state_count(campaign) >= protocol["max_checkpoints"]:

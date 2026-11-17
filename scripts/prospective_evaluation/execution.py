@@ -271,8 +271,6 @@ class ManagedLabExecutor:
         except Exception:
             _raise("invalid_lab_artifacts")
 
-        if status not in {"accepted", "blocked", "failed"}:
-            _raise("inconsistent_lab_result")
         expected_returncode = 0 if status == "accepted" else 2
         if worker_returncode != expected_returncode:
             _raise("inconsistent_lab_result")

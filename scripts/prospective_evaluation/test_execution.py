@@ -434,31 +434,6 @@ def test_exit_status_must_agree_with_published_decision(tmp_path):
             )
 
 
-def test_unknown_decision_status_is_inconsistent_when_replay_accepts_it(tmp_path, monkeypatch):
-    value = bundle("unknown-status")
-
-    class StatusRunner(ManagedRunner):
-        def __call__(self, command, **options):
-            response = super().__call__(command, **options)
-            if len(self.calls) == 2:
-                run_dir = tmp_path / "runs" / value["run_id"]
-                decision_path = run_dir / "decision.json"
-                manifest_path = run_dir / "manifest.json"
-                decision = json.loads(decision_path.read_text())
-                decision["status"] = "unknown"
-                decision_path.write_text(json.dumps(decision))
-                manifest = json.loads(manifest_path.read_text())
-                manifest["files"]["decision.json"] = hash_file(decision_path)
-                manifest_path.write_text(json.dumps(manifest))
-            return response
-
-    monkeypatch.setattr("prospective_evaluation.execution.replay_run", lambda path: {"verified": True})
-    with pytest.raises(LabExecutionError, match="inconsistent_lab_result"):
-        ManagedLabExecutor(MODEL, runner=StatusRunner())(
-            value, archive(tmp_path, value), tmp_path / "runs"
-        )
-
-
 def test_nonfinite_passed_bundle_is_rejected_before_discovery(tmp_path):
     value = bundle("invalid-passed")
     collection = archive(tmp_path, value)

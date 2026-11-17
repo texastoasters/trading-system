@@ -4,6 +4,9 @@ import hashlib
 import json
 import multiprocessing
 import os
+import socket
+import stat
+import tempfile
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -199,6 +202,74 @@ def test_registration_rejects_unsafe_root_and_naive_clock(tmp_path) -> None:
         register_campaign(tmp_path, {**deepcopy(VALID_REQUEST), "campaign_id": "clock-error"},
                           clock=broken_clock)
     assert not (tmp_path / "clock-error").exists()
+
+
+def test_registration_rejects_lock_symlinks_without_publishing_or_altering_outside_file(
+    tmp_path,
+) -> None:
+    outside = tmp_path / "outside-lock"
+    outside.write_bytes(b"outside-content")
+    root = tmp_path / "regular-link-root"
+    root.mkdir()
+    (root / ".campaign-registration.lock").symlink_to(outside)
+
+    with pytest.raises(CampaignError, match="^unsafe campaign registration lock$"):
+        register_campaign(
+            root,
+            {**deepcopy(VALID_REQUEST), "campaign_id": "regular-link"},
+        )
+
+    assert outside.read_bytes() == b"outside-content"
+    assert not (root / "regular-link").exists()
+
+    broken_root = tmp_path / "broken-link-root"
+    broken_root.mkdir()
+    missing_outside = tmp_path / "missing-outside-lock"
+    (broken_root / ".campaign-registration.lock").symlink_to(missing_outside)
+
+    with pytest.raises(CampaignError, match="^unsafe campaign registration lock$"):
+        register_campaign(
+            broken_root,
+            {**deepcopy(VALID_REQUEST), "campaign_id": "broken-link"},
+        )
+
+    assert not missing_outside.exists()
+    assert not (broken_root / "broken-link").exists()
+
+
+@pytest.mark.parametrize("lock_kind", ("directory", "fifo", "socket"))
+def test_registration_rejects_nonregular_lock_types_without_publishing(tmp_path, lock_kind) -> None:
+    root = tmp_path / lock_kind
+    root.mkdir()
+    lock = root / ".campaign-registration.lock"
+    bound_socket = None
+    if lock_kind == "directory":
+        lock.mkdir()
+    elif lock_kind == "fifo":
+        os.mkfifo(lock)
+    else:
+        socket_root = Path(tempfile.mkdtemp(prefix="lk-", dir=os.environ["TMPDIR"]))
+        root = socket_root
+        lock = root / ".campaign-registration.lock"
+        bound_socket = socket.socket(socket.AF_UNIX)
+        bound_socket.bind(str(lock))
+    original_mode = lock.lstat().st_mode
+
+    try:
+        with pytest.raises(CampaignError, match="^unsafe campaign registration lock$"):
+            register_campaign(
+                root,
+                {**deepcopy(VALID_REQUEST), "campaign_id": f"unsafe-{lock_kind}"},
+            )
+    finally:
+        if bound_socket is not None:
+            bound_socket.close()
+
+    assert stat.S_IFMT(lock.lstat().st_mode) == stat.S_IFMT(original_mode)
+    assert not (root / f"unsafe-{lock_kind}").exists()
+    if bound_socket is not None:
+        lock.unlink()
+        root.rmdir()
 
 
 def test_fingerprint_ignores_tests_and_changes_with_production_sources(tmp_path) -> None:

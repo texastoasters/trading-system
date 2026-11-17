@@ -54,8 +54,9 @@ class Forbidden:
 class MarketTransport:
     """Synthetic GET-only calendar/bars/news adapter."""
 
-    def __init__(self):
+    def __init__(self, observed_at=NOW):
         self.calls = []
+        self.observed_at = observed_at
         first = date(2026, 1, 1)
         self.sessions = []
         self.bars = []
@@ -87,7 +88,7 @@ class MarketTransport:
             "bars": {"bars": {"SPY": bars}, "next_page_token": None},
             "news": {"news": [], "next_page_token": None},
         }[source]
-        stamp = query.get("end", NOW.isoformat()) if source == "bars" else NOW.isoformat()
+        stamp = self.observed_at.isoformat()
         return {
             "payload": payload, "request_started_at": stamp,
             "received_at": stamp, "body_sha256": hashlib.sha256(source.encode()).hexdigest(),
@@ -96,8 +97,8 @@ class MarketTransport:
 
 
 class FailingMarketTransport(MarketTransport):
-    def __init__(self, source):
-        super().__init__()
+    def __init__(self, source, observed_at=NOW):
+        super().__init__(observed_at)
         self.source = source
 
     def fetch(self, source, query):
@@ -107,8 +108,9 @@ class FailingMarketTransport(MarketTransport):
 
 
 class PublicTransport:
-    def __init__(self):
+    def __init__(self, observed_at=NOW):
         self.calls = []
+        self.observed_at = observed_at
 
     def fetch(self, source, query):
         self.calls.append((source, dict(query)))
@@ -118,7 +120,7 @@ class PublicTransport:
             "DTSTART:20260123T133000Z", "DTSTAMP:20260101T000000Z",
             "SEQUENCE:0", "END:VEVENT", "END:VCALENDAR", "",
         ])
-        stamp = NOW.isoformat()
+        stamp = self.observed_at.isoformat()
         return {
             "payload": payload, "request_started_at": stamp,
             "received_at": stamp, "body_sha256": hashlib.sha256(payload.encode()).hexdigest(),
@@ -416,6 +418,7 @@ def test_missed_slots_are_published_and_bounded_by_max_checkpoints(tmp_path):
     # Match the later observation's availability clock.
     class LaterMarket(MarketTransport):
         def __init__(self):
+            super().__init__(observed_at=now)
             self.calls, self.sessions, self.bars = market.calls, market.sessions, market.bars
 
         def fetch(self, source, query):
@@ -444,6 +447,7 @@ def test_missed_slot_after_close_but_before_anchor_is_visible_if_first_tick_is_l
 
     class LaterMarket(MarketTransport):
         def __init__(self):
+            super().__init__(observed_at=now)
             self.calls, self.sessions, self.bars = market.calls, market.sessions, market.bars
 
         def fetch(self, source, query):
@@ -484,18 +488,40 @@ def test_no_completed_session_and_closed_slot_wait_without_inference(tmp_path):
     assert waiting["reason"] == "no_complete_candidate"
 
 
-def test_closed_slot_waits_without_collection_or_inference(tmp_path):
-    now = NOW + timedelta(hours=2, minutes=56)
+def test_anchor_limited_windows_accept_below_equal_and_above_five_minutes(tmp_path):
+    anchor = datetime(2026, 1, 22, 5, 0, tzinfo=UTC)
+    for label, seconds_before_anchor, expected_deadline in (
+        ("below", 299, "2026-01-22T04:59:59.999999+00:00"),
+        ("equal", 300, "2026-01-22T04:59:59.999999+00:00"),
+        ("above", 301, "2026-01-22T04:59:59+00:00"),
+    ):
+        now = anchor - timedelta(seconds=seconds_before_anchor)
+        path = register_campaign(
+            tmp_path, request("anchor-window-" + label), clock=Clock(now - timedelta(hours=1)),
+        )
+        receipt = runner.tick(
+            path,
+            MarketTransport(observed_at=now),
+            PublicTransport(observed_at=now),
+            Provider(),
+            clock=Clock(now),
+        )
+        checkpoint = runner.load_records(path, "checkpoints")[0]["value"]
 
-    class LaterMarket(MarketTransport):
-        def fetch(self, source, query):
-            result = super().fetch(source, query)
-            result["request_started_at"] = now.isoformat()
-            result["received_at"] = now.isoformat()
-            return result
+        assert receipt["status"] == "completed"
+        assert receipt["prospective"] is True
+        assert checkpoint["decision_deadline"] == expected_deadline
+        assert checkpoint["frozen_at"] == now.isoformat()
+        assert checkpoint["frozen_at"] < checkpoint["decision_deadline"]
+        assert checkpoint["arms"]["ai_three_role"]["status"] == "accepted"
 
+
+def test_closed_slot_at_anchor_waits_without_collection_or_inference(tmp_path):
+    anchor = datetime(2026, 1, 22, 5, 0, tzinfo=UTC)
     path = register_campaign(tmp_path, request("closed-slot"), clock=Clock(NOW - timedelta(hours=1)))
-    receipt = runner.tick(path, LaterMarket(), Forbidden(), Forbidden(), clock=Clock(now))
+    receipt = runner.tick(
+        path, MarketTransport(observed_at=anchor), Forbidden(), Forbidden(), clock=Clock(anchor),
+    )
 
     assert receipt["status"] == "waiting"
     assert receipt["reason"] == "slot_window_closed"
@@ -772,6 +798,33 @@ def test_started_inference_without_published_lab_becomes_in_doubt_unknown_cost(t
     assert runner.report_campaign(path)["counts"]["in_doubt"] == 1
 
 
+def test_delayed_ambiguous_recovery_uses_actual_recovery_clock_and_stays_late(tmp_path):
+    path = register_campaign(tmp_path, request("delayed-unknown-charge"), clock=Clock(NOW - timedelta(hours=1)))
+    runner.tick(path, MarketTransport(), PublicTransport(), Provider(), clock=Clock(NOW))
+    next((path / "ticks").glob("*.json")).unlink()
+    next((path / "checkpoints").glob("*.json")).unlink()
+    decision = next((path / "artifacts" / "decisions").iterdir())
+    for child in decision.iterdir():
+        child.unlink()
+    decision.rmdir()
+    recovered_at = NOW + timedelta(minutes=10)
+
+    recovered = runner.tick(
+        path, Forbidden(), Forbidden(), Forbidden(), clock=Clock(recovered_at),
+    )
+    checkpoint = runner.load_records(path, "checkpoints")[0]["value"]
+    score = runner.report_campaign(path)["checkpoints"][0]["score"]
+
+    assert recovered["status"] == "in_doubt"
+    assert recovered["completed_at"] == recovered_at.isoformat()
+    assert checkpoint["frozen_at"] == recovered_at.isoformat()
+    assert checkpoint["inputs_frozen_at"] == NOW.isoformat()
+    assert checkpoint["arms"]["ai_three_role"]["status"] == "in_doubt"
+    assert checkpoint["model_receipts"] == [{"status": "unknown", "billed_cost": "unknown"}]
+    assert score["checkpoint_status"] == "late"
+    assert score["horizons"][0]["reason"] == "checkpoint_late"
+
+
 def test_in_doubt_checkpoint_requires_unknown_cost_receipt(tmp_path):
     path = register_campaign(tmp_path, request("indoubt-receipt"), clock=Clock(NOW - timedelta(hours=1)))
     runner.tick(path, MarketTransport(), PublicTransport(), Provider(), clock=Clock(NOW))
@@ -819,32 +872,30 @@ def test_provider_failure_and_model_mismatch_remain_visible_not_cash(tmp_path):
     assert runner.report_campaign(second)["arm_status_counts"]["ai_three_role"] == {"failed": 1}
 
 
-def test_failed_observation_is_retained_and_offline_reported_unavailable(tmp_path, monkeypatch):
+def test_failed_observation_is_retained_and_offline_reported_unavailable(tmp_path):
     path = register_campaign(tmp_path, request("failed-observation"), clock=Clock(NOW - timedelta(hours=1)))
-    failed = {
-        "schema_version": 1, "symbols": ["SPY"],
-        "started_at": NOW.isoformat(), "completed_at": NOW.isoformat(),
-        "start_date": "2026-01-12", "end_date": "2026-02-21",
-        "policy": {}, "sources": {},
-    }
-    monkeypatch.setattr(runner, "observe_market", lambda *args, **kwargs: failed)
 
-    receipt = runner.tick(path, Forbidden(), Forbidden(), Forbidden(), clock=Clock(NOW))
+    receipt = runner.tick(
+        path, FailingMarketTransport("sessions"), Forbidden(), Forbidden(), clock=Clock(NOW),
+    )
+    observations = runner.load_records(path, "observations")
     report = runner.report_campaign(path)
     verified = runner.verify_campaign(path)
 
     assert receipt["status"] == "unavailable"
-    assert runner.load_records(path, "observations")[0]["value"] == failed
+    assert receipt["reason"] == "observation_reconstruction_failed"
+    assert len(observations) == 1
+    failed = observations[0]["value"]
+    assert failed["sources"]["sessions"] == {
+        "pages": [], "complete": False,
+        "error": {"code": "source_unavailable", "http_status": None},
+    }
+    assert failed["sources"]["bars"]["complete"] is True
     assert report["counts"]["unavailable_observations"] == 1
     assert verified["unavailable_observation_count"] == 1
 
 
-def test_source_and_collection_failures_are_durable_and_never_infer(tmp_path):
-    source_path = register_campaign(tmp_path, request("source-failure"), clock=Clock(NOW - timedelta(hours=1)))
-    source_receipt = runner.tick(
-        source_path, FailingMarketTransport("sessions"), Forbidden(), Forbidden(), clock=Clock(NOW),
-    )
-
+def test_collection_failure_is_durable_and_never_infers(tmp_path):
     collection_path = register_campaign(tmp_path, request("collection-failure"), clock=Clock(NOW - timedelta(hours=1)))
     incomplete_history = MarketTransport()
     incomplete_history.bars = incomplete_history.bars[:20]
@@ -852,8 +903,6 @@ def test_source_and_collection_failures_are_durable_and_never_infer(tmp_path):
         collection_path, incomplete_history, PublicTransport(), Forbidden(), clock=Clock(NOW),
     )
 
-    assert source_receipt["status"] == "unavailable"
-    assert source_receipt["reason"] == "observation_reconstruction_failed"
     assert collection_receipt["status"] == "unavailable"
     assert collection_receipt["reason"] == "collection_failed"
     assert runner.report_campaign(collection_path)["counts"]["collection_failures"] == 1
