@@ -30,10 +30,7 @@ def protocol() -> dict[str, Any]:
         "horizons": [1, 5],
         "arms": ["cash", "equal_weight", "sma20", "ai_three_role"],
     }
-    try:
-        from prospective_evaluation.protocol import prepare_protocol
-    except (ImportError, AttributeError):
-        return request
+    from prospective_evaluation.protocol import prepare_protocol
     return prepare_protocol({key: request[key] for key in (
         "schema_version", "campaign_id", "universe", "model", "research_cash", "max_checkpoints"
     )})
@@ -161,6 +158,15 @@ def test_baseline_does_not_mutate_inputs():
 
 
 # Scoring fixtures below deliberately use the public raw-observation schema.
+def test_archive_latency_does_not_move_the_bundle_freshness_cutoff():
+    value = checkpoint()
+    value["bundle_as_of"] = "2026-01-22T01:02:00Z"
+    value["inputs_frozen_at"] = "2026-01-22T01:02:00.250000Z"
+    result = score_checkpoint(protocol(), value, [])
+    assert result["checkpoint_status"] == "eligible"
+    assert result["counts"] == {"scored": 0, "pending": 2, "unavailable": 0, "economically_scorable": 0}
+
+
 def checkpoint() -> dict[str, Any]:
     controls = baseline_allocations(protocol(), bar_inputs())
     return {
@@ -172,6 +178,7 @@ def checkpoint() -> dict[str, Any]:
         "decision_path": "artifacts/decisions/synthetic-decision",
         "source_session_close_at": "2026-01-22T01:00:00Z",
         "decision_deadline": "2026-01-22T01:07:00Z",
+        "bundle_as_of": "2026-01-22T01:02:00Z",
         "inputs_frozen_at": "2026-01-22T01:02:00Z",
         "frozen_at": "2026-01-22T01:04:00Z",
         "outcome_sessions": [
@@ -306,6 +313,41 @@ def complete_prices(*, h1_spy: str = "110", h5_spy: str = "120") -> dict[str, di
         "IWM": {"2026-01-22": "100", "2026-01-26": "100"},
         "AAPL": {"2026-01-22": "100", "2026-01-26": "100"},
     }
+
+
+def test_baseline_arithmetic_does_not_inherit_caller_exponent_limits():
+    from decimal import localcontext
+
+    expected = baseline_allocations(protocol(), bar_inputs())
+    with localcontext() as context:
+        context.Emax = 1
+        assert baseline_allocations(protocol(), bar_inputs()) == expected
+
+
+def test_measurement_owns_decimal_context_instead_of_inheriting_caller_precision():
+    from decimal import localcontext
+
+    captured = observation(completed_at="2026-01-26T22:00:00Z", closes=complete_prices())
+    captured["sources"]["bars"]["pages"][0]["payload"]["bars"]["SPY"][0]["o"] = "99"
+    with localcontext() as context:
+        context.prec = 12
+        low_precision = score_checkpoint(protocol(), checkpoint(), [captured])
+    with localcontext() as context:
+        context.prec = 50
+        high_precision = score_checkpoint(protocol(), checkpoint(), [captured])
+    assert low_precision == high_precision
+
+
+def test_old_calendar_frames_before_checkpoint_cannot_poison_later_cohort():
+    earlier = observation(completed_at="2026-01-22T01:01:00Z", closes={})
+    earlier["end_date"] = "2026-01-21"
+    calendar = earlier["sources"]["sessions"]["pages"][0]
+    calendar["query"]["end"] = "2026-01-21"
+    calendar["payload"] = calendar["payload"][:1]
+    later = observation(completed_at="2026-01-26T22:00:00Z", closes=complete_prices())
+    result = score_checkpoint(protocol(), checkpoint(), [earlier, later])
+    assert result["counts"] == {"scored": 2, "pending": 0, "unavailable": 0, "economically_scorable": 0}
+    assert result["horizons"][0]["first_observed"]["raw_response"]["symbols"][0]["response"] == "0.1"
 
 
 def test_scoring_uses_future_raw_prices_and_fixed_first_anchor_across_revisions():

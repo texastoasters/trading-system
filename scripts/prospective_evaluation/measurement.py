@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from decimal import Decimal, InvalidOperation, ROUND_DOWN, localcontext
+from decimal import Context, Decimal, InvalidOperation, ROUND_DOWN, ROUND_HALF_EVEN, localcontext
 from typing import Any
 
 
@@ -74,8 +74,7 @@ def baseline_allocations(protocol: dict[str, Any], bar_inputs: dict[str, Any]) -
         symbols = _protocol_symbols(protocol)
         if not isinstance(bar_inputs, dict) or set(bar_inputs) != set(symbols):
             _fail()
-        with localcontext() as context:
-            context.prec = 38
+        with localcontext(Context(prec=38, rounding=ROUND_HALF_EVEN)):
             weight = (_ONE / Decimal(len(symbols))).quantize(_QUANTUM, rounding=ROUND_DOWN)
             residual = _ONE - weight * len(symbols)
             selected: set[str] = set()
@@ -163,7 +162,7 @@ def _validated_checkpoint(protocol: dict[str, Any], checkpoint: Any) -> tuple[li
     checkpoint = _keys(checkpoint, {
         "schema_version", "slot_date", "collection_id", "bundle_hash", "collection_path",
         "decision_path", "source_session_close_at", "decision_deadline", "inputs_frozen_at",
-        "frozen_at", "outcome_sessions", "arms", "model_receipts",
+        "frozen_at", "bundle_as_of", "outcome_sessions", "arms", "model_receipts",
     })
     if type(checkpoint["schema_version"]) is not int or checkpoint["schema_version"] != 1:
         _fail()
@@ -175,14 +174,15 @@ def _validated_checkpoint(protocol: dict[str, Any], checkpoint: Any) -> tuple[li
     if not isinstance(checkpoint["model_receipts"], list):
         _fail()
     close = _time(checkpoint["source_session_close_at"])
+    bundle_as_of = _time(checkpoint["bundle_as_of"])
     inputs = _time(checkpoint["inputs_frozen_at"])
     frozen = _time(checkpoint["frozen_at"])
     deadline = _time(checkpoint["decision_deadline"])
     rows = _validate_outcome_sessions(checkpoint["outcome_sessions"])
     first_interval = _time(rows[0]["interval_start"])
-    if checkpoint["slot_date"] >= rows[0]["date"] or not close < inputs <= frozen:
+    if checkpoint["slot_date"] >= rows[0]["date"] or not close < bundle_as_of <= inputs <= frozen:
         _fail()
-    expected_deadline = min(inputs + timedelta(seconds=300), first_interval - timedelta(microseconds=1))
+    expected_deadline = min(bundle_as_of + timedelta(seconds=300), first_interval - timedelta(microseconds=1))
     if deadline != expected_deadline:
         _fail()
     arms = checkpoint["arms"]
@@ -290,12 +290,22 @@ def _horizon_unavailable(horizon: int, reason: str) -> dict[str, Any]:
 
 
 def score_checkpoint(protocol: dict[str, Any], checkpoint: dict[str, Any], observations: list[dict[str, Any]]) -> dict[str, Any]:
+    """Score with a fixed arithmetic context, independent of ambient callers."""
+    with localcontext(Context(prec=38, rounding=ROUND_HALF_EVEN)):
+        return _score_checkpoint(protocol, checkpoint, observations)
+
+
+def _score_checkpoint(protocol: dict[str, Any], checkpoint: dict[str, Any], observations: list[dict[str, Any]]) -> dict[str, Any]:
     """Score fixed future sessions from public observation reconstruction only."""
     try:
         symbols, outcomes, arms, late = _validated_checkpoint(protocol, checkpoint)
         if not isinstance(observations, list):
             _fail()
         normalized = sorted((_reconstruct(item) for item in observations), key=lambda item: _time(item["completed_at"]))
+        # Earlier campaign frames may not cover this checkpoint's future calendar.
+        # They remain validated artifacts, but cannot be outcome observations.
+        frozen_at = _time(checkpoint["frozen_at"])
+        normalized = [item for item in normalized if _time(item["completed_at"]) > frozen_at]
         horizons: list[dict[str, Any]] = []
         if late:
             horizons = [_horizon_unavailable(horizon, "checkpoint_late") for horizon in (1, 5)]
