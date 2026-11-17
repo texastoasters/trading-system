@@ -248,7 +248,7 @@ def test_registration_rejects_nonregular_lock_types_without_publishing(tmp_path,
     elif lock_kind == "fifo":
         os.mkfifo(lock)
     else:
-        socket_root = Path(tempfile.mkdtemp(prefix="lk-", dir=os.environ["TMPDIR"]))
+        socket_root = Path(tempfile.mkdtemp(prefix="lk-", dir=os.environ.get("TMPDIR")))
         root = socket_root
         lock = root / ".campaign-registration.lock"
         bound_socket = socket.socket(socket.AF_UNIX)
