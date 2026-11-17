@@ -1,23 +1,21 @@
-# Session State — Prospective Evidence (2026-11-16)
+# Session State — Continuous Prospective Evaluation
 
 ## Current feature branch
 
-`feat/prospective-evidence`, v0.39.0, based on merged `c97f670` (PR231/v0.38.1).
-Standalone read-only source capture into the already merged non-executing AI lab (PR230).
-See `docs/PROSPECTIVE_EVIDENCE.md` and `docs/AI_DECISION_LAB.md` for interfaces and caveats.
+`feat/prospective-evaluation`, proposed v0.40.0, based on merged PR232 (`e288b9c` / v0.39.0). No merge authority is inherited from PR232.
 
-- Credential-isolated fixed-host GET acquisition: Alpaca metadata-only news, explicit IEX/raw daily bars, real extended-session calendar; public official BEA ICS, no guessed BLS/FOMC times.
-- Completed-session candle/quant evidence, explicit synthetic or caller-supplied book origin, immutable complete/failed archives and offline semantic reconstruction. Full calendar retained; fixed30-day event context horizon limits irrelevant model input.
-- Actual fresh CLI collection, three-role GPT-6.1-Sol inference, semantic reconstruction and deterministic decision replay were exercised under run `prospective-20261117T031900Z`. The synthetic book remained100% cash with zero orders. Full Python suite passed; independent reviews and exact-head CI remain gates until recorded in the PR. Never reuse historical counts as current proof.
-- No fixtures are actual source/model results. Receipt hashes of original HTTP bodies cannot be recomputed from projected metadata. Offline semantic reconstruction and decision replay are distinct proofs, neither establishes profit.
+Read `CONTEXT.md`, `docs/PROSPECTIVE_EVALUATION_SPEC.md` and `docs/PROSPECTIVE_EVALUATION.md`. Canonical plan/proof: Pi Brain `Plans/T2 Continuous Prospective Evaluation.md` and `Research/T2 Continuous Prospective Evaluation Verification 2026-11.md`.
+
+- Immutable registration; bounded idempotent ticks; shared actual evidence for cash/equal-weight/SMA20/three-role AI; honest 1/5-session raw-price responses, missingness and append-only revisions.
+- Source bundle time, input freeze, model completion and post-publication witness are distinct. Never backfill a slot after its next New York midnight. Future test fixtures are synthetic, never actual forecast evidence.
+- Project Python3.13 owns campaign/evidence/scoring. Only the pure lab CLI crosses into Hermes' managed SDK runtime. No global dependency/provider changes.
+- Actual caller-clock source capture and actual managed source→three-role inference→semantic reconstruction/replay have passed. These are labelled development diagnostics, not registered forecasts, performance or profitable autonomy. Current exact verification is in the canonical proof, not historical counts copied here.
+- Full-diff independent review, exact-head CI, real registered waiting/idempotent ticks and final publication remain completion gates until the canonical proof records them.
 
 ## Operational constraints
 
-- Old openboog trading has a persistent service/cron/dashboard hold. Do not remove it, restart the bot, reset the account, alter broker orders or deploy feature code by SSH. The standalone credential-isolation helper lives only in remote cache, not the production trader.
-- Full AI-first trader remains unfinished: continuous prospective collection/evaluation, experiment-account truth/execution lifecycle, exits/watchdogs and performance promotion are later slices.
-- PR229 (`fix/task4-integration`) is separate; preserve it and the original local checkout's dirty wishlist/untracked docs.
-- Prior negative paper cash/account divergence is dated incident evidence. Synthetic research cash is not a fresh broker observation, rescue, account reset or realized P&L.
+Old openboog service/cron/dashboard containment remains authoritative. No HOLD removal, old-bot restart, broker writes/account reset, purchases/top-ups, timer activation or feature deployment by SSH. A temporary credential-isolated GET helper is not a durable unattended deployment.
 
-## Process reminders
+Use reviewed PR and CI/CD; preserve original dirty checkouts, wishlist and separate PR229. Every evaluation output remains `executable=false`. Synthetic research cash is not broker cash, account rescue or a capital recommendation. Long-only/no borrowing/no debt.
 
-Changes via reviewed PR and CI/CD. No live-money authority, new subscriptions/top-ups or global Hermes configuration changes. Rule1 remains long-only/no borrowing/no debt. Preserve public-seam TDD and actual failures. **Keep Python + Elixir coverage at100%, with no coverage exclusions/ignore shortcuts.** Disclose pre-existing legacy gaps, never weaken the standard or conceal them.
+Keep Python + Elixir coverage at100% without exclusions/ignores; disclose inherited gaps rather than conceal them. Test public seams only. A working evaluator is not an unattended trader or proof of after-cost returns.

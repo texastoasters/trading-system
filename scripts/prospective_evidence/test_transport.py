@@ -353,9 +353,13 @@ def test_ssh_adapter_validates_then_uses_one_fixed_argv_and_bounded_json_stdin()
     wire = json.dumps({"ok": True, "result": valid_wire_result()})
     runner = Runner(completed(wire))
 
-    result = SshAlpacaTransport(runner=runner).fetch("bars", BARS)
+    result = SshAlpacaTransport(runner=runner, clock=clocks()).fetch("bars", BARS)
 
-    assert result == valid_wire_result()
+    assert result == {
+        **valid_wire_result(),
+        "request_started_at": "2026-11-17T02:05:00+00:00",
+        "received_at": "2026-11-17T02:05:01+00:00",
+    }
     argv, kwargs = runner.calls[0]
     assert argv == [
         "ssh",
@@ -376,11 +380,65 @@ def test_ssh_adapter_validates_then_uses_one_fixed_argv_and_bounded_json_stdin()
     assert ";" not in argv
 
 
+@pytest.mark.parametrize(
+    ("remote_started", "remote_received"),
+    [
+        ("2026-11-17T02:10:00+00:00", "2026-11-17T02:10:01+00:00"),
+        ("2026-11-17T02:00:00+00:00", "2026-11-17T02:00:01+00:00"),
+    ],
+)
+def test_ssh_success_uses_local_call_bounds_not_remote_http_clocks(remote_started, remote_received):
+    wire_result = valid_wire_result()
+    wire_result["request_started_at"] = remote_started
+    wire_result["received_at"] = remote_received
+    runner = Runner(completed(json.dumps({"ok": True, "result": wire_result})))
+
+    result = SshAlpacaTransport(runner=runner, clock=clocks()).fetch("bars", BARS)
+
+    assert set(result) == {
+        "payload", "request_started_at", "received_at", "body_sha256", "rate_limit",
+    }
+    assert result == {
+        **wire_result,
+        "request_started_at": "2026-11-17T02:05:00+00:00",
+        "received_at": "2026-11-17T02:05:01+00:00",
+    }
+
+
+@pytest.mark.parametrize(
+    "clock",
+    [
+        lambda: datetime(2026, 11, 17, 2, 5),
+        iter([
+            datetime(2026, 11, 17, 2, 5, 1, tzinfo=timezone.utc),
+            datetime(2026, 11, 17, 2, 5, tzinfo=timezone.utc),
+        ]).__next__,
+        lambda: "not-a-datetime",
+    ],
+)
+def test_ssh_local_clock_invalid_naive_or_regressing_fails_closed(clock):
+    runner = Runner(completed(json.dumps({"ok": True, "result": valid_wire_result()})))
+
+    with pytest.raises(TransportError, match="^invalid_clock$"):
+        SshAlpacaTransport(runner=runner, clock=clock).fetch("bars", BARS)
+
+
 @pytest.mark.parametrize("endpoint,params", [("bea_calendar", {}), ("bad", {}), ("bars", {**BARS, "url": "x"})])
 def test_ssh_rejects_routes_and_params_before_runner(endpoint, params):
     runner = Runner(completed(""))
     with pytest.raises(TransportError, match="^(invalid_endpoint|invalid_params)$"):
         SshAlpacaTransport(runner=runner).fetch(endpoint, params)
+    assert runner.calls == []
+
+
+def test_ssh_rejects_oversized_public_param_before_runner():
+    runner = Runner(completed(""))
+
+    with pytest.raises(TransportError, match="^invalid_params$"):
+        SshAlpacaTransport(runner=runner).fetch(
+            "news", {**NEWS, "page_token": "x" * 2049}
+        )
+
     assert runner.calls == []
 
 
@@ -686,12 +744,6 @@ def test_remaining_bounded_input_branches_are_covered(monkeypatch, tmp_path):
     response = FakeResponse()
     response.headers = None
     assert HttpGetTransport(opener=RecordingOpener(response), clock=clocks()).fetch("bea_calendar", {})["rate_limit"] == {}
-
-    monkeypatch.setattr(transport, "MAX_STDIN_BYTES", 1)
-    with pytest.raises(TransportError, match="^invalid_params$"):
-        SshAlpacaTransport(runner=Runner(completed(""))).fetch("sessions", SESSIONS)
-
-    monkeypatch.undo()
 
     class FakeEnvPath:
         def stat(self):
