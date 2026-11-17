@@ -431,6 +431,17 @@ def test_ssh_rejects_routes_and_params_before_runner(endpoint, params):
     assert runner.calls == []
 
 
+def test_ssh_rejects_oversized_public_param_before_runner():
+    runner = Runner(completed(""))
+
+    with pytest.raises(TransportError, match="^invalid_params$"):
+        SshAlpacaTransport(runner=runner).fetch(
+            "news", {**NEWS, "page_token": "x" * 2049}
+        )
+
+    assert runner.calls == []
+
+
 @pytest.mark.parametrize(
     "result",
     [
@@ -733,12 +744,6 @@ def test_remaining_bounded_input_branches_are_covered(monkeypatch, tmp_path):
     response = FakeResponse()
     response.headers = None
     assert HttpGetTransport(opener=RecordingOpener(response), clock=clocks()).fetch("bea_calendar", {})["rate_limit"] == {}
-
-    monkeypatch.setattr(transport, "MAX_STDIN_BYTES", 1)
-    with pytest.raises(TransportError, match="^invalid_params$"):
-        SshAlpacaTransport(runner=Runner(completed(""))).fetch("sessions", SESSIONS)
-
-    monkeypatch.undo()
 
     class FakeEnvPath:
         def stat(self):

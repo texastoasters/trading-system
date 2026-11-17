@@ -456,8 +456,6 @@ class SshAlpacaTransport:
         wire_input = json.dumps(
             {"endpoint": endpoint, "params": ordered_params}, separators=(",", ":")
         )
-        if len(wire_input.encode("utf-8")) > MAX_STDIN_BYTES:
-            _fail("invalid_params")
         started_at = _clock_iso(self._clock)
         try:
             completed = self._runner(
