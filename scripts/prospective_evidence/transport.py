@@ -513,12 +513,7 @@ def _read_remote_request():
         _fail("invalid_request")
     if not isinstance(value, dict) or set(value) != {"endpoint", "params"}:
         _fail("invalid_request")
-    try:
-        params = _validate_params(value["endpoint"], value["params"], ssh=True)
-    except TransportError as caught:
-        if caught.code in ("invalid_endpoint", "invalid_params"):
-            raise
-        _fail("invalid_request")
+    params = _validate_params(value["endpoint"], value["params"], ssh=True)
     return value["endpoint"], params
 
 

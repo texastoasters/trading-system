@@ -626,8 +626,20 @@ def test_remote_request_shape_env_io_and_unexpected_failure_are_sanitized(monkey
     code, result = invoke_main(monkeypatch, tmp_path, {"endpoint": "sessions", "params": SESSIONS})
     assert (code, result["code"]) == (1, "missing_credentials")
 
-    monkeypatch.setattr(transport, "_read_remote_request", lambda: (_ for _ in ()).throw(RuntimeError("secret")))
-    code, result = invoke_main(monkeypatch, tmp_path, {"endpoint": "sessions", "params": SESSIONS})
+    class FailedInput:
+        @property
+        def buffer(self):
+            return self
+
+        def read(self, _size):
+            raise RuntimeError("secret")
+
+    failed_input = FailedInput()
+    monkeypatch.setattr(sys, "stdin", failed_input)
+    output = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", output)
+    code = transport.main([])
+    result = json.loads(output.getvalue())
     assert (code, result) == (
         1,
         {"ok": False, "code": "source_unavailable", "http_status": None},
@@ -637,25 +649,13 @@ def test_remote_request_shape_env_io_and_unexpected_failure_are_sanitized(monkey
 def test_remaining_bounded_input_branches_are_covered(monkeypatch, tmp_path):
     with pytest.raises(TransportError, match="^invalid_params$"):
         HttpGetTransport().fetch("sessions", {"start": "2026-11-01", "end": "bad"})
-    assert transport._safe_rate_limit(None) == {}
+    response = FakeResponse()
+    response.headers = None
+    assert HttpGetTransport(opener=RecordingOpener(response), clock=clocks()).fetch("bea_calendar", {})["rate_limit"] == {}
 
     monkeypatch.setattr(transport, "MAX_STDIN_BYTES", 1)
     with pytest.raises(TransportError, match="^invalid_params$"):
         SshAlpacaTransport(runner=Runner(completed(""))).fetch("sessions", SESSIONS)
-
-    monkeypatch.setattr(transport, "MAX_STDIN_BYTES", 64 * 1024)
-    monkeypatch.setattr(
-        transport,
-        "_validate_params",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(TransportError("invalid_clock")),
-    )
-    stdin = io.TextIOWrapper(
-        io.BytesIO(json.dumps({"endpoint": "sessions", "params": SESSIONS}).encode()),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(sys, "stdin", stdin)
-    with pytest.raises(TransportError, match="^invalid_request$"):
-        transport._read_remote_request()
 
     monkeypatch.undo()
 
@@ -674,8 +674,12 @@ def test_remaining_bounded_input_branches_are_covered(monkeypatch, tmp_path):
             return FakeEnvPath()
 
     monkeypatch.setattr(transport.Path, "home", classmethod(lambda cls: FakeHome()))
-    with pytest.raises(TransportError, match="^missing_credentials$"):
-        transport._load_remote_credentials()
+    stdin = io.TextIOWrapper(io.BytesIO(json.dumps({"endpoint": "sessions", "params": SESSIONS}).encode()), encoding="utf-8")
+    stdout = io.StringIO()
+    monkeypatch.setattr(sys, "stdin", stdin)
+    monkeypatch.setattr(sys, "stdout", stdout)
+    assert transport.main([]) == 1
+    assert json.loads(stdout.getvalue())["code"] == "missing_credentials"
 
 
 def test_standalone_main_guard_emits_sanitized_invalid_request(monkeypatch):
