@@ -85,3 +85,31 @@ def test_rehashed_invalid_capture_still_rejected(tmp_path, capture):
     (path / "manifest.json").write_text(json.dumps(manifest))
     with pytest.raises(ValueError):
         archive.load_collection(path)
+
+
+def test_failed_collection_is_durable_but_never_a_runnable_bundle(tmp_path):
+    path = archive.write_failed_collection(tmp_path, "fixture-failed-capture",
+        {"sources": {"news": {"complete": False, "error": {"code": "source_http_error", "http_status": 403}}}},
+        error_code="capture_incomplete")
+    loaded = archive.load_collection(path)
+    assert loaded["status"] == "failed"
+    assert loaded["bundle"] is None
+    assert loaded["manifest"]["error"] == "capture_incomplete"
+    assert loaded["verification_kind"] == "integrity_only"
+
+
+def test_failed_collection_rejects_unsafe_identity_and_sanitizes_error_code(tmp_path):
+    with pytest.raises(ValueError):
+        archive.write_failed_collection(tmp_path, "../escape", {}, error_code="capture_incomplete")
+    path = archive.write_failed_collection(tmp_path, "fixture-safe-error", {}, error_code="secret-provider-body")
+    assert archive.load_collection(path)["manifest"]["error"] == "collection_failed"
+
+
+@pytest.mark.parametrize("field,value", [("status", "complete"), ("error", "private-text"), ("collection_id", "../bad")])
+def test_corrupted_failure_manifest_is_rejected(tmp_path, field, value):
+    path = archive.write_failed_collection(tmp_path, "fixture-corrupt-failure", {}, error_code="capture_incomplete")
+    manifest = json.loads((path / "manifest.json").read_text())
+    manifest[field] = value
+    (path / "manifest.json").write_text(json.dumps(manifest))
+    with pytest.raises(ValueError):
+        archive.load_collection(path)
