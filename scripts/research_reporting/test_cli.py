@@ -279,6 +279,46 @@ def test_actual_cli_subprocess_previews_through_reporter_helper_and_distinct_fro
     assert not (frozen / "research_reporting").exists()
 
 
+def test_source_alias_retarget_cannot_change_validated_reader_source(tmp_path: Path) -> None:
+    frozen = frozen_scripts(tmp_path)
+    replacement = tmp_path / "replacement-checkout"
+    (replacement / "scripts").mkdir(parents=True)
+    alias = tmp_path / "mutable-release"
+    alias.symlink_to(frozen.parent, target_is_directory=True)
+    registered_at = datetime.now(timezone.utc) - timedelta(days=1)
+    campaign = register_campaign(tmp_path / "campaigns", {
+        "schema_version": 1, "campaign_id": "reporting-fixture",
+        "universe": [{"symbol": "SPY", "asset_class": "etf"}],
+        "model": "fixture-model", "research_cash": "1000", "max_checkpoints": 3,
+    }, clock=lambda: registered_at)
+    argv_capture = tmp_path / "worker-argv.json"
+    worker = executable(tmp_path / "project-python", f"""import json, os, sys
+from pathlib import Path
+Path({str(argv_capture)!r}).write_text(json.dumps(sys.argv[1:]))
+alias = Path({str(alias)!r})
+alias.unlink()
+alias.symlink_to({str(replacement)!r}, target_is_directory=True)
+os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
+""")
+    config = write_config(tmp_path, settings(
+        tmp_path, campaign_path=str(campaign),
+        registration_hash=verify_campaign(campaign)["registration_hash"],
+        frozen_scripts_path=str(alias / "scripts"), project_python=str(worker),
+    ))
+
+    completed = run_cli(config, cli_environment(tmp_path), "--preview")
+
+    assert completed.returncode == 1
+    assert completed.stderr == ""
+    result = json.loads(completed.stdout)
+    assert result["summary"] is not None
+    assert result["summary"].startswith("T² research campaign reporting-fixture")
+    assert set(result["conditions"]) == {"stale_tick"}
+    assert alias.resolve() == replacement.resolve()
+    assert json.loads(argv_capture.read_text())[2] == str(frozen.resolve())
+    assert not (tmp_path / "state").exists()
+
+
 def test_actual_cli_subprocess_deduplicates_and_fallback_is_sanitized(tmp_path: Path) -> None:
     frozen = frozen_scripts(tmp_path)
     invalid_frozen = tmp_path / "invalid-checkout" / "scripts"

@@ -145,7 +145,7 @@ def _validate_config(value: Any) -> dict[str, Any]:
         state_info = state.lstat()
         if stat.S_ISLNK(state_info.st_mode) or not stat.S_ISDIR(state_info.st_mode):
             _config_fail()
-    return value
+    return {**value, "frozen_scripts_path": str(scripts_resolved)}
 
 
 def _parse(argv: Sequence[str] | None) -> argparse.Namespace:

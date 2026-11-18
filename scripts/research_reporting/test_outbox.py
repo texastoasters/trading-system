@@ -732,3 +732,15 @@ def test_queued_recovery_keeps_its_observation_time_until_later_delivery(
         "2026-11-17T18:05:00-06:00 America/Chicago):")
     assert "2026-11-18T00:10:00Z" not in recovery
     assert recovery.endswith("\n- timer disabled cleared.")
+
+
+@pytest.mark.parametrize("as_path", [False, True])
+def test_nul_storage_path_is_rejected_before_storage_or_submission(
+        tmp_path: Path, as_path: bool) -> None:
+    raw = str(tmp_path / "uncreated") + "\x00PRIVATE_PATH"
+    target = Path(raw) if as_path else raw
+    sent: list[str] = []
+    with pytest.raises(OutboxError, match="^invalid_outbox_input$"):
+        cycle(target, "study-a", assessment(), accepted_sender(sent), now=NOW)
+    assert sent == []
+    assert list(tmp_path.iterdir()) == []

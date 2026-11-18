@@ -64,6 +64,8 @@ def _validate_inputs(state_dir: Any, campaign_id: Any, assessment: Any,
         root = Path(state_dir)
     except (TypeError, ValueError):
         _fail()
+    if "\x00" in str(root):
+        _fail()
     _identifier(campaign_id, maximum=128)
     if not callable(sender):
         _fail()
