@@ -6,7 +6,7 @@ This reporter explains the frozen experiment; it never makes an investment decis
 
 One concise daily iMessage at the first successful check at/after **19:30 America/Chicago**, plus deduplicated problem/recovery notices. Current local date only; no backdated daily messages. The five-minute timer is offset from evaluator quarter-hours to reduce lock contention. A busy evaluator can defer a report; this is not a failure by itself.
 
-The daily message identifies actual evidence coverage, newest AI allocation, calls/tokens and unknown billed cost, and dated first/latest1/5-session raw-price comparisons. Pending, unavailable and accepted cash remain distinct. These are not adjusted total returns, compounded portfolios, broker fills or after-cost alpha.
+The daily message identifies actual evidence coverage, newest AI allocation, recorded model responses/tokens and unknown billed cost, and dated first/latest1/5-session raw-price comparisons. Recorded responses are not proof of total calls or zero charges when a started inference remains in-doubt. Pending, unavailable and accepted cash remain distinct. These are not adjusted total returns, compounded portfolios, broker fills or after-cost alpha.
 
 Alerts cover new missed/failed/ambiguous work, unavailable verification/sources, disabled scheduling, failed/overlong execution and stale completed work. They do not restart anything, retry inference, clear HOLD or change the study. The reporter and evaluator share a controller: a complete controller/network outage cannot be guaranteed to text its own failure. No external uptime service or unapproved fallback channel is implied.
 
