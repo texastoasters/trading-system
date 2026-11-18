@@ -8,6 +8,16 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.40.1] - 2026-11-17
+
+### Fixed
+- **Durable research helper destination:** the fixed SSH adapter now requires `~/.local/share/t2-research/t2_evidence_get.py` instead of a disposable cache file. No arbitrary path, cache fallback, automatic upload, endpoint, credential or wire-schema change. New transport fingerprints require a fresh campaign.
+
+### Operations
+- Added separately gated user-systemd service/timer templates and a read-only activation runbook. Templates are not installed or enabled by merging; no legacy trading updater/service/HOLD changes. Scheduled dispatch and actual source/model completion must be verified independently.
+
+---
+
 ## [0.40.0] - 2026-11-17
 
 ### Added

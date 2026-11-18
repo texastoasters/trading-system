@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import runpy
 import socket
 import subprocess
@@ -349,35 +350,52 @@ def completed(stdout, returncode=0, stderr="ignored secret stderr"):
     return subprocess.CompletedProcess([], returncode, stdout=stdout, stderr=stderr)
 
 
-def test_ssh_adapter_validates_then_uses_one_fixed_argv_and_bounded_json_stdin():
-    wire = json.dumps({"ok": True, "result": valid_wire_result()})
-    runner = Runner(completed(wire))
+def test_ssh_public_fetch_uses_durable_fixed_command_and_literal_json_protocol(
+    monkeypatch, tmp_path
+):
+    argv_record = tmp_path / "argv.json"
+    stdin_record = tmp_path / "stdin.json"
+    fake_ssh = tmp_path / "ssh"
+    fake_ssh.write_text(
+        """#!/usr/bin/env python3
+import json
+import os
+from pathlib import Path
+import sys
 
-    result = SshAlpacaTransport(runner=runner, clock=clocks()).fetch("bars", BARS)
+Path(os.environ["T2_ARGV_RECORD"]).write_text(json.dumps(sys.argv[1:]))
+Path(os.environ["T2_STDIN_RECORD"]).write_bytes(sys.stdin.buffer.read())
+sys.stdout.write('{"ok":true,"result":{"payload":{"bars":[]},"request_started_at":"2026-11-17T02:05:00+00:00","received_at":"2026-11-17T02:05:01+00:00","body_sha256":"0000000000000000000000000000000000000000000000000000000000000000","rate_limit":{"remaining":199}}}')
+"""
+    )
+    fake_ssh.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
+    monkeypatch.setenv("T2_ARGV_RECORD", str(argv_record))
+    monkeypatch.setenv("T2_STDIN_RECORD", str(stdin_record))
+
+    result = SshAlpacaTransport(clock=clocks()).fetch("bars", BARS)
 
     assert result == {
-        **valid_wire_result(),
+        "payload": {"bars": []},
         "request_started_at": "2026-11-17T02:05:00+00:00",
         "received_at": "2026-11-17T02:05:01+00:00",
+        "body_sha256": "0" * 64,
+        "rate_limit": {"remaining": 199},
     }
-    argv, kwargs = runner.calls[0]
-    assert argv == [
-        "ssh",
+    assert json.loads(argv_record.read_text()) == [
         "-T",
         "-oBatchMode=yes",
         "-oConnectTimeout=10",
         "openboog",
         "python3",
-        "~/.hermes/cache/scratch/t2_evidence_get.py",
+        "~/.local/share/t2-research/t2_evidence_get.py",
     ]
-    assert kwargs == {
-        "input": json.dumps({"endpoint": "bars", "params": BARS}, separators=(",", ":")),
-        "text": True,
-        "capture_output": True,
-        "timeout": 30,
-        "check": False,
-    }
-    assert ";" not in argv
+    assert stdin_record.read_text() == (
+        '{"endpoint":"bars","params":{"symbols":"SPY,QQQ","timeframe":"1Day",'
+        '"start":"2026-11-01T00:00:00Z","end":"2026-11-15T23:59:59Z",'
+        '"feed":"iex","adjustment":"raw","sort":"asc","limit":1000,'
+        '"currency":"USD","asof":"-"}}'
+    )
 
 
 @pytest.mark.parametrize(

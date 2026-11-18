@@ -14,7 +14,7 @@ Outputs are raw, unadjusted **price responses**, not dividends/splits-adjusted t
 
 - Pinned reviewed source, Python3.13 project environment and `requirements-evidence.txt`. Linux/macOS POSIX locking; no Windows support claim.
 - Existing `hermes` installation and permitted Nous authentication for the exact registered model. No provider fallback, signup, upgrade/top-up or global configuration change.
-- Existing fixed-host GET helper reachable through the `openboog` SSH alias. Credentials stay there; only allowlisted market/news/calendar GETs are available. Public BEA retrieval carries no Alpaca headers. A development helper in a cache path is **not** a durable unattended deployment.
+- Existing fixed-host GET helper at `~/.local/share/t2-research/t2_evidence_get.py`, reachable through the `openboog` SSH alias. Credentials stay there; only allowlisted market/news/calendar GETs are available. Public BEA retrieval carries no Alpaca headers. The old disposable cache location is no longer used; install reviewed helper bytes through the approved operational route before collecting.
 - One owner host/writer per campaign. `flock` coordinates cooperating local processes; it is not a distributed lock across synced copies or protection against a privileged writer replacing files.
 - A persistent **private** runtime directory, not a24-hour scratch cache. Do not run another writable copy through Syncthing/Obsidian. Publish sealed permitted snapshots/receipts to the canonical private vault for cross-portal handoff; do not treat an actively syncing partial copy as a second runner.
 
@@ -70,4 +70,4 @@ Keep actual development/source/model diagnostics separate from pre-registered pr
 
 ## Activation and promotion remain separate
 
-This document describes bounded commands, **not permission to install a daemon/cron, clear HOLD, restart the old bot, deploy by SSH, reset an account or trade**. A lasting read-only research timer still needs reviewed source/runtime provisioning, a durable helper/store, single-writer ownership and explicit operational activation. Broker-writing autonomy and financial promotion remain separately gated. Successful tests, model prose and a few raw-price responses do not close those gates.
+This document describes bounded commands, **not permission to install a daemon/cron, clear HOLD, restart the old bot, deploy by SSH, reset an account or trade**. A lasting read-only research timer still needs reviewed source/runtime provisioning, a durable helper/store, single-writer ownership and explicit operational activation. See [the activation runbook](READ_ONLY_EVALUATOR_ACTIVATION.md) and uninstalled `ops/research/` templates. Broker-writing autonomy and financial promotion remain separately gated. Successful tests, model prose and a few raw-price responses do not close those gates.

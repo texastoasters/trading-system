@@ -1,0 +1,18 @@
+[Unit]
+Description=T2 read-only prospective research evaluator
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/.config/t2-research/evaluator.env
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=HERMES_HOME=%h/.hermes
+WorkingDirectory=%h/.local/share/t2-research
+ExecStart=%h/.local/share/t2-research/venv/bin/python %h/.local/share/t2-research/current/scripts/evaluate_prospective.py tick ${T2_CAMPAIGN}
+UMask=0077
+TimeoutStartSec=14min
+KillMode=control-group
+Restart=no
+NoNewPrivileges=yes
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=t2-evaluation
