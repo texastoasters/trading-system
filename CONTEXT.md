@@ -42,3 +42,18 @@ An assessment of allocations from one checkpoint over a fixed horizon. Overlappi
 
 ### Promotion
 A separately authorized move from research to a more operational mode after predeclared evidence and reliability gates. A successful smoke test is not promotion.
+
+### Research report
+A dated explanation of verified experiment activity and observable outcomes. A report is not a portfolio instruction or proof of profitability.
+
+### Failure event
+An immutable occurrence requiring attention, such as a missed decision or ambiguous inference completion. A historical failure does not become a new event on every observation.
+
+### Operational condition
+An ongoing observable state, such as disabled scheduling or stale useful work. An unobserved state is not a verified recovery.
+
+### Notification intent
+A durable decision to communicate a specific report or finding. Intent, submission, provider acceptance, recipient delivery and human acknowledgement are distinct facts.
+
+### In-doubt notification
+A notification whose external submission may have happened but cannot be confirmed. Uncertainty is not permission to resend it blindly.

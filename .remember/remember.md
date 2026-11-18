@@ -1,18 +1,13 @@
-# Session State — Read-only Evaluator Activation
+# Session State — Research Reporting and Alerts
 
-## Current branch and scope
+Branch `feat/research-reporting`, based on merged PR234/v0.40.1 `5826db4910c47dbd568a03900f9040c5ae95e213`. Dan authorized building daily reports/failure alerts; new merge/deployment authority is not inherited. Read `docs/RESEARCH_REPORTING_SPEC.md` and `CONTEXT.md`.
 
-`ops/read-only-evaluator`, proposed v0.40.1, based on merged PR233 (`dafb77c8d51ab953c729f8dfea95cea1816f0d50` / v0.40.0).
+Canonical active plan: Pi Brain `Plans/T2 Research Reporting and Alerts.md`. Existing study remains frozen as recorded in `Plans/T2 Read Only Evaluator Activation.md`; no modifications to its source, current symlink, campaign/protocol/records or timer. Reporter gets its own release/state/units after applicable approval.
 
-Dan authorized read-only evaluator provisioning/activation while the old trader stays held. No new PR merge or post-merge SSH helper installation authority is inherited. Read `docs/READ_ONLY_EVALUATOR_ACTIVATION.md`, `docs/PROSPECTIVE_EVALUATION.md` and `CONTEXT.md`. Canonical operational state: Pi Brain `Plans/T2 Read Only Evaluator Activation.md`; broader mandate: `Plans/T2 AI First Trading Redesign.md`.
+- Deterministic read-only observation, concise daily summary at/after19:30 America/Chicago and5-minute health checks. No outer LLM, market/broker calls or tick.
+- New package/entry stays outside evaluator fingerprint roots. Read only through frozen public lock/load/verify/report; source origin must match selected checkout. Busy/pending/cash are not failures.
+- Immutable failure events deduplicated; ongoing conditions/recovery distinct. Durable send-start before external delivery; ambiguity stays in-doubt, never blindly resent. Provider acceptance/readback is not phone delivery/read acknowledgement.
+- Existing Photon home target only; never copy recipient IDs/credentials into source/vault/chat. Supported send/readback contract must be verified before transport implementation. No messaging test or reporter activation yet.
+- Public-seam vertical TDD;100% new Python/Elixir coverage, no ignore/exclusions/private mocks/private-limit mutation. Initial parent outbox tests cover only starting slices, not readiness; full implementation/review/CI still pending.
 
-- Fixed credential-isolated GET helper moves from scratch to `~/.local/share/t2-research/t2_evidence_get.py`. No arbitrary path, cache fallback, credential, endpoint or wire-schema change. Changing the transport fingerprint requires a fresh campaign, never rewriting historical stores.
-- User systemd templates are uninstalled/inactive artifacts until explicit activation prerequisites pass. One controller/writer; private unsynced durable campaign; no outer agent inference per tick.
-- Python3.13 project environment owns campaign/evidence/scoring; only pure lab inference uses the existing managed SDK closure. No global provider/dependency/billing changes.
-- Actual timer trigger, service completion and durable prospective source/model checkpoint are distinct verification gates. Future outcomes remain pending; fixture/development runs are not prospective profits.
-
-## Retained constraints
-
-Old openboog service/cron/dashboard containment remains authoritative. No HOLD removal, old-bot restart, broker writes, account reset, purchases or top-ups. Reviewed PR/CI workflow; any isolated post-merge source pull/helper installation requires explicit operational permission, not an SSH feature-deployment shortcut.
-
-Preserve original dirty checkouts, wishlist and separate PR229. Every result remains `executable=false`; synthetic cash is not broker cash or a capital recommendation. Long-only/no borrowing/no debt. Keep Python + Elixir coverage at100% without exclusions/ignores; disclose inherited gaps. Public test seams only. Reliable research plumbing is not an unattended trader or evidence of after-cost alpha.
+Old trader HOLD/service/cron remains untouched. No orders/account reset/billing/global Hermes runtime/provider changes. Original dirty checkouts/wishlist/PR229 protected. Future outcome evidence and after-cost performance remain unproven.
