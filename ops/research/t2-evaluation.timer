@@ -1,0 +1,12 @@
+[Unit]
+Description=Bounded 15-minute T2 read-only research ticks
+
+[Timer]
+OnActiveSec=60s
+OnCalendar=*-*-* *:00/15:00 UTC
+AccuracySec=1s
+Persistent=false
+Unit=t2-evaluation.service
+
+[Install]
+WantedBy=timers.target

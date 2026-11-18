@@ -132,7 +132,7 @@ _SSH_ARGV = [
     "-oConnectTimeout=10",
     "openboog",
     "python3",
-    "~/.hermes/cache/scratch/t2_evidence_get.py",
+    "~/.local/share/t2-research/t2_evidence_get.py",
 ]
 
 
