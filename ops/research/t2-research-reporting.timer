@@ -1,0 +1,12 @@
+[Unit]
+Description=Five-minute independent T2 research reporting checks
+
+[Timer]
+OnActiveSec=60s
+OnCalendar=*-*-* *:02/5:00 UTC
+AccuracySec=1s
+Persistent=false
+Unit=t2-research-reporting.service
+
+[Install]
+WantedBy=timers.target

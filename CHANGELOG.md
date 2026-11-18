@@ -8,6 +8,15 @@ Version 1.0.0 will be cut when the feature wishlist (`docs/FEATURE_WISHLIST.md`)
 
 ---
 
+## [0.41.0] - 2026-11-17
+
+### Added
+- **Independent research reporting:** deterministic read-only snapshots of the pinned evaluator, concise daily activity/allocation/price-response summaries, and source/runtime failure observations without extra inference or market/broker calls.
+- **Durable notification lifecycle:** daily/event/condition deduplication, separate verified recovery, private campaign-bound outbox, and conservative in-doubt handling for interrupted sends. Photon receipts distinguish provider acceptance/local sender-record verification from unknown recipient delivery/read acknowledgement.
+- **Separately gated reporting operations:** isolated preview/CLI, private configuration and user-systemd templates; see `docs/RESEARCH_REPORTING.md`. No automatic installation/activation on merge, source repointing, active-study rewrite, old-trader restart, HOLD removal, order/account reset or billing change. Price responses remain non-economic and billed cost unknown.
+
+---
+
 ## [0.40.1] - 2026-11-17
 
 ### Fixed
