@@ -193,6 +193,7 @@ def test_preview_observes_health_then_clock_and_never_writes_or_sends(
 def test_default_observer_and_real_policy_produce_preview_from_frozen_reader(
     tmp_path: Path, capsys: pytest.CaptureFixture[str],
 ) -> None:
+    registered_at = datetime.now(timezone.utc) - timedelta(days=1)
     request = {
         "schema_version": 1,
         "campaign_id": "reporting-fixture",
@@ -204,7 +205,7 @@ def test_default_observer_and_real_policy_produce_preview_from_frozen_reader(
     campaign = register_campaign(
         tmp_path / "campaigns",
         request,
-        clock=lambda: NOW - timedelta(days=1),
+        clock=lambda: registered_at,
     )
     registration_hash = verify_campaign(campaign)["registration_hash"]
     config = write_config(tmp_path, settings(
@@ -216,7 +217,6 @@ def test_default_observer_and_real_policy_produce_preview_from_frozen_reader(
     assert main(
         ["--config", str(config), "--preview"],
         health_observer=health,
-        clock=lambda: NOW,
     ) == 1
     result = output(capsys)
     assert result["status"] == "preview"
