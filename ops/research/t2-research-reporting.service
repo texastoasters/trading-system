@@ -1,0 +1,17 @@
+[Unit]
+Description=T2 independent read-only research reports and alerts
+
+[Service]
+Type=oneshot
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=HERMES_HOME=%h/.hermes
+WorkingDirectory=%h/.local/share/t2-research/reporting
+ExecStart=%h/.local/share/t2-research/venv/bin/python %h/.local/share/t2-research/reporting/current/scripts/research_reporting_cli.py --config %h/.config/t2-research/reporting.json
+UMask=0077
+TimeoutStartSec=270s
+KillMode=control-group
+Restart=no
+NoNewPrivileges=yes
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=t2-research-reporting
